@@ -418,4 +418,56 @@ impl StatePersistence {
         hasher.update(content.as_bytes());
         format!("{:x}", hasher.finalize())
     }
+
+    /// Get git commit history
+    /// Returns list of (commit_hash, timestamp, author, message) tuples
+    pub fn get_history(&self, count: usize) -> Result<Vec<(String, i64, String, String)>> {
+        let repo = Repository::open(&self.state_path)
+            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+
+        let mut revwalk = repo.revwalk()?;
+        revwalk.push_head()?;
+        revwalk.set_sorting(git2::Sort::TIME)?;
+
+        let mut commits = Vec::new();
+        for (i, oid) in revwalk.enumerate() {
+            if i >= count {
+                break;
+            }
+
+            let oid = oid?;
+            let commit = repo.find_commit(oid)?;
+
+            let hash = format!("{}", oid);
+            let timestamp = commit.time().seconds();
+            let author = commit.author().name().unwrap_or("unknown").to_string();
+            let message = commit.message().unwrap_or("").lines().next().unwrap_or("").to_string();
+
+            commits.push((hash, timestamp, author, message));
+        }
+
+        Ok(commits)
+    }
+
+    /// Rollback to a specific commit
+    /// This resets HEAD to the specified commit and updates the working directory
+    pub fn rollback_to(&self, commit_hash: &str) -> Result<()> {
+        let repo = Repository::open(&self.state_path)
+            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+
+        // Parse the commit hash
+        let oid = git2::Oid::from_str(commit_hash)
+            .map_err(|e| anyhow!("Invalid commit hash: {}", e))?;
+
+        // Find the commit
+        let commit = repo.find_commit(oid)
+            .map_err(|e| anyhow!("Commit not found: {}", e))?;
+
+        // Reset to this commit (hard reset)
+        repo.reset(commit.as_object(), git2::ResetType::Hard, None)
+            .map_err(|e| anyhow!("Failed to reset to commit: {}", e))?;
+
+        info!("Rolled back to commit {}", commit_hash);
+        Ok(())
+    }
 }

@@ -173,6 +173,17 @@ impl TclThreadWorker {
             return;
         }
 
+        // Check for special git history/rollback commands
+        let code_trimmed = request.code.trim();
+        if code_trimmed == "history" || code_trimmed.starts_with("history ") {
+            self.handle_history_command(request);
+            return;
+        }
+        if code_trimmed.starts_with("rollback ") {
+            self.handle_rollback_command(request);
+            return;
+        }
+
         // Set HTTP context variables (for rate limiting)
         // Increment eval count
         let _ = self.interp.interpreter().eval("::httpx::increment_eval");
@@ -233,5 +244,107 @@ impl TclThreadWorker {
 
         // Send response back
         let _ = request.response_tx.send(output);
+    }
+
+    fn handle_history_command(&self, request: EvalRequest) {
+        let code = request.code.trim();
+
+        // Parse count from "history" or "history <count>"
+        let count = if code == "history" {
+            10 // default
+        } else if let Some(count_str) = code.strip_prefix("history ") {
+            count_str.trim().parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+
+        let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+
+        match persistence.get_history(count) {
+            Ok(commits) => {
+                if commits.is_empty() {
+                    let _ = request.response_tx.send(EvalResult {
+                        output: "No commits found".to_string(),
+                        is_error: false,
+                    });
+                    return;
+                }
+
+                // Format commits as TCL list
+                let mut output = String::new();
+                for (hash, timestamp, author, message) in commits {
+                    // Format: {hash timestamp author message}
+                    let date = chrono::DateTime::from_timestamp(timestamp, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| timestamp.to_string());
+
+                    output.push_str(&format!("{} {} {} {}\n",
+                        &hash[..8], date, author, message));
+                }
+
+                let _ = request.response_tx.send(EvalResult {
+                    output: output.trim_end().to_string(),
+                    is_error: false,
+                });
+            }
+            Err(e) => {
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("error: {}", e),
+                    is_error: true,
+                });
+            }
+        }
+    }
+
+    fn handle_rollback_command(&self, request: EvalRequest) {
+        // Rollback is admin-only
+        if !request.is_admin {
+            let _ = request.response_tx.send(EvalResult {
+                output: "error: rollback requires admin privileges (use tclAdmin)".to_string(),
+                is_error: true,
+            });
+            return;
+        }
+
+        let code = request.code.trim();
+
+        // Parse commit hash from "rollback <hash>"
+        let hash = if let Some(h) = code.strip_prefix("rollback ") {
+            h.trim()
+        } else {
+            let _ = request.response_tx.send(EvalResult {
+                output: "error: usage: rollback <commit-hash>".to_string(),
+                is_error: true,
+            });
+            return;
+        };
+
+        if hash.is_empty() {
+            let _ = request.response_tx.send(EvalResult {
+                output: "error: usage: rollback <commit-hash>".to_string(),
+                is_error: true,
+            });
+            return;
+        }
+
+        let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+
+        match persistence.rollback_to(hash) {
+            Ok(()) => {
+                // After rollback, we need to reload the interpreter state
+                // For now, just return success message
+                // TODO: Reload interpreter state from disk
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("Rolled back to commit {}. Note: Restart bot to reload state.", hash),
+                    is_error: false,
+                });
+            }
+            Err(e) => {
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("error: {}", e),
+                    is_error: true,
+                });
+            }
+        }
     }
 }

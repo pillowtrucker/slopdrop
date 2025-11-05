@@ -18,3 +18,4 @@ sha1 = "0.10"
 git2 = "0.18"
 ureq = { version = "2", features = ["json"] }
 base64 = "0.21"
+chrono = "0.4"
