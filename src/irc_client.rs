@@ -1,4 +1,5 @@
 use crate::config::ServerConfig;
+use crate::irc_formatting;
 use crate::types::{ChannelMembers, Message, MessageAuthor, PluginCommand};
 use anyhow::Result;
 use futures::StreamExt;
@@ -72,9 +73,12 @@ impl IrcClient {
         match message.command {
             Command::PRIVMSG(ref target, ref msg) => {
                 if let Some(Prefix::Nickname(ref nick, ref _user, ref host)) = message.prefix {
+                    // Strip IRC formatting codes from the message
+                    let clean_msg = irc_formatting::strip_irc_formatting(msg);
+
                     // Check if message starts with "tcl " or "tclAdmin "
-                    if msg.starts_with("tcl ") || msg.starts_with("tclAdmin ") {
-                        let is_admin = msg.starts_with("tclAdmin ");
+                    if clean_msg.starts_with("tcl ") || clean_msg.starts_with("tclAdmin ") {
+                        let is_admin = clean_msg.starts_with("tclAdmin ");
                         let channel = if target.starts_with('#') {
                             target.clone()
                         } else {
@@ -84,7 +88,7 @@ impl IrcClient {
                         let author = MessageAuthor::new(nick.clone(), channel)
                             .with_host(host.clone());
 
-                        let content = msg.clone();
+                        let content = clean_msg;
 
                         debug!("Received command from {}: {}", author, content);
 
@@ -169,8 +173,8 @@ impl IrcClient {
     async fn handle_plugin_command(&self, command: PluginCommand) -> Result<()> {
         match command {
             PluginCommand::SendToIrc { channel, text } => {
-                // Split long messages
-                for line in Self::split_message(&text, 400) {
+                // Split long messages with smart word-boundary splitting
+                for line in irc_formatting::split_message_smart(&text, 400) {
                     self.client.send_privmsg(&channel, &line)?;
                     // Small delay to avoid flooding
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -184,27 +188,6 @@ impl IrcClient {
         }
 
         Ok(())
-    }
-
-    /// Split a message into multiple lines if it's too long
-    fn split_message(text: &str, max_len: usize) -> Vec<String> {
-        let mut result = Vec::new();
-
-        for line in text.lines() {
-            if line.len() <= max_len {
-                result.push(line.to_string());
-            } else {
-                // Split long lines
-                let mut start = 0;
-                while start < line.len() {
-                    let end = (start + max_len).min(line.len());
-                    result.push(line[start..end].to_string());
-                    start = end;
-                }
-            }
-        }
-
-        result
     }
 
     /// Add a member to a channel
