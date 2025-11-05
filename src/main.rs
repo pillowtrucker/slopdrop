@@ -12,6 +12,8 @@ mod validator;
 
 use anyhow::Result;
 use config::Config;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber;
@@ -39,6 +41,9 @@ async fn main() -> Result<()> {
 
     info!("Configuration loaded from {}", config_path);
 
+    // Create shared channel members tracking
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+
     // Create communication channels
     // IRC -> TCL plugin
     let (tcl_command_tx, tcl_command_rx) = mpsc::channel(100);
@@ -50,9 +55,14 @@ async fn main() -> Result<()> {
     let tcl_handle = {
         let security_config = config.security.clone();
         let tcl_config = config.tcl.clone();
+        let channel_members_clone = channel_members.clone();
         tokio::task::spawn_blocking(move || {
             // Create TCL plugin within the thread
-            let mut tcl_plugin = match tcl_plugin::TclPlugin::new(security_config, tcl_config) {
+            let mut tcl_plugin = match tcl_plugin::TclPlugin::new(
+                security_config,
+                tcl_config,
+                channel_members_clone,
+            ) {
                 Ok(plugin) => plugin,
                 Err(e) => {
                     error!("Failed to create TCL plugin: {}", e);
@@ -71,7 +81,7 @@ async fn main() -> Result<()> {
     };
 
     // Create and run IRC client
-    let irc_client = irc_client::IrcClient::new(config.server.clone()).await?;
+    let irc_client = irc_client::IrcClient::new(config.server.clone(), channel_members).await?;
 
     info!("Joining channels: {:?}", config.server.channels);
 
