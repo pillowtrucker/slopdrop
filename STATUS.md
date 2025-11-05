@@ -31,37 +31,40 @@
 - [x] Separate admin command path
 - [x] Basic dangerous command blocking
 - [x] Input validation
+- [x] Thread-based timeout mechanism (30s default)
+- [x] Timeout protection against infinite loops
+
+### State Persistence
+- [x] Git-based state storage with SHA1 content-addressable files
+- [x] Automatic commit on each evaluation with IRC user as author
+- [x] Proc save/load with _index tracking
+- [x] Var save/load (both scalar and array) with _index tracking
+- [x] State diff detection (before/after comparison)
+- [x] Integration with existing state repository (shaniqua-smeggdrop)
+- [x] Bootstrap loading: stolen-treasure.tcl base + individual overrides
+
+### Smeggdrop Commands (Partial)
+- [x] `cache::put`, `cache::get`, `cache::exists`, `cache::delete`, `cache::keys`, `cache::fetch`
+- [x] `pick` - Random selection from list
+- [x] `choose` - Conditional choice
+- [x] `??` - Random number generator
+- [x] `first`, `last` - List accessors
+- [x] `encoding::base64::encode/decode`
+- [x] `encoding::url::encode/decode`
 
 ### Code Quality
 - [x] Compiles without errors
-- [x] ~750 lines of Rust code
+- [x] ~1200+ lines of Rust code
 - [x] Modular architecture
 - [x] README documentation
 - [x] Example configuration
+- [x] TODO and STATUS documentation
 
 ## What's Missing ❌
 
 ### Critical Missing Features
 
-#### 1. State Persistence (BLOCKER)
-Currently the bot has **NO MEMORY** between sessions:
-- ❌ No proc/var persistence
-- ❌ No git-based versioning
-- ❌ No rollback capability
-- ❌ No history viewing
-- ❌ Can't save user-defined procs/vars
-
-**Impact**: Users can't build persistent utilities, everything is lost on restart.
-
-#### 2. Timeout Protection (SECURITY ISSUE)
-Currently **NO TIMEOUT** mechanism:
-- ❌ Infinite loops will hang forever
-- ❌ No SIGALRM equivalent
-- ❌ No resource limits
-
-**Impact**: A malicious or buggy TCL script can hang the entire bot.
-
-#### 3. Proper Safe Interpreter (SECURITY ISSUE)
+#### 1. Proper Safe Interpreter (SECURITY ISSUE)
 Current sandboxing is **WEAK**:
 - ❌ Just renames commands, not using TCL's safe mode
 - ❌ No proc tracking
@@ -72,26 +75,28 @@ Current sandboxing is **WEAK**:
 
 ### Important Missing Features
 
-#### 4. Smeggdrop Command System
-The original had extensive TCL utilities:
-- ❌ `cache::*` - Persistent key-value storage
+#### 2. Smeggdrop Command System (Partial)
+Completed commands:
+- ✅ `cache::*` - Persistent key-value storage (DONE)
+- ✅ `encoding::*` - Base64, URL encoding (DONE)
+- ✅ Utility commands: pick, choose, ??, first, last (DONE)
+
+Still missing:
 - ❌ `http::get/post` - HTTP with rate limiting
 - ❌ `history` - Git commit history
-- ❌ `dict::*` - Dictionary operations
-- ❌ `encoding::*` - Base64, URL encoding
 - ❌ `sha1` - Hashing
 - ❌ Other utility commands
 
-**Impact**: Very limited functionality compared to original.
+**Impact**: Core functionality restored, but some features still missing.
 
-#### 5. Channel Member Tracking
+#### 3. Channel Member Tracking
 - ❌ No NAMES handling
 - ❌ No JOIN/PART/QUIT tracking
 - ❌ No `chanlist` command
 
 **Impact**: Can't interact with channel member list.
 
-#### 6. IRC Feature Completeness
+#### 4. IRC Feature Completeness
 - ❌ No IRC color/formatting parsing
 - ❌ No smart message splitting (breaks mid-word)
 - ❌ No proper message length calculation
@@ -111,15 +116,15 @@ The original had extensive TCL utilities:
 
 ## Current State Assessment
 
-**Maturity Level**: **Alpha / Proof of Concept**
+**Maturity Level**: **Beta / Feature-Incomplete**
 
-**Can it be used?** Sort of, but:
-- ✅ You can eval simple TCL expressions
-- ✅ It connects to IRC
-- ✅ It has basic security
-- ❌ Nothing persists between sessions
-- ❌ Can be hung by infinite loops
-- ❌ Very limited utility compared to original
+**Can it be used?** Yes, with some limitations:
+- ✅ You can eval TCL expressions with timeout protection
+- ✅ It connects to IRC with TLS support
+- ✅ It has security (timeout, sandboxing, privileged users)
+- ✅ State persists between sessions with git versioning
+- ✅ Core utility commands available (cache, encoding, etc.)
+- ❌ HTTP commands not yet implemented
 - ❌ No tests, might break easily
 
 **What works right now:**
@@ -130,53 +135,59 @@ The original had extensive TCL utilities:
 <user> tcl set x "hello"
 <bot> hello
 
-<user> tcl puts $x
-<bot> hello
-```
-
-**What doesn't work:**
-```
 <user> tcl proc greet {} { return "hi" }
-<bot> hi
-# Bot restarts
+<bot>
+# Bot restarts - proc is preserved!
 <user> tcl greet
-<bot> error: invalid command name "greet"
-# Lost forever! ❌
+<bot> hi
+# State persists! ✅
+
+<user> tcl cache::put mybucket "key" "value"
+<bot> value
+<user> tcl cache::get mybucket "key"
+<bot> value
+# Cache works! ✅
 
 <user> tcl while {1} { }
-<bot> ... hangs forever ... ❌
+<bot> error: evaluation timed out after 30s
+# Timeout protection! ✅
+```
 
+**What doesn't work yet:**
+```
 <user> tcl http::get "http://example.com"
 <bot> error: invalid command name "http::get" ❌
 ```
 
 ## Next Steps
 
-**Immediate Priority (To make it usable):**
+**Completed:**
+1. ✅ **State Persistence** - Git-based storage, proc/var save/load, automatic commits
+2. ✅ **Timeout Mechanism** - Thread-based timeout with 30s default
+3. ✅ **Core Smeggdrop Commands** - cache::*, encoding::*, utilities
 
-1. **State Persistence** (1-2 weeks)
-   - Implement git-based storage
-   - Save/load procs and vars
-   - Commit on each evaluation
-   - Basic rollback
+**Immediate Priority:**
 
-2. **Timeout Mechanism** (2-3 days)
-   - Research tokio::time::timeout approach
-   - Implement 30s timeout
-   - Handle gracefully
+1. **HTTP Commands** (2-3 days)
+   - `http::get`, `http::post`, `http::head`
+   - Rate limiting (5 per eval, 25 per minute)
+   - Transfer and time limits
+   - Most requested missing feature
 
-3. **Smeggdrop Commands** (1 week)
-   - At minimum: cache and http commands
-   - These are the most used features
+2. **Additional Utility Commands** (1-2 days)
+   - `sha1` hashing
+   - `history` command for git log viewing
+   - Other missing utilities
 
 **After that:**
-4. Proper safe interpreter (3-5 days)
+3. Thread restart on timeout (1 day)
+4. Proper safe interpreter improvements (3-5 days)
 5. Channel tracking (2-3 days)
 6. IRC formatting (2-3 days)
 7. Testing (1 week)
 8. Documentation (2-3 days)
 
-**Timeline to feature parity**: ~3-4 weeks of focused work
+**Timeline to full feature parity**: ~2-3 weeks of focused work
 
 ## Line Count Comparison
 
@@ -195,8 +206,9 @@ The original had extensive TCL utilities:
 
 ## Conclusion
 
-✅ **Good news:** Architecture is solid, compiles, runs
-⚠️  **Bad news:** Missing critical features, not production-ready
-🎯 **Path forward:** Prioritize state persistence and timeout, then add commands
+✅ **Good news:** Architecture is solid, core features working, state persists, timeout protection active
+✅ **Better news:** Major milestones achieved - state persistence and timeout mechanism complete!
+⚠️  **Remaining work:** HTTP commands, better sandboxing, channel tracking, tests
+🎯 **Path forward:** Implement HTTP commands next, then polish remaining features
 
-The scaffolding is done. Now we need to build the house.
+The foundation and walls are up. Now we're adding the remaining features and polish.
