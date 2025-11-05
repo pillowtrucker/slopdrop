@@ -3,6 +3,7 @@ mod irc_client;
 mod smeggdrop_commands;
 mod state;
 mod tcl_plugin;
+mod tcl_thread;
 mod tcl_wrapper;
 mod types;
 mod validator;
@@ -49,7 +50,7 @@ async fn main() -> Result<()> {
         let tcl_config = config.tcl.clone();
         tokio::task::spawn_blocking(move || {
             // Create TCL plugin within the thread
-            let tcl_plugin = match tcl_plugin::TclPlugin::new(security_config, tcl_config) {
+            let mut tcl_plugin = match tcl_plugin::TclPlugin::new(security_config, tcl_config) {
                 Ok(plugin) => plugin,
                 Err(e) => {
                     error!("Failed to create TCL plugin: {}", e);
