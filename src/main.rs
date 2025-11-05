@@ -1,4 +1,6 @@
 mod config;
+mod http_commands;
+mod http_tcl_commands;
 mod irc_client;
 mod smeggdrop_commands;
 mod state;
