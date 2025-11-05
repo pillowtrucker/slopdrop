@@ -1,0 +1,52 @@
+# Minimal Ergo config for testing slopdrop
+
+network:
+    name: TestNet
+
+server:
+    name: test.irc.local
+
+    listeners:
+        "127.0.0.1:16667":  # Test on different port to avoid conflicts
+
+    motd: test-motd.txt
+
+    # Disable most features for simplicity
+    casemapping: permissive
+
+    # maximum length of clients' sendQ in bytes
+    max-sendq: 96k
+
+# accounts configuration
+accounts:
+    registration:
+        enabled: false
+
+# channel configuration
+channels:
+    default-modes: +nt
+    registration:
+        enabled: false
+
+# logging
+logging:
+    -
+        method: stderr
+        type: "*"
+        level: warning
+
+# datastore
+datastore:
+    path: /tmp/ergo-test.db
+
+# history - disable for testing
+history:
+    enabled: false
+
+# limits
+limits:
+    nicklen: 32
+    channellen: 64
+    awaylen: 390
+    kicklen: 390
+    topiclen: 390

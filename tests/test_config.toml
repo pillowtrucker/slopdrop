@@ -1,0 +1,16 @@
+# Test configuration for slopdrop integration tests
+
+[server]
+hostname = "127.0.0.1"
+port = 16667
+use_tls = false
+nickname = "testbot"
+channels = ["#test"]
+
+[security]
+eval_timeout_ms = 5000
+privileged_users = ["testuser"]
+
+[tcl]
+state_path = "/tmp/slopdrop_test_state"
+max_output_lines = 10
