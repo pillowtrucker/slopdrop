@@ -1,10 +1,31 @@
 use anyhow::{anyhow, Result};
+use git2::{Repository, Signature, IndexAddOption};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tcl::Interpreter;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+/// IRC user information for git commits
+#[derive(Debug, Clone)]
+pub struct UserInfo {
+    pub nick: String,
+    pub host: String,
+}
+
+impl UserInfo {
+    pub fn new(nick: String, host: String) -> Self {
+        Self { nick, host }
+    }
+
+    /// Generate a git author signature from IRC user info
+    pub fn to_signature(&self) -> Result<Signature<'static>> {
+        let email = format!("{}@{}", self.nick, self.host);
+        Signature::now(&self.nick, &email)
+            .map_err(|e| anyhow!("Failed to create signature: {}", e))
+    }
+}
 
 /// Represents the state of procs and vars in the interpreter
 #[derive(Debug, Clone)]
@@ -86,11 +107,13 @@ impl StatePersistence {
         Self { state_path }
     }
 
-    /// Save changed procs and vars to disk
+    /// Save changed procs and vars to disk and commit to git
     pub fn save_changes(
         &self,
         interp: &Interpreter,
         changes: &StateChanges,
+        user_info: &UserInfo,
+        eval_code: &str,
     ) -> Result<()> {
         // Save new/modified procs
         for proc_name in &changes.new_procs {
@@ -120,7 +143,98 @@ impl StatePersistence {
             }
         }
 
+        // Commit changes to git
+        if let Err(e) = self.git_commit(changes, user_info, eval_code) {
+            warn!("Failed to commit to git: {}", e);
+        }
+
         Ok(())
+    }
+
+    /// Create a git commit with the changes
+    fn git_commit(
+        &self,
+        changes: &StateChanges,
+        user_info: &UserInfo,
+        eval_code: &str,
+    ) -> Result<()> {
+        let repo = Repository::open(&self.state_path)
+            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+
+        // Add all changed files to the index
+        let mut index = repo.index()
+            .map_err(|e| anyhow!("Failed to get git index: {}", e))?;
+
+        // Add procs/_index and vars/_index
+        index.add_path(std::path::Path::new("procs/_index"))?;
+        index.add_path(std::path::Path::new("vars/_index"))?;
+
+        // Add all new proc files
+        if !changes.new_procs.is_empty() {
+            index.add_all(["procs/*"].iter(), IndexAddOption::DEFAULT, None)?;
+        }
+
+        // Add all new var files
+        if !changes.new_vars.is_empty() {
+            index.add_all(["vars/*"].iter(), IndexAddOption::DEFAULT, None)?;
+        }
+
+        index.write()?;
+
+        // Create commit message
+        let commit_msg = Self::format_commit_message(changes, eval_code);
+
+        // Get the tree
+        let tree_id = index.write_tree()?;
+        let tree = repo.find_tree(tree_id)?;
+
+        // Get parent commit (HEAD)
+        let parent_commit = repo.head()?.peel_to_commit()?;
+
+        // Create signature from user info
+        let signature = user_info.to_signature()?;
+
+        // Create the commit
+        let commit_id = repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            &commit_msg,
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        info!("Created git commit {} by {}", commit_id, user_info.nick);
+
+        Ok(())
+    }
+
+    /// Format a commit message from the changes and evaluated code
+    fn format_commit_message(changes: &StateChanges, eval_code: &str) -> String {
+        // Truncate eval code if too long
+        let eval_display = if eval_code.len() > 100 {
+            format!("{}...", &eval_code[..100])
+        } else {
+            eval_code.to_string()
+        };
+
+        let mut msg = format!("Evaluated {}", eval_display);
+
+        // Add details about what changed
+        if !changes.new_procs.is_empty() {
+            msg.push_str(&format!("\n\nNew/modified procs: {}", changes.new_procs.join(", ")));
+        }
+        if !changes.deleted_procs.is_empty() {
+            msg.push_str(&format!("\n\nDeleted procs: {}", changes.deleted_procs.join(", ")));
+        }
+        if !changes.new_vars.is_empty() {
+            msg.push_str(&format!("\n\nNew/modified vars: {}", changes.new_vars.join(", ")));
+        }
+        if !changes.deleted_vars.is_empty() {
+            msg.push_str(&format!("\n\nDeleted vars: {}", changes.deleted_vars.join(", ")));
+        }
+
+        msg
     }
 
     fn save_proc(&self, interp: &Interpreter, proc_name: &str) -> Result<()> {

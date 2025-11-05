@@ -1,5 +1,5 @@
 use crate::config::{SecurityConfig, TclConfig};
-use crate::state::{InterpreterState, StatePersistence};
+use crate::state::{InterpreterState, StatePersistence, UserInfo};
 use crate::tcl_wrapper::SafeTclInterp;
 use crate::types::{Message, PluginCommand};
 use crate::validator;
@@ -123,13 +123,23 @@ impl TclPlugin {
                 if changes.has_changes() {
                     debug!("State changed: {:?}", changes);
 
-                    // Save changes to disk
+                    // Prepare user info for git commit
+                    let user_info = UserInfo::new(
+                        message.author.nick.clone(),
+                        message.author.host.clone().unwrap_or_else(|| "irc".to_string()),
+                    );
+
+                    // Save changes to disk and commit to git
                     let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
-                    if let Err(e) = persistence.save_changes(self.interp.interpreter(), &changes) {
+                    if let Err(e) = persistence.save_changes(
+                        self.interp.interpreter(),
+                        &changes,
+                        &user_info,
+                        code,
+                    ) {
                         warn!("Failed to save state changes: {}", e);
                     } else {
-                        // TODO: Git commit with user info
-                        debug!("State changes saved successfully");
+                        debug!("State changes saved and committed successfully");
                     }
                 }
             }
