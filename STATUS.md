@@ -43,14 +43,11 @@
 - [x] Integration with existing state repository (shaniqua-smeggdrop)
 - [x] Bootstrap loading: stolen-treasure.tcl base + individual overrides
 
-### Smeggdrop Commands (Partial)
-- [x] `cache::put`, `cache::get`, `cache::exists`, `cache::delete`, `cache::keys`, `cache::fetch`
-- [x] `pick` - Random selection from list
-- [x] `choose` - Conditional choice
-- [x] `??` - Random number generator
-- [x] `first`, `last` - List accessors
-- [x] `encoding::base64::encode/decode`
-- [x] `encoding::url::encode/decode`
+### Smeggdrop Commands
+- [x] **Cache commands**: `cache::put`, `cache::get`, `cache::exists`, `cache::delete`, `cache::keys`, `cache::fetch`
+- [x] **HTTP commands**: `http::get`, `http::post`, `http::head` with rate limiting (5/eval, 25/min)
+- [x] **Utility commands**: `pick`, `choose`, `??`, `first`, `last`
+- [x] **Encoding commands**: `encoding::base64::encode/decode`, `encoding::url::encode/decode`
 
 ### Code Quality
 - [x] Compiles without errors
@@ -75,19 +72,18 @@ Current sandboxing is **WEAK**:
 
 ### Important Missing Features
 
-#### 2. Smeggdrop Command System (Partial)
+#### 2. Smeggdrop Command System (Mostly Complete)
 Completed commands:
 - ✅ `cache::*` - Persistent key-value storage (DONE)
+- ✅ `http::get/post/head` - HTTP with rate limiting (DONE)
 - ✅ `encoding::*` - Base64, URL encoding (DONE)
 - ✅ Utility commands: pick, choose, ??, first, last (DONE)
 
 Still missing:
-- ❌ `http::get/post` - HTTP with rate limiting
 - ❌ `history` - Git commit history
 - ❌ `sha1` - Hashing
-- ❌ Other utility commands
 
-**Impact**: Core functionality restored, but some features still missing.
+**Impact**: Core functionality fully restored! Only minor utility commands missing.
 
 #### 3. Channel Member Tracking
 - ❌ No NAMES handling
@@ -116,16 +112,17 @@ Still missing:
 
 ## Current State Assessment
 
-**Maturity Level**: **Beta / Feature-Incomplete**
+**Maturity Level**: **Beta / Feature-Complete** (core features)
 
-**Can it be used?** Yes, with some limitations:
+**Can it be used?** Yes, fully functional for core use cases:
 - ✅ You can eval TCL expressions with timeout protection
 - ✅ It connects to IRC with TLS support
 - ✅ It has security (timeout, sandboxing, privileged users)
 - ✅ State persists between sessions with git versioning
-- ✅ Core utility commands available (cache, encoding, etc.)
-- ❌ HTTP commands not yet implemented
-- ❌ No tests, might break easily
+- ✅ Core utility commands available (cache, http, encoding, etc.)
+- ✅ HTTP commands with rate limiting
+- ⚠️  Thread doesn't restart on timeout (manual restart may be needed)
+- ❌ No tests, might have edge case bugs
 
 **What works right now:**
 ```
@@ -151,43 +148,46 @@ Still missing:
 <user> tcl while {1} { }
 <bot> error: evaluation timed out after 30s
 # Timeout protection! ✅
-```
 
-**What doesn't work yet:**
-```
 <user> tcl http::get "http://example.com"
-<bot> error: invalid command name "http::get" ❌
+<bot> {200 {Content-Type text/html ...} <!doctype html>...}
+# HTTP commands work! ✅
 ```
 
 ## Next Steps
 
-**Completed:**
+**Completed (Major Milestones):**
 1. ✅ **State Persistence** - Git-based storage, proc/var save/load, automatic commits
 2. ✅ **Timeout Mechanism** - Thread-based timeout with 30s default
-3. ✅ **Core Smeggdrop Commands** - cache::*, encoding::*, utilities
+3. ✅ **Smeggdrop Commands** - cache::*, http::*, encoding::*, utilities
 
-**Immediate Priority:**
+**Remaining Work:**
 
-1. **HTTP Commands** (2-3 days)
-   - `http::get`, `http::post`, `http::head`
-   - Rate limiting (5 per eval, 25 per minute)
-   - Transfer and time limits
-   - Most requested missing feature
-
-2. **Additional Utility Commands** (1-2 days)
+1. **Minor Utility Commands** (1 day)
    - `sha1` hashing
    - `history` command for git log viewing
-   - Other missing utilities
 
-**After that:**
-3. Thread restart on timeout (1 day)
-4. Proper safe interpreter improvements (3-5 days)
-5. Channel tracking (2-3 days)
-6. IRC formatting (2-3 days)
-7. Testing (1 week)
-8. Documentation (2-3 days)
+2. **Thread Restart on Timeout** (1-2 days)
+   - Currently: timeout detected but thread keeps running
+   - Need: kill and restart TCL thread on timeout
+   - Important for long-running bot stability
 
-**Timeline to full feature parity**: ~2-3 weeks of focused work
+3. **Channel Member Tracking** (2-3 days)
+   - NAMES reply handling
+   - JOIN/PART/QUIT tracking
+   - `chanlist` command
+
+4. **IRC Feature Polish** (2-3 days)
+   - Color/formatting parsing
+   - Smart message splitting
+   - CTCP support
+
+**Lower Priority:**
+5. Proper safe interpreter improvements (3-5 days)
+6. Testing (1 week)
+7. Documentation (2-3 days)
+
+**Timeline to production-ready**: ~1-2 weeks of focused work
 
 ## Line Count Comparison
 
