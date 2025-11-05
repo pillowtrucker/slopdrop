@@ -23,7 +23,7 @@ impl SafeTclInterp {
         // Load state if it exists
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);
-            // TODO: Implement state loading
+            Self::load_state(&interpreter, state_path)?;
         }
 
         Ok(Self {
@@ -64,6 +64,87 @@ impl SafeTclInterp {
         // TODO: Add proc tracking for state persistence
 
         debug!("Safe TCL interpreter configured");
+        Ok(())
+    }
+
+    /// Load state from the state directory
+    fn load_state(interp: &Interpreter, state_path: &Path) -> Result<()> {
+        // 1. Load stolen-treasure.tcl (base library)
+        let stolen_treasure = state_path.join("stolen-treasure.tcl");
+        if stolen_treasure.exists() {
+            debug!("Loading stolen-treasure.tcl");
+            let content = std::fs::read_to_string(&stolen_treasure)?;
+            interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load stolen-treasure.tcl: {:?}", e))?;
+        }
+
+        // 2. Load english_words.txt as a TCL variable
+        let english_words = state_path.join("english_words.txt");
+        if english_words.exists() {
+            debug!("Loading english_words.txt");
+            let content = std::fs::read_to_string(&english_words)?;
+            let lines: Vec<&str> = content.lines().collect();
+            // Create a TCL list
+            let tcl_list = format!("set english_words [list {}]", lines.join(" "));
+            interp.eval(tcl_list.as_str()).map_err(|e| anyhow!("Failed to load english_words: {:?}", e))?;
+        }
+
+        // 3. Load procs from procs/_index
+        let procs_index = state_path.join("procs/_index");
+        if procs_index.exists() {
+            debug!("Loading procs from state");
+            let index_content = std::fs::read_to_string(&procs_index)?;
+            for line in index_content.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let proc_name = parts[0];
+                    let file_hash = parts[1];
+                    let proc_file = state_path.join("procs").join(file_hash);
+
+                    if proc_file.exists() {
+                        let proc_content = std::fs::read_to_string(&proc_file)?;
+                        // proc_content is: {args} {body}
+                        let proc_def = format!("proc {{{}}} {}", proc_name, proc_content);
+                        if let Err(e) = interp.eval(proc_def.as_str()) {
+                            debug!("Warning: Failed to load proc {}: {:?}", proc_name, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Load vars from vars/_index
+        let vars_index = state_path.join("vars/_index");
+        if vars_index.exists() {
+            debug!("Loading vars from state");
+            let index_content = std::fs::read_to_string(&vars_index)?;
+            for line in index_content.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let var_name = parts[0];
+                    let file_hash = parts[1];
+                    let var_file = state_path.join("vars").join(file_hash);
+
+                    if var_file.exists() {
+                        let var_content = std::fs::read_to_string(&var_file)?;
+                        // var_content is either: "scalar value" or "array {key value key value}"
+                        if var_content.starts_with("scalar ") {
+                            let value = var_content.strip_prefix("scalar ").unwrap_or("");
+                            let set_cmd = format!("set {{{}}} {{{}}}", var_name, value);
+                            if let Err(e) = interp.eval(set_cmd.as_str()) {
+                                debug!("Warning: Failed to load var {}: {:?}", var_name, e);
+                            }
+                        } else if var_content.starts_with("array ") {
+                            let array_data = var_content.strip_prefix("array ").unwrap_or("");
+                            let array_cmd = format!("array set {{{}}} {}", var_name, array_data);
+                            if let Err(e) = interp.eval(array_cmd.as_str()) {
+                                debug!("Warning: Failed to load array {}: {:?}", var_name, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
