@@ -99,8 +99,7 @@ impl IrcClient {
             Command::KICK(ref channel, ref nick, ref _reason) => {
                 if nick == self.client.current_nickname() {
                     info!("Kicked from {}, rejoining in 10s", channel);
-                    // TODO: Implement auto-rejoin
-                    // Can't clone client, need to restructure for this feature
+                    // Wait 10 seconds then automatically rejoin
                     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     let _ = self.client.send_join(channel);
                 }

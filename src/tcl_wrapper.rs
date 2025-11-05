@@ -75,8 +75,8 @@ impl SafeTclInterp {
             let _ = interp.eval(rename_cmd.as_str());
         }
 
-        // Set up proc command wrapper to track user-defined procs
-        // TODO: Add proc tracking for state persistence
+        // Note: Proc tracking is handled via state diff mechanism in tcl_thread.rs
+        // We capture full state before/after each eval and detect changes
 
         debug!("Safe TCL interpreter configured");
         Ok(())
@@ -163,14 +163,10 @@ impl SafeTclInterp {
         Ok(())
     }
 
-    /// Evaluate TCL code with timeout protection
+    /// Evaluate TCL code
     ///
-    /// WARNING: Timeout is not yet implemented. Infinite loops will hang!
-    /// TODO: Implement proper timeout mechanism using one of:
-    /// - TCL's interp limit command (time/command limits)
-    /// - Separate process with watchdog
-    /// - Signal-based interruption (SIGALRM on Unix)
-    /// The original used SIGALRM which is not portable to async Rust
+    /// Note: Timeout is handled at the thread level (see tcl_thread.rs)
+    /// This method is called from within the TCL worker thread
     pub fn eval(&self, code: &str) -> Result<String> {
         match self.interpreter.eval(code) {
             Ok(obj) => {
@@ -229,9 +225,11 @@ impl SafeTclInterp {
     }
 
     /// Save interpreter state to disk
+    ///
+    /// Note: This is a legacy method. State persistence is now handled
+    /// automatically in tcl_thread.rs using StatePersistence
     pub fn save_state(&self, _state_path: &Path) -> Result<()> {
-        // TODO: Implement git-based state persistence like the original
-        debug!("State saving not yet implemented");
+        debug!("State saving handled by StatePersistence in tcl_thread.rs");
         Ok(())
     }
 }
