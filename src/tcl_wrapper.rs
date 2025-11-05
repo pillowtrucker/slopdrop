@@ -27,6 +27,9 @@ impl SafeTclInterp {
         // Make the interpreter safe
         Self::setup_safe_interp(&interpreter)?;
 
+        // Inject smeggdrop commands
+        crate::smeggdrop_commands::inject_commands(&interpreter)?;
+
         // Load state if it exists
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);
@@ -156,10 +159,14 @@ impl SafeTclInterp {
     }
 
     /// Evaluate TCL code with timeout protection
+    ///
+    /// WARNING: Timeout is not yet implemented. Infinite loops will hang!
+    /// TODO: Implement proper timeout mechanism using one of:
+    /// - TCL's interp limit command (time/command limits)
+    /// - Separate process with watchdog
+    /// - Signal-based interruption (SIGALRM on Unix)
+    /// The original used SIGALRM which is not portable to async Rust
     pub fn eval(&self, code: &str) -> Result<String> {
-        // TODO: Implement proper timeout mechanism
-        // The original used SIGALRM, we might need a different approach with threads
-
         match self.interpreter.eval(code) {
             Ok(obj) => {
                 let result = obj.get_string();
