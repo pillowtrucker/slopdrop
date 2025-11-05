@@ -37,6 +37,8 @@ pub struct TclThreadHandle {
     command_tx: mpsc::Sender<TclThreadCommand>,
     thread_handle: Option<thread::JoinHandle<()>>,
     timeout: Duration,
+    tcl_config: TclConfig,
+    security_config: crate::config::SecurityConfig,
 }
 
 impl TclThreadHandle {
@@ -45,8 +47,11 @@ impl TclThreadHandle {
         let (command_tx, command_rx) = mpsc::channel();
         let timeout = Duration::from_millis(security_config.eval_timeout_ms);
 
+        let tcl_config_clone = tcl_config.clone();
+        let security_config_clone = security_config.clone();
+
         let thread_handle = thread::spawn(move || {
-            let worker = TclThreadWorker::new(tcl_config, security_config);
+            let worker = TclThreadWorker::new(tcl_config_clone, security_config_clone);
             if let Err(e) = worker {
                 error!("Failed to create TCL worker: {}", e);
                 return;
@@ -61,12 +66,49 @@ impl TclThreadHandle {
             command_tx,
             thread_handle: Some(thread_handle),
             timeout,
+            tcl_config,
+            security_config,
         })
+    }
+
+    /// Restart the TCL thread (called after timeout/hang)
+    fn restart(&mut self) -> Result<()> {
+        warn!("Restarting hung TCL thread");
+
+        // Drop old thread handle (abandon hung thread)
+        if let Some(handle) = self.thread_handle.take() {
+            // Don't wait for it - it's hung
+            drop(handle);
+        }
+
+        // Create new channel
+        let (command_tx, command_rx) = mpsc::channel();
+
+        // Spawn new thread
+        let tcl_config = self.tcl_config.clone();
+        let security_config = self.security_config.clone();
+
+        let thread_handle = thread::spawn(move || {
+            let worker = TclThreadWorker::new(tcl_config, security_config);
+            if let Err(e) = worker {
+                error!("Failed to create TCL worker after restart: {}", e);
+                return;
+            }
+
+            worker.unwrap().run(command_rx);
+        });
+
+        // Update handle
+        self.command_tx = command_tx;
+        self.thread_handle = Some(thread_handle);
+
+        info!("TCL thread restarted successfully");
+        Ok(())
     }
 
     /// Evaluate TCL code with timeout
     pub async fn eval(
-        &self,
+        &mut self,
         code: String,
         is_admin: bool,
         nick: String,
@@ -95,12 +137,19 @@ impl TclThreadHandle {
             Ok(Err(e)) => Err(anyhow::anyhow!("Response channel closed: {}", e)),
             Err(_) => {
                 // Timeout! The TCL thread is hung
-                warn!("TCL evaluation timed out after {}ms - thread may be hung", self.timeout.as_millis());
+                warn!("TCL evaluation timed out after {}ms - thread is hung, restarting", self.timeout.as_millis());
 
-                // TODO: Kill and restart the thread
-                // For now, return an error
+                // Restart the thread
+                if let Err(e) = self.restart() {
+                    error!("Failed to restart TCL thread: {}", e);
+                    return Ok(EvalResult {
+                        output: format!("error: timeout and failed to restart: {}", e),
+                        is_error: true,
+                    });
+                }
+
                 Ok(EvalResult {
-                    output: format!("error: evaluation timed out after {}s", self.timeout.as_secs()),
+                    output: format!("error: evaluation timed out after {}s (thread restarted)", self.timeout.as_secs()),
                     is_error: true,
                 })
             }
