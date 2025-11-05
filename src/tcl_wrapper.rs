@@ -24,6 +24,9 @@ impl SafeTclInterp {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
 
+        // Add tcllib path to auto_path for package loading (sha1, etc.)
+        let _ = interpreter.eval("lappend auto_path /usr/share/tcltk");
+
         // Inject HTTP commands BEFORE making interpreter safe
         // (package require needs unrestricted access to TCL package system)
         if let Err(e) = interpreter.eval(crate::http_tcl_commands::http_commands()) {
@@ -31,11 +34,24 @@ impl SafeTclInterp {
             debug!("Bot will work but HTTP commands will not be available");
         }
 
+        // Inject SHA1 command BEFORE making interpreter safe
+        // (package require sha1 needs unrestricted access to TCL package system)
+        if let Err(e) = interpreter.eval(crate::smeggdrop_commands::sha1_command()) {
+            debug!("SHA1 command not available (tcllib sha1 package missing): {:?}", e);
+            debug!("Bot will work but SHA1 command will not be available");
+        }
+
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
-        // Inject smeggdrop commands
-        crate::smeggdrop_commands::inject_commands(&interpreter)?;
+        // Inject other smeggdrop commands (cache, utils, encoding)
+        // These don't require package loading so they can be loaded after making safe
+        interpreter.eval(crate::smeggdrop_commands::cache_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject cache commands: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::utility_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject utility commands: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::encoding_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
 
         // Load state if it exists
         if state_path.exists() {
