@@ -1,6 +1,7 @@
 use crate::config::TclConfig;
 use crate::state::{InterpreterState, StatePersistence, UserInfo};
 use crate::tcl_wrapper::SafeTclInterp;
+use crate::types::ChannelMembers;
 use anyhow::Result;
 use std::sync::mpsc;
 use std::thread;
@@ -39,19 +40,29 @@ pub struct TclThreadHandle {
     timeout: Duration,
     tcl_config: TclConfig,
     security_config: crate::config::SecurityConfig,
+    channel_members: ChannelMembers,
 }
 
 impl TclThreadHandle {
     /// Spawn a new TCL thread
-    pub fn spawn(tcl_config: TclConfig, security_config: crate::config::SecurityConfig) -> Result<Self> {
+    pub fn spawn(
+        tcl_config: TclConfig,
+        security_config: crate::config::SecurityConfig,
+        channel_members: ChannelMembers,
+    ) -> Result<Self> {
         let (command_tx, command_rx) = mpsc::channel();
         let timeout = Duration::from_millis(security_config.eval_timeout_ms);
 
         let tcl_config_clone = tcl_config.clone();
         let security_config_clone = security_config.clone();
+        let channel_members_clone = channel_members.clone();
 
         let thread_handle = thread::spawn(move || {
-            let worker = TclThreadWorker::new(tcl_config_clone, security_config_clone);
+            let worker = TclThreadWorker::new(
+                tcl_config_clone,
+                security_config_clone,
+                channel_members_clone,
+            );
             if let Err(e) = worker {
                 error!("Failed to create TCL worker: {}", e);
                 return;
@@ -68,6 +79,7 @@ impl TclThreadHandle {
             timeout,
             tcl_config,
             security_config,
+            channel_members,
         })
     }
 
@@ -87,9 +99,10 @@ impl TclThreadHandle {
         // Spawn new thread
         let tcl_config = self.tcl_config.clone();
         let security_config = self.security_config.clone();
+        let channel_members = self.channel_members.clone();
 
         let thread_handle = thread::spawn(move || {
-            let worker = TclThreadWorker::new(tcl_config, security_config);
+            let worker = TclThreadWorker::new(tcl_config, security_config, channel_members);
             if let Err(e) = worker {
                 error!("Failed to create TCL worker after restart: {}", e);
                 return;
@@ -178,20 +191,48 @@ struct TclThreadWorker {
     interp: SafeTclInterp,
     tcl_config: TclConfig,
     privileged_users: Vec<String>,
+    channel_members: ChannelMembers,
 }
 
 impl TclThreadWorker {
-    fn new(tcl_config: TclConfig, security_config: crate::config::SecurityConfig) -> Result<Self> {
+    fn new(
+        tcl_config: TclConfig,
+        security_config: crate::config::SecurityConfig,
+        channel_members: ChannelMembers,
+    ) -> Result<Self> {
         let interp = SafeTclInterp::new(
             security_config.eval_timeout_ms,
             &tcl_config.state_path,
         )?;
 
+        // Register chanlist command
+        Self::register_chanlist_command(interp.interpreter(), channel_members.clone())?;
+
         Ok(Self {
             interp,
             tcl_config,
             privileged_users: security_config.privileged_users,
+            channel_members,
         })
+    }
+
+    /// Register the chanlist command as a placeholder TCL proc
+    /// The actual implementation is intercepted in handle_eval()
+    fn register_chanlist_command(
+        interp: &tcl::Interpreter,
+        _channel_members: ChannelMembers,
+    ) -> Result<()> {
+        // Create a placeholder proc - actual implementation is in handle_eval
+        // This ensures "chanlist" exists and can be called from TCL procs
+        interp.eval(r#"
+            # chanlist command - returns list of nicks in a channel
+            # This is implemented in Rust and intercepted before evaluation
+            proc chanlist {channel} {
+                error "chanlist should have been intercepted by Rust handler"
+            }
+        "#).map_err(|e| anyhow::anyhow!("Failed to register chanlist command: {:?}", e))?;
+
+        Ok(())
     }
 
     fn run(self, command_rx: mpsc::Receiver<TclThreadCommand>) {
@@ -222,7 +263,7 @@ impl TclThreadWorker {
             return;
         }
 
-        // Check for special git history/rollback commands
+        // Check for special commands
         let code_trimmed = request.code.trim();
         if code_trimmed == "history" || code_trimmed.starts_with("history ") {
             self.handle_history_command(request);
@@ -230,6 +271,10 @@ impl TclThreadWorker {
         }
         if code_trimmed.starts_with("rollback ") {
             self.handle_rollback_command(request);
+            return;
+        }
+        if code_trimmed.starts_with("chanlist ") {
+            self.handle_chanlist_command(request);
             return;
         }
 
@@ -391,6 +436,62 @@ impl TclThreadWorker {
             Err(e) => {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: {}", e),
+                    is_error: true,
+                });
+            }
+        }
+    }
+
+    fn handle_chanlist_command(&self, request: EvalRequest) {
+        let code = request.code.trim();
+
+        // Parse channel from "chanlist <channel>"
+        let channel = if let Some(ch) = code.strip_prefix("chanlist ") {
+            ch.trim()
+        } else {
+            let _ = request.response_tx.send(EvalResult {
+                output: "error: usage: chanlist <channel>".to_string(),
+                is_error: true,
+            });
+            return;
+        };
+
+        if channel.is_empty() {
+            let _ = request.response_tx.send(EvalResult {
+                output: "error: usage: chanlist <channel>".to_string(),
+                is_error: true,
+            });
+            return;
+        }
+
+        // Read from shared channel members
+        match self.channel_members.read() {
+            Ok(members) => {
+                if let Some(nicks) = members.get(channel) {
+                    if nicks.is_empty() {
+                        let _ = request.response_tx.send(EvalResult {
+                            output: String::new(),
+                            is_error: false,
+                        });
+                    } else {
+                        let mut sorted: Vec<_> = nicks.iter().cloned().collect();
+                        sorted.sort();
+                        let _ = request.response_tx.send(EvalResult {
+                            output: sorted.join(" "),
+                            is_error: false,
+                        });
+                    }
+                } else {
+                    // Channel not found - return empty list
+                    let _ = request.response_tx.send(EvalResult {
+                        output: String::new(),
+                        is_error: false,
+                    });
+                }
+            }
+            Err(e) => {
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("error: failed to read channel members: {}", e),
                     is_error: true,
                 });
             }

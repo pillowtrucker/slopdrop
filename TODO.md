@@ -96,21 +96,23 @@
 
 ---
 
-## 📋 Medium Priority (Next Steps)
-
-### 7. Channel Member Tracking
+### 7. Channel Member Tracking ✅ COMPLETE
 Enable `chanlist` command and track who's in channels:
 
-- [ ] **Channel member tracking**
-  - [ ] Handle NAMES reply (353)
-  - [ ] Track JOIN events
-  - [ ] Track PART events
-  - [ ] Track QUIT events
-  - [ ] Track KICK events
-  - [ ] Track NICK changes
-  - [ ] Make channel list available to TCL via `chanlist` command
+- [x] **Channel member tracking**
+  - [x] Handle NAMES reply (353)
+  - [x] Track JOIN events
+  - [x] Track PART events
+  - [x] Track QUIT events
+  - [x] Track KICK events
+  - [x] Track NICK changes
+  - [x] Make channel list available to TCL via `chanlist` command
 
-**Estimated time:** 2-3 days
+**Status:** Complete. Usage: `tcl chanlist #channel` returns space-separated list of nicks.
+
+---
+
+## 📋 Medium Priority (Next Steps)
 
 ### 8. IRC Formatting Support
 Better message handling and formatting:
@@ -258,15 +260,15 @@ Current implementation renames dangerous commands, could be better:
 - Encoding commands (base64, URL)
 - SHA1 hashing
 - Utility commands
+- Channel member tracking (chanlist command)
 
-**Production Ready:** ~95%
+**Production Ready:** ~98%
 - All critical features complete and stable
-- Missing: channel tracking, IRC formatting polish (nice-to-have)
+- Missing: IRC formatting polish (nice-to-have)
 - Everything else works and is tested in practice
 
-**Timeline to Full Feature Parity:** ~1 week
-- Channel tracking: 2-3 days
-- IRC polish: 2-3 days
+**Timeline to Full Feature Parity:** 2-3 days
+- IRC formatting support: 2-3 days
 
 ---
 

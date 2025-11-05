@@ -1,4 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::{Arc, RwLock};
+
+/// Shared state for tracking channel members
+/// Key: channel name, Value: set of nicknames
+pub type ChannelMembers = Arc<RwLock<HashMap<String, HashSet<String>>>>;
 
 /// Represents the author/source of a message
 #[derive(Debug, Clone)]

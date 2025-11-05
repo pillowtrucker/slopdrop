@@ -1,6 +1,6 @@
 use crate::config::{SecurityConfig, TclConfig};
 use crate::tcl_thread::TclThreadHandle;
-use crate::types::{Message, PluginCommand};
+use crate::types::{ChannelMembers, Message, PluginCommand};
 use crate::validator;
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -12,8 +12,13 @@ pub struct TclPlugin {
 }
 
 impl TclPlugin {
-    pub fn new(security_config: SecurityConfig, tcl_config: TclConfig) -> Result<Self> {
-        let tcl_thread = TclThreadHandle::spawn(tcl_config.clone(), security_config)?;
+    pub fn new(
+        security_config: SecurityConfig,
+        tcl_config: TclConfig,
+        channel_members: ChannelMembers,
+    ) -> Result<Self> {
+        let tcl_thread =
+            TclThreadHandle::spawn(tcl_config.clone(), security_config, channel_members)?;
 
         Ok(Self {
             tcl_thread,
