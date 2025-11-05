@@ -1,5 +1,6 @@
 mod config;
 mod irc_client;
+mod state;
 mod tcl_plugin;
 mod tcl_wrapper;
 mod types;

@@ -1,10 +1,11 @@
 use crate::config::{SecurityConfig, TclConfig};
+use crate::state::{InterpreterState, StatePersistence};
 use crate::tcl_wrapper::SafeTclInterp;
 use crate::types::{Message, PluginCommand};
 use crate::validator;
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct TclPlugin {
     interp: SafeTclInterp,
@@ -87,6 +88,9 @@ impl TclPlugin {
 
         debug!("Evaluating TCL: {} (admin={})", code, is_admin);
 
+        // Capture state before evaluation
+        let state_before = InterpreterState::capture(self.interp.interpreter());
+
         // Evaluate the code
         let result = if is_admin {
             // Admin mode: direct evaluation
@@ -110,6 +114,26 @@ impl TclPlugin {
             Ok(output) => output,
             Err(e) => format!("error: {}", e),
         };
+
+        // Capture state after evaluation and check for changes
+        if let Ok(state_after) = InterpreterState::capture(self.interp.interpreter()) {
+            if let Ok(state_before) = state_before {
+                let changes = state_before.diff(&state_after);
+
+                if changes.has_changes() {
+                    debug!("State changed: {:?}", changes);
+
+                    // Save changes to disk
+                    let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+                    if let Err(e) = persistence.save_changes(self.interp.interpreter(), &changes) {
+                        warn!("Failed to save state changes: {}", e);
+                    } else {
+                        // TODO: Git commit with user info
+                        debug!("State changes saved successfully");
+                    }
+                }
+            }
+        }
 
         self.send_response(&message, output, response_tx).await?;
 

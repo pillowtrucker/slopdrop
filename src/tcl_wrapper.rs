@@ -12,6 +12,13 @@ pub struct SafeTclInterp {
 }
 
 impl SafeTclInterp {
+    /// Get a reference to the underlying interpreter
+    pub fn interpreter(&self) -> &Interpreter {
+        &self.interpreter
+    }
+}
+
+impl SafeTclInterp {
     /// Create a new safe TCL interpreter
     pub fn new(timeout_ms: u64, state_path: &Path) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
