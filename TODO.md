@@ -84,25 +84,19 @@
 
 **Status:** Complete. Note: After rollback, bot restart required to reload state.
 
----
+### 6. Thread Restart on Timeout ✅ COMPLETE
+- [x] Detect when timeout occurs
+- [x] Abandon hung TCL thread (drop handle)
+- [x] Spawn new TCL thread automatically
+- [x] Reload interpreter state from disk
+- [x] Maintain channel communication
+- [x] Update error message to indicate restart
 
-## 🚧 High Priority (Next Steps)
-
-### 6. Thread Restart on Timeout
-Currently timeout is detected but thread keeps running:
-
-- [ ] Detect when timeout occurs
-- [ ] Kill hung TCL thread
-- [ ] Spawn new TCL thread
-- [ ] Reload interpreter state
-- [ ] Maintain channel communication
-
-**Estimated time:** 1-2 days
-**Challenge:** Need to handle channel management carefully
+**Status:** Complete. Thread automatically restarts on timeout, fresh interpreter loaded.
 
 ---
 
-## 📋 Medium Priority (Polish)
+## 📋 Medium Priority (Next Steps)
 
 ### 7. Channel Member Tracking
 Enable `chanlist` command and track who's in channels:
@@ -258,19 +252,19 @@ Current implementation renames dangerous commands, could be better:
 **Core Functionality:** ✅ COMPLETE
 - State persistence with git versioning
 - History viewing and rollback commands
-- Thread-based timeout (30s)
+- Thread-based timeout with automatic restart
 - HTTP commands with rate limiting
 - Cache commands (key-value storage)
 - Encoding commands (base64, URL)
 - SHA1 hashing
 - Utility commands
 
-**Production Ready:** ~90%
-- Missing: thread restart, channel tracking, IRC formatting polish
+**Production Ready:** ~95%
+- All critical features complete and stable
+- Missing: channel tracking, IRC formatting polish (nice-to-have)
 - Everything else works and is tested in practice
 
 **Timeline to Full Feature Parity:** ~1 week
-- Thread restart: 1-2 days
 - Channel tracking: 2-3 days
 - IRC polish: 2-3 days
 
