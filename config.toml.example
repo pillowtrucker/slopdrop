@@ -1,0 +1,14 @@
+[server]
+hostname = "irc.libera.chat"
+port = 6697
+use_tls = true
+nickname = "slopdrop"
+channels = ["#bottest"]
+
+[security]
+privileged_users = ["admin"]
+eval_timeout_ms = 30000
+
+[tcl]
+state_path = "./state"
+max_output_lines = 10
