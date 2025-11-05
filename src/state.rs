@@ -151,6 +151,51 @@ impl StatePersistence {
         Ok(())
     }
 
+    /// Initialize git repository if it doesn't exist
+    fn init_git_repo_if_needed(&self) -> Result<()> {
+        // Try to open existing repo first
+        if Repository::open(&self.state_path).is_ok() {
+            return Ok(());
+        }
+
+        // Repository doesn't exist, create it
+        debug!("Initializing git repository at {:?}", self.state_path);
+
+        // Create state directory if it doesn't exist
+        std::fs::create_dir_all(&self.state_path)?;
+        std::fs::create_dir_all(self.state_path.join("procs"))?;
+        std::fs::create_dir_all(self.state_path.join("vars"))?;
+
+        // Initialize git repo
+        let repo = Repository::init(&self.state_path)?;
+
+        // Create initial empty index files
+        std::fs::write(self.state_path.join("procs/_index"), "")?;
+        std::fs::write(self.state_path.join("vars/_index"), "")?;
+
+        // Create initial commit
+        let mut index = repo.index()?;
+        index.add_path(std::path::Path::new("procs/_index"))?;
+        index.add_path(std::path::Path::new("vars/_index"))?;
+        index.write()?;
+
+        let tree_id = index.write_tree()?;
+        let tree = repo.find_tree(tree_id)?;
+
+        let sig = Signature::now("slopdrop", "bot@localhost")?;
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Initial commit",
+            &tree,
+            &[],
+        )?;
+
+        info!("Git repository initialized at {:?}", self.state_path);
+        Ok(())
+    }
+
     /// Create a git commit with the changes
     fn git_commit(
         &self,
@@ -158,8 +203,9 @@ impl StatePersistence {
         user_info: &UserInfo,
         eval_code: &str,
     ) -> Result<()> {
+        self.init_git_repo_if_needed()?;
         let repo = Repository::open(&self.state_path)
-            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+            .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
 
         // Add all changed files to the index
         let mut index = repo.index()
@@ -422,8 +468,9 @@ impl StatePersistence {
     /// Get git commit history
     /// Returns list of (commit_hash, timestamp, author, message) tuples
     pub fn get_history(&self, count: usize) -> Result<Vec<(String, i64, String, String)>> {
+        self.init_git_repo_if_needed()?;
         let repo = Repository::open(&self.state_path)
-            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+            .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
 
         let mut revwalk = repo.revwalk()?;
         revwalk.push_head()?;
@@ -452,8 +499,9 @@ impl StatePersistence {
     /// Rollback to a specific commit
     /// This resets HEAD to the specified commit and updates the working directory
     pub fn rollback_to(&self, commit_hash: &str) -> Result<()> {
+        self.init_git_repo_if_needed()?;
         let repo = Repository::open(&self.state_path)
-            .map_err(|e| anyhow!("Failed to open git repo: {}", e))?;
+            .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
 
         // Parse the commit hash
         let oid = git2::Oid::from_str(commit_hash)
