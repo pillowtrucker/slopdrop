@@ -173,6 +173,13 @@ impl TclThreadWorker {
             return;
         }
 
+        // Set HTTP context variables (for rate limiting)
+        // Increment eval count
+        let _ = self.interp.interpreter().eval("::httpx::increment_eval");
+        // Set channel context
+        let set_channel = format!("set ::nick_channel {{{}}}", request.channel);
+        let _ = self.interp.interpreter().eval(set_channel.as_str());
+
         // Capture state before evaluation
         let state_before = InterpreterState::capture(self.interp.interpreter());
 

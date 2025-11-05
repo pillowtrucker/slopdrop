@@ -30,6 +30,10 @@ impl SafeTclInterp {
         // Inject smeggdrop commands
         crate::smeggdrop_commands::inject_commands(&interpreter)?;
 
+        // Inject HTTP commands
+        interpreter.eval(crate::http_tcl_commands::http_commands())
+            .map_err(|e| anyhow!("Failed to inject HTTP commands: {:?}", e))?;
+
         // Load state if it exists
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);
@@ -45,6 +49,7 @@ impl SafeTclInterp {
     /// Configure the interpreter to be safe
     fn setup_safe_interp(interp: &Interpreter) -> Result<()> {
         // Hide dangerous commands that could break out of sandbox
+        // Note: socket is allowed for http package (protected by timeout and rate limiting)
         let dangerous_commands = vec![
             "interp",
             "namespace",
@@ -55,7 +60,7 @@ impl SafeTclInterp {
             "exec",
             "open",
             "file",
-            "socket",
+            // "socket",  // Allowed for http package
             "source",
             "load",
             "cd",
