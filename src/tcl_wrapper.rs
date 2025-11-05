@@ -24,15 +24,18 @@ impl SafeTclInterp {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
 
-        // Make the interpreter safe
+        // Inject HTTP commands BEFORE making interpreter safe
+        // (package require needs unrestricted access to TCL package system)
+        if let Err(e) = interpreter.eval(crate::http_tcl_commands::http_commands()) {
+            debug!("HTTP commands not available (http package missing): {:?}", e);
+            debug!("Bot will work but HTTP commands will not be available");
+        }
+
+        // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
         // Inject smeggdrop commands
         crate::smeggdrop_commands::inject_commands(&interpreter)?;
-
-        // Inject HTTP commands
-        interpreter.eval(crate::http_tcl_commands::http_commands())
-            .map_err(|e| anyhow!("Failed to inject HTTP commands: {:?}", e))?;
 
         // Load state if it exists
         if state_path.exists() {
@@ -50,9 +53,10 @@ impl SafeTclInterp {
     fn setup_safe_interp(interp: &Interpreter) -> Result<()> {
         // Hide dangerous commands that could break out of sandbox
         // Note: socket is allowed for http package (protected by timeout and rate limiting)
+        // Note: namespace is allowed for cache commands to work
         let dangerous_commands = vec![
             "interp",
-            "namespace",
+            // "namespace",  // Allowed for cache/utils commands
             "trace",
             "vwait",
             "apply",
