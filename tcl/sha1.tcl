@@ -1,8 +1,15 @@
 # SHA1 hashing command
-# TODO: Implement via Rust FFI or native TCL if available
+# Requires tcllib sha1 package (standard TCL library)
 
-proc sha1 {str} {
-    # This is a placeholder - need to implement via Rust
-    # For now, return a notice
-    return "SHA1 not yet implemented in Rust version"
+# Try to load sha1 package
+if {[catch {package require sha1}]} {
+    # Package not available, define error proc
+    proc sha1 {str} {
+        error "SHA1 not available: tcllib sha1 package not installed"
+    }
+} else {
+    # Package loaded successfully, create wrapper
+    proc sha1 {str} {
+        ::sha1::sha1 -hex $str
+    }
 }
