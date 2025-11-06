@@ -1,3 +1,8 @@
+// NOTE: This file contains unused Rust HTTP client code.
+// We're using TCL's http package instead (via http_tcl_commands.rs).
+// Keeping this for reference but marking as dead code to suppress warnings.
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -192,7 +197,7 @@ impl HttpClient {
     fn read_body_limited(&self, response: ureq::Response) -> Result<String> {
         use std::io::Read;
 
-        let mut reader = response.into_reader();
+        let reader = response.into_reader();
         let mut buffer = Vec::new();
         let mut limited_reader = reader.take(TRANSFER_LIMIT as u64);
 

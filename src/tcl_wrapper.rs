@@ -223,6 +223,8 @@ impl SafeTclInterp {
     }
 
     /// Get a list of user-defined procs
+    /// NOTE: Currently unused - state diff in tcl_thread.rs handles proc tracking
+    #[allow(dead_code)]
     pub fn get_procs(&self) -> Result<Vec<String>> {
         match self.interpreter.eval("info procs") {
             Ok(obj) => {
@@ -234,6 +236,8 @@ impl SafeTclInterp {
     }
 
     /// Get a list of global variables
+    /// NOTE: Currently unused - state diff in tcl_thread.rs handles var tracking
+    #[allow(dead_code)]
     pub fn get_vars(&self) -> Result<Vec<String>> {
         match self.interpreter.eval("info globals") {
             Ok(obj) => {
@@ -246,8 +250,9 @@ impl SafeTclInterp {
 
     /// Save interpreter state to disk
     ///
-    /// Note: This is a legacy method. State persistence is now handled
+    /// NOTE: Legacy method, currently unused. State persistence is now handled
     /// automatically in tcl_thread.rs using StatePersistence
+    #[allow(dead_code)]
     pub fn save_state(&self, _state_path: &Path) -> Result<()> {
         debug!("State saving handled by StatePersistence in tcl_thread.rs");
         Ok(())
