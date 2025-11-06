@@ -50,6 +50,16 @@ fi
 echo "✓ Build successful"
 echo ""
 
+# Setup Ergo IRC server (download if not present)
+echo "=== Setting up Ergo IRC server ==="
+cd "$PROJECT_ROOT"
+./tests/setup_ergo.sh
+if [ $? -ne 0 ]; then
+    echo "✗ Failed to setup Ergo IRC server"
+    exit 1
+fi
+echo ""
+
 # Start Ergo IRC server
 echo "=== Starting Ergo IRC server ==="
 cd "$TEST_DIR/ergo"

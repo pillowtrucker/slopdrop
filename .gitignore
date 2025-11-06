@@ -1112,3 +1112,9 @@ zsdoc/data
 
 # State directory (separate git repository)
 state/
+
+# Test IRC server binary (downloaded by setup script)
+tests/ergo/ergo
+tests/ergo/*.db
+tests/ergo/*.db-shm
+tests/ergo/*.db-wal
