@@ -24,6 +24,10 @@ pub fn sha1_command() -> &'static str {
 }
 
 /// Initialize all smeggdrop commands in the interpreter
+/// NOTE: Currently unused - we call individual command loaders in tcl_wrapper.rs
+/// to control loading order (some must load before making interpreter safe).
+/// Kept for reference.
+#[allow(dead_code)]
 pub fn inject_commands(interp: &tcl::Interpreter) -> anyhow::Result<()> {
     use tracing::debug;
 

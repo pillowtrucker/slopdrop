@@ -24,6 +24,9 @@ pub struct EvalRequest {
 #[derive(Debug, Clone)]
 pub struct EvalResult {
     pub output: String,
+    /// Indicates whether the output is an error message
+    /// Currently not used but kept for future error handling improvements
+    #[allow(dead_code)]
     pub is_error: bool,
 }
 
@@ -425,9 +428,10 @@ impl TclThreadWorker {
 
         match persistence.rollback_to(hash) {
             Ok(()) => {
-                // After rollback, we need to reload the interpreter state
-                // For now, just return success message
-                // TODO: Reload interpreter state from disk
+                // After rollback, state files have been reset via git
+                // The TCL interpreter still has old state in memory
+                // Restarting the bot (or just the TCL thread) loads fresh state from disk
+                // Since rollback is an admin-only operation rarely used, manual restart is acceptable
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("Rolled back to commit {}. Note: Restart bot to reload state.", hash),
                     is_error: false,

@@ -62,10 +62,16 @@ pub enum PluginCommand {
     SendToIrc { channel: String, text: String },
 
     /// Shutdown the plugin
+    /// NOTE: Currently unused - bot shutdown is handled differently.
+    /// Kept for potential graceful shutdown implementation.
+    #[allow(dead_code)]
     Shutdown,
 }
 
 /// Responses from plugins
+/// NOTE: Currently unused - we use oneshot channels for responses instead.
+/// Kept for potential future use.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PluginResponse {
     /// Result of TCL evaluation

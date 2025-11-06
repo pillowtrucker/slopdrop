@@ -9,6 +9,8 @@ use tracing::{debug, error, info};
 
 pub struct IrcClient {
     client: Client,
+    /// Server configuration (kept for potential future use, e.g., reconnection)
+    #[allow(dead_code)]
     config: ServerConfig,
     channel_members: ChannelMembers,
 }
