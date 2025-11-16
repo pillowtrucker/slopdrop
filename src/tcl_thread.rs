@@ -258,13 +258,24 @@ impl TclThreadWorker {
     fn handle_eval(&self, request: EvalRequest) {
         debug!("TCL thread evaluating: {}", request.code);
 
-        // Check privilege level
-        if request.is_admin && !self.privileged_users.contains(&request.nick) {
-            let _ = request.response_tx.send(EvalResult {
-                output: "error: tclAdmin command requires privileges".to_string(),
-                is_error: true,
+        // Check privilege level using hostmask matching
+        if request.is_admin {
+            // Build full hostmask: nick!ident@host
+            // host parameter contains "ident@host" as built in tcl_plugin
+            let hostmask = format!("{}!{}", request.nick, request.host);
+
+            // Check if hostmask matches any privileged pattern
+            let is_privileged = self.privileged_users.iter().any(|pattern| {
+                crate::hostmask::matches_hostmask(&hostmask, pattern)
             });
-            return;
+
+            if !is_privileged {
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("error: tclAdmin requires privileges (your hostmask: {})", hostmask),
+                    is_error: true,
+                });
+                return;
+            }
         }
 
         // Check for special commands

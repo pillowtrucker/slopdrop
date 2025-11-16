@@ -6,7 +6,13 @@ nickname = "slopdrop"
 channels = ["#bottest"]
 
 [security]
-privileged_users = ["admin"]
+# Privileged users (admins) using hostmask patterns
+# Supports wildcards: * (any sequence) and ? (single character)
+# Examples:
+#   "alice!*@*" - user alice from any host
+#   "*!*@*.example.com" - anyone from example.com domain
+#   "bob!~user@192.168.1.*" - bob with ident ~user from 192.168.1.x
+privileged_users = ["admin!*@*"]
 eval_timeout_ms = 30000
 
 [tcl]

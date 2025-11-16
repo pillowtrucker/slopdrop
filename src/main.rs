@@ -1,4 +1,5 @@
 mod config;
+mod hostmask;
 mod http_commands;
 mod http_tcl_commands;
 mod irc_client;

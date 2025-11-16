@@ -7,6 +7,17 @@ use std::path::PathBuf;
 use tcl::Interpreter;
 use tracing::{debug, info, warn};
 
+/// Information about a git commit
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub commit_id: String,
+    pub author: String,
+    pub message: String,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
 /// IRC user information for git commits
 #[derive(Debug, Clone)]
 pub struct UserInfo {
@@ -151,7 +162,7 @@ impl StatePersistence {
         changes: &StateChanges,
         user_info: &UserInfo,
         eval_code: &str,
-    ) -> Result<()> {
+    ) -> Result<Option<CommitInfo>> {
         // Save new/modified procs
         for proc_name in &changes.new_procs {
             if let Err(e) = self.save_proc(interp, proc_name) {
@@ -180,9 +191,59 @@ impl StatePersistence {
             }
         }
 
-        // Commit changes to git
-        if let Err(e) = self.git_commit(changes, user_info, eval_code) {
-            warn!("Failed to commit to git: {}", e);
+        // Commit changes to git and return commit info
+        match self.git_commit(changes, user_info, eval_code) {
+            Ok(commit_info) => {
+                // Auto-push to remote if configured
+                if let Err(e) = self.push_to_remote() {
+                    warn!("Failed to push to remote: {}", e);
+                }
+                Ok(Some(commit_info))
+            }
+            Err(e) => {
+                warn!("Failed to commit to git: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Push changes to remote repository if configured
+    fn push_to_remote(&self) -> Result<()> {
+        // Only push if we have a remote URL configured
+        if self.state_repo.is_none() {
+            debug!("No remote repository configured, skipping push");
+            return Ok(());
+        }
+
+        let repo = Repository::open(&self.state_path)
+            .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
+
+        // Find the origin remote or create it
+        let remote_name = "origin";
+        let remote_url = self.state_repo.as_ref().unwrap();
+
+        // Try to find existing remote
+        let mut remote = match repo.find_remote(remote_name) {
+            Ok(remote) => remote,
+            Err(_) => {
+                // Create remote if it doesn't exist
+                debug!("Creating remote 'origin' with URL: {}", remote_url);
+                repo.remote(remote_name, remote_url)?
+            }
+        };
+
+        // Push to remote
+        info!("Pushing to remote repository: {}", remote_url);
+
+        // Try pushing to main first
+        if let Err(e) = remote.push(&["refs/heads/main:refs/heads/main"], None) {
+            // If main doesn't exist, try master
+            debug!("Push to main failed ({}), trying master", e);
+            remote.push(&["refs/heads/master:refs/heads/master"], None)
+                .map_err(|e2| anyhow!("Failed to push to main: {} and master: {}", e, e2))?;
+            info!("Successfully pushed to master");
+        } else {
+            info!("Successfully pushed to main");
         }
 
         Ok(())
@@ -233,16 +294,20 @@ impl StatePersistence {
         Ok(())
     }
 
-    /// Create a git commit with the changes
+    /// Create a git commit with the changes and return commit information
     fn git_commit(
         &self,
         changes: &StateChanges,
         user_info: &UserInfo,
         eval_code: &str,
-    ) -> Result<()> {
+    ) -> Result<CommitInfo> {
         self.init_git_repo_if_needed()?;
         let repo = Repository::open(&self.state_path)
             .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
+
+        // Get parent commit for diff stats
+        let parent_commit = repo.head()?.peel_to_commit()?;
+        let parent_tree = parent_commit.tree()?;
 
         // Add all changed files to the index
         let mut index = repo.index()
@@ -271,9 +336,6 @@ impl StatePersistence {
         let tree_id = index.write_tree()?;
         let tree = repo.find_tree(tree_id)?;
 
-        // Get parent commit (HEAD)
-        let parent_commit = repo.head()?.peel_to_commit()?;
-
         // Create signature from user info
         let signature = user_info.to_signature()?;
 
@@ -287,9 +349,29 @@ impl StatePersistence {
             &[&parent_commit],
         )?;
 
-        info!("Created git commit {} by {}", commit_id, user_info.nick);
+        // Calculate diff stats
+        let new_commit = repo.find_commit(commit_id)?;
+        let new_tree = new_commit.tree()?;
 
-        Ok(())
+        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&new_tree), None)?;
+        let stats = diff.stats()?;
+
+        let commit_info = CommitInfo {
+            commit_id: commit_id.to_string(),
+            author: user_info.nick.clone(),
+            message: commit_msg,
+            files_changed: stats.files_changed(),
+            insertions: stats.insertions(),
+            deletions: stats.deletions(),
+        };
+
+        info!(
+            "Created git commit {} by {} ({} files, +{} -{} lines)",
+            commit_id, user_info.nick,
+            commit_info.files_changed, commit_info.insertions, commit_info.deletions
+        );
+
+        Ok(commit_info)
     }
 
     /// Format a commit message from the changes and evaluated code

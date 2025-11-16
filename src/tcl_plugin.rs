@@ -77,11 +77,16 @@ impl TclPlugin {
         debug!("Evaluating TCL: {} (admin={})", code, is_admin);
 
         // Send to TCL thread with timeout
+        // Build hostmask for privilege checking: nick!ident@host
+        let ident = message.author.ident.clone().unwrap_or_else(|| "user".to_string());
+        let host_part = message.author.host.clone().unwrap_or_else(|| "irc".to_string());
+        let full_host = format!("{}@{}", ident, host_part);
+
         let result = self.tcl_thread.eval(
             code.to_string(),
             is_admin,
             message.author.nick.clone(),
-            message.author.host.clone().unwrap_or_else(|| "irc".to_string()),
+            full_host,
             message.author.channel.clone(),
         ).await?;
 

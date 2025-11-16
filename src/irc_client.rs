@@ -74,7 +74,7 @@ impl IrcClient {
     ) -> Result<()> {
         match message.command {
             Command::PRIVMSG(ref target, ref msg) => {
-                if let Some(Prefix::Nickname(ref nick, ref _user, ref host)) = message.prefix {
+                if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
                     // Strip IRC formatting codes from the message
                     let clean_msg = irc_formatting::strip_irc_formatting(msg);
 
@@ -88,6 +88,7 @@ impl IrcClient {
                         };
 
                         let author = MessageAuthor::new(nick.clone(), channel)
+                            .with_ident(user.clone())
                             .with_host(host.clone());
 
                         let content = clean_msg;

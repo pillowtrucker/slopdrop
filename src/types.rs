@@ -10,6 +10,7 @@ pub type ChannelMembers = Arc<RwLock<HashMap<String, HashSet<String>>>>;
 #[derive(Debug, Clone)]
 pub struct MessageAuthor {
     pub nick: String,
+    pub ident: Option<String>,
     pub host: Option<String>,
     pub channel: String,
 }
@@ -18,6 +19,7 @@ impl MessageAuthor {
     pub fn new(nick: String, channel: String) -> Self {
         Self {
             nick,
+            ident: None,
             host: None,
             channel,
         }
@@ -26,6 +28,22 @@ impl MessageAuthor {
     pub fn with_host(mut self, host: String) -> Self {
         self.host = Some(host);
         self
+    }
+
+    pub fn with_ident(mut self, ident: String) -> Self {
+        self.ident = Some(ident);
+        self
+    }
+
+    /// Get full hostmask in format: nick!ident@host
+    /// Returns just nick if ident/host are not available
+    pub fn hostmask(&self) -> String {
+        match (&self.ident, &self.host) {
+            (Some(ident), Some(host)) => format!("{}!{}@{}", self.nick, ident, host),
+            (None, Some(host)) => format!("{}!@{}", self.nick, host),
+            (Some(ident), None) => format!("{}!{}", self.nick, ident),
+            (None, None) => self.nick.clone(),
+        }
     }
 }
 
