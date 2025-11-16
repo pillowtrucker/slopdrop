@@ -188,7 +188,20 @@ impl TclService {
             self.tcl_config.ssh_key.clone(),
         );
 
-        persistence.get_history(limit)
+        let history = persistence.get_history(limit)?;
+
+        // Convert tuples (hash, timestamp, author, message) to CommitInfo
+        Ok(history
+            .into_iter()
+            .map(|(commit_id, _timestamp, author, message)| CommitInfo {
+                commit_id,
+                author,
+                message,
+                files_changed: 0,  // Not available from git history
+                insertions: 0,
+                deletions: 0,
+            })
+            .collect())
     }
 
     /// Rollback to a specific commit
@@ -226,7 +239,8 @@ impl TclService {
 
     /// Check if a user is admin
     pub fn is_admin(&self, hostmask: &str) -> bool {
-        crate::hostmask::check_privileged(&self.security_config.privileged_users, hostmask)
+        self.security_config.privileged_users.iter()
+            .any(|pattern| crate::hostmask::matches_hostmask(hostmask, pattern))
     }
 
     /// Shutdown the service
