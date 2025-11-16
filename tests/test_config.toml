@@ -14,3 +14,4 @@ privileged_users = ["testuser"]
 [tcl]
 state_path = "/tmp/slopdrop_test_state"
 max_output_lines = 10
+# state_repo = "https://github.com/user/bot-state.git"  # Optional: clone from remote

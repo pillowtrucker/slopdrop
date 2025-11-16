@@ -27,6 +27,10 @@ pub struct SecurityConfig {
 pub struct TclConfig {
     pub state_path: PathBuf,
     pub max_output_lines: usize,
+    /// Optional remote git repository URL to clone state from
+    /// If set and state_path doesn't exist, will clone from this URL
+    /// Example: "https://github.com/user/bot-state.git"
+    pub state_repo: Option<String>,
 }
 
 impl Config {

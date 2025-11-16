@@ -206,6 +206,7 @@ impl TclThreadWorker {
         let interp = SafeTclInterp::new(
             security_config.eval_timeout_ms,
             &tcl_config.state_path,
+            tcl_config.state_repo.clone(),
         )?;
 
         // Register chanlist command
@@ -323,7 +324,10 @@ impl TclThreadWorker {
                     debug!("State changed: {:?}", changes);
 
                     let user_info = UserInfo::new(request.nick.clone(), request.host.clone());
-                    let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+                    let persistence = StatePersistence::with_repo(
+                        self.tcl_config.state_path.clone(),
+                        self.tcl_config.state_repo.clone(),
+                    );
 
                     if let Err(e) = persistence.save_changes(
                         self.interp.interpreter(),
@@ -355,7 +359,10 @@ impl TclThreadWorker {
             10
         };
 
-        let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+        let persistence = StatePersistence::with_repo(
+            self.tcl_config.state_path.clone(),
+            self.tcl_config.state_repo.clone(),
+        );
 
         match persistence.get_history(count) {
             Ok(commits) => {
@@ -424,7 +431,10 @@ impl TclThreadWorker {
             return;
         }
 
-        let persistence = StatePersistence::new(self.tcl_config.state_path.clone());
+        let persistence = StatePersistence::with_repo(
+            self.tcl_config.state_path.clone(),
+            self.tcl_config.state_repo.clone(),
+        );
 
         match persistence.rollback_to(hash) {
             Ok(()) => {

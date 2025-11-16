@@ -100,18 +100,47 @@ impl StateChanges {
 /// Manages state persistence to disk
 pub struct StatePersistence {
     state_path: PathBuf,
+    state_repo: Option<String>,
 }
 
 impl StatePersistence {
+    /// Create a new StatePersistence without remote repository support
+    /// NOTE: Prefer using with_repo() to support remote state cloning
+    #[allow(dead_code)]
     pub fn new(state_path: PathBuf) -> Self {
-        Self { state_path }
+        Self { state_path, state_repo: None }
+    }
+
+    pub fn with_repo(state_path: PathBuf, state_repo: Option<String>) -> Self {
+        Self { state_path, state_repo }
     }
 
     /// Ensure state directory and git repository are initialized
-    /// Creates directory structure and initializes git repo if needed
+    /// If state_repo is set and state_path doesn't exist, clones from remote
+    /// Otherwise creates directory structure and initializes git repo if needed
     /// This is called on bot startup to ensure state is ready
     pub fn ensure_initialized(&self) -> Result<()> {
+        // If state doesn't exist and we have a remote URL, clone it
+        if !self.state_path.exists() {
+            if let Some(ref repo_url) = self.state_repo {
+                info!("Cloning state from remote repository: {}", repo_url);
+                return self.clone_from_remote(repo_url);
+            }
+        }
+
+        // Otherwise initialize normally (create empty repo if needed)
         self.init_git_repo_if_needed()?;
+        Ok(())
+    }
+
+    /// Clone state repository from remote URL
+    fn clone_from_remote(&self, url: &str) -> Result<()> {
+        info!("Cloning state repository from: {}", url);
+
+        Repository::clone(url, &self.state_path)
+            .map_err(|e| anyhow!("Failed to clone state repository from {}: {}", url, e))?;
+
+        info!("Successfully cloned state repository to {:?}", self.state_path);
         Ok(())
     }
 

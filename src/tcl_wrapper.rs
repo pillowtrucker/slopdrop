@@ -20,7 +20,7 @@ impl SafeTclInterp {
 
 impl SafeTclInterp {
     /// Create a new safe TCL interpreter
-    pub fn new(timeout_ms: u64, state_path: &Path) -> Result<Self> {
+    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
 
@@ -54,11 +54,15 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
 
         // Ensure state directory exists and git repo is initialized
-        // This allows state to be loaded properly on first run
+        // If state_repo is set and state doesn't exist, clone from remote
+        // Otherwise create empty repo if needed
         if !state_path.exists() {
             debug!("State path doesn't exist, initializing: {:?}", state_path);
-            let persistence = crate::state::StatePersistence::new(state_path.to_path_buf());
-            // This will create the directory structure and initialize git repo
+            let persistence = crate::state::StatePersistence::with_repo(
+                state_path.to_path_buf(),
+                state_repo.clone(),
+            );
+            // This will clone from remote or create directory structure
             if let Err(e) = persistence.ensure_initialized() {
                 debug!("Failed to initialize state directory: {}. Will be created on first save.", e);
             }
@@ -278,7 +282,7 @@ mod tests {
     #[test]
     fn test_basic_eval() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
 
         let result = interp.eval("expr {1 + 1}").unwrap();
         assert_eq!(result.trim(), "2");
@@ -287,7 +291,7 @@ mod tests {
     #[test]
     fn test_dangerous_commands_blocked() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
 
         // These should fail or be unavailable
         let result = interp.eval("exec ls");
@@ -297,7 +301,7 @@ mod tests {
     #[test]
     fn test_proc_creation() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
 
         interp.eval("proc hello {} { return \"world\" }").unwrap();
         let result = interp.eval("hello").unwrap();

@@ -12,5 +12,8 @@ eval_timeout_ms = 30000
 [tcl]
 state_path = "./state"
 max_output_lines = 10
-# Git repository URL for state persistence (optional, for push/pull)
-# state_repo = "https://gitea.phosphoros.delivery/wrath/shaniqua-smeggdrop"
+# Git repository URL for state persistence (optional)
+# If set and state_path doesn't exist, will clone from this URL on startup
+# Otherwise creates a new local git repository
+# Example: state_repo = "https://gitea.phosphoros.delivery/wrath/shaniqua-smeggdrop"
+# state_repo = "https://github.com/user/bot-state.git"
