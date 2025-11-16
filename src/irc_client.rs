@@ -23,6 +23,9 @@ impl IrcClient {
             port: Some(config.port),
             use_tls: Some(config.use_tls),
             channels: config.channels.clone(),
+            // Accept self-signed certificates when using TLS
+            // This is necessary for connecting to IRC servers with self-signed certs
+            dangerously_accept_invalid_certs: Some(true),
             ..Default::default()
         };
 

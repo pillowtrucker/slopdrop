@@ -3,12 +3,24 @@ use crate::tcl_thread::TclThreadHandle;
 use crate::types::{ChannelMembers, Message, PluginCommand};
 use crate::validator;
 use anyhow::Result;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
+
+/// Cache entry for paginated output
+struct OutputCache {
+    lines: Vec<String>,
+    offset: usize,
+    timestamp: Instant,
+}
 
 pub struct TclPlugin {
     tcl_thread: TclThreadHandle,
     tcl_config: TclConfig,
+    security_config: SecurityConfig,
+    /// Cache for paginated output: (channel, nick) -> remaining output
+    output_cache: HashMap<(String, String), OutputCache>,
 }
 
 impl TclPlugin {
@@ -18,11 +30,13 @@ impl TclPlugin {
         channel_members: ChannelMembers,
     ) -> Result<Self> {
         let tcl_thread =
-            TclThreadHandle::spawn(tcl_config.clone(), security_config, channel_members)?;
+            TclThreadHandle::spawn(tcl_config.clone(), security_config.clone(), channel_members)?;
 
         Ok(Self {
             tcl_thread,
             tcl_config,
+            security_config,
+            output_cache: HashMap::new(),
         })
     }
 
@@ -58,6 +72,9 @@ impl TclPlugin {
         is_admin: bool,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        // Clean up old cache entries (older than 5 minutes)
+        self.cleanup_cache();
+
         // Extract the command (remove "tcl " or "tclAdmin " prefix)
         let code = if message.content.starts_with("tclAdmin ") {
             message.content.strip_prefix("tclAdmin ").unwrap_or(&message.content)
@@ -66,6 +83,11 @@ impl TclPlugin {
         } else {
             &message.content
         };
+
+        // Handle "more" command to retrieve cached output
+        if code.trim() == "more" {
+            return self.handle_more_command(&message, response_tx).await;
+        }
 
         // Validate bracket balancing
         if let Err(e) = validator::validate_brackets(code) {
@@ -90,32 +112,55 @@ impl TclPlugin {
             message.author.channel.clone(),
         ).await?;
 
+        // Send PM notifications to admins if state was committed
+        if let Some(ref commit_info) = result.commit_info {
+            self.send_commit_notifications(commit_info, &message, response_tx).await?;
+        }
+
         self.send_response(&message, result.output, response_tx).await?;
 
         Ok(())
     }
 
     async fn send_response(
-        &self,
+        &mut self,
         original_message: &Message,
         output: String,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
-        // Limit output lines
-        let lines: Vec<&str> = output.lines().collect();
-        let output = if lines.len() > self.tcl_config.max_output_lines {
-            let truncated: Vec<&str> = lines
-                .iter()
-                .take(self.tcl_config.max_output_lines)
-                .copied()
-                .collect();
-            format!(
-                "{}\n... ({} more lines truncated)",
-                truncated.join("\n"),
-                lines.len() - self.tcl_config.max_output_lines
+        // Split output into lines
+        let all_lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+        let max_lines = self.tcl_config.max_output_lines;
+
+        let (output, cache_remaining) = if all_lines.len() > max_lines {
+            // Store remaining lines in cache
+            let cache_key = (
+                original_message.author.channel.clone(),
+                original_message.author.nick.clone(),
+            );
+
+            let total_lines = all_lines.len();
+            let shown_lines: Vec<String> = all_lines.iter().take(max_lines).cloned().collect();
+
+            self.output_cache.insert(
+                cache_key,
+                OutputCache {
+                    lines: all_lines,
+                    offset: max_lines,
+                    timestamp: Instant::now(),
+                },
+            );
+
+            (
+                format!(
+                    "{}\n... ({} more lines - type 'tcl more' to continue)",
+                    shown_lines.join("\n"),
+                    total_lines - max_lines
+                ),
+                true,
             )
         } else {
-            output
+            (output, false)
         };
 
         response_tx
@@ -124,6 +169,141 @@ impl TclPlugin {
                 text: output,
             })
             .await?;
+
+        // Clean up cache entry if we showed all lines
+        if !cache_remaining {
+            let cache_key = (
+                original_message.author.channel.clone(),
+                original_message.author.nick.clone(),
+            );
+            self.output_cache.remove(&cache_key);
+        }
+
+        Ok(())
+    }
+
+    /// Send private message notifications to admins about git commits
+    async fn send_commit_notifications(
+        &self,
+        commit_info: &crate::state::CommitInfo,
+        original_message: &Message,
+        response_tx: &mpsc::Sender<PluginCommand>,
+    ) -> Result<()> {
+        // Extract admin nicks from hostmask patterns
+        // Simple extraction: take nick part before '!'
+        let mut admin_nicks = Vec::new();
+        for pattern in &self.security_config.privileged_users {
+            if let Some(nick_part) = pattern.split('!').next() {
+                // Skip wildcard-only patterns
+                if nick_part != "*" && !nick_part.is_empty() {
+                    admin_nicks.push(nick_part.to_string());
+                }
+            }
+        }
+
+        // Build notification message
+        let notification = format!(
+            "[Git] {} committed by {} | {} files changed (+{} -{}) | {}",
+            &commit_info.commit_id[..8],
+            commit_info.author,
+            commit_info.files_changed,
+            commit_info.insertions,
+            commit_info.deletions,
+            commit_info.message.lines().next().unwrap_or("")
+        );
+
+        // Send PM to each admin (except the sender)
+        for admin_nick in admin_nicks {
+            if admin_nick != original_message.author.nick {
+                debug!("Sending commit notification to {}", admin_nick);
+                response_tx
+                    .send(PluginCommand::SendToIrc {
+                        channel: admin_nick.clone(), // In IRC, nick as channel = PM
+                        text: notification.clone(),
+                    })
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Clean up cache entries older than 5 minutes
+    fn cleanup_cache(&mut self) {
+        let now = Instant::now();
+        let timeout = Duration::from_secs(300); // 5 minutes
+
+        self.output_cache.retain(|_, cache| {
+            now.duration_since(cache.timestamp) < timeout
+        });
+    }
+
+    /// Handle "more" command to show next chunk of cached output
+    async fn handle_more_command(
+        &mut self,
+        message: &Message,
+        response_tx: &mpsc::Sender<PluginCommand>,
+    ) -> Result<()> {
+        let cache_key = (
+            message.author.channel.clone(),
+            message.author.nick.clone(),
+        );
+
+        if let Some(cache) = self.output_cache.get_mut(&cache_key) {
+            let max_lines = self.tcl_config.max_output_lines;
+            let remaining = cache.lines.len() - cache.offset;
+
+            if remaining == 0 {
+                // No more lines
+                response_tx
+                    .send(PluginCommand::SendToIrc {
+                        channel: message.author.channel.clone(),
+                        text: "No more output.".to_string(),
+                    })
+                    .await?;
+                self.output_cache.remove(&cache_key);
+                return Ok(());
+            }
+
+            // Get next chunk of lines
+            let end = std::cmp::min(cache.offset + max_lines, cache.lines.len());
+            let chunk: Vec<String> = cache.lines[cache.offset..end].to_vec();
+            let new_offset = end;
+            let still_remaining = cache.lines.len() - new_offset;
+
+            // Update offset
+            cache.offset = new_offset;
+
+            // Build output
+            let output = if still_remaining > 0 {
+                format!(
+                    "{}\n... ({} more lines - type 'tcl more' to continue)",
+                    chunk.join("\n"),
+                    still_remaining
+                )
+            } else {
+                chunk.join("\n")
+            };
+
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel: message.author.channel.clone(),
+                    text: output,
+                })
+                .await?;
+
+            // Clean up if we showed all lines
+            if still_remaining == 0 {
+                self.output_cache.remove(&cache_key);
+            }
+        } else {
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel: message.author.channel.clone(),
+                    text: "No cached output. Run a tcl command first.".to_string(),
+                })
+                .await?;
+        }
 
         Ok(())
     }

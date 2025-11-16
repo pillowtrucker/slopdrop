@@ -28,6 +28,8 @@ pub struct EvalResult {
     /// Currently not used but kept for future error handling improvements
     #[allow(dead_code)]
     pub is_error: bool,
+    /// Git commit information (if state changed and was committed)
+    pub commit_info: Option<crate::state::CommitInfo>,
 }
 
 /// Commands that can be sent to the TCL thread
@@ -161,12 +163,14 @@ impl TclThreadHandle {
                     return Ok(EvalResult {
                         output: format!("error: timeout and failed to restart: {}", e),
                         is_error: true,
+                        commit_info: None,
                     });
                 }
 
                 Ok(EvalResult {
                     output: format!("error: evaluation timed out after {}s (thread restarted)", self.timeout.as_secs()),
                     is_error: true,
+                    commit_info: None,
                 })
             }
         }
@@ -207,6 +211,7 @@ impl TclThreadWorker {
             security_config.eval_timeout_ms,
             &tcl_config.state_path,
             tcl_config.state_repo.clone(),
+            tcl_config.ssh_key.clone(),
         )?;
 
         // Register chanlist command
@@ -273,6 +278,7 @@ impl TclThreadWorker {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: tclAdmin requires privileges (your hostmask: {})", hostmask),
                     is_error: true,
+                    commit_info: None,
                 });
                 return;
             }
@@ -319,14 +325,17 @@ impl TclThreadWorker {
             Ok(output) => EvalResult {
                 output,
                 is_error: false,
+                commit_info: None,
             },
             Err(e) => EvalResult {
                 output: format!("error: {}", e),
                 is_error: true,
+                commit_info: None,
             },
         };
 
         // Capture state after and save if changed
+        let mut output = output;
         if let Ok(state_after) = InterpreterState::capture(self.interp.interpreter()) {
             if let Ok(state_before) = state_before {
                 let changes = state_before.diff(&state_after);
@@ -338,17 +347,22 @@ impl TclThreadWorker {
                     let persistence = StatePersistence::with_repo(
                         self.tcl_config.state_path.clone(),
                         self.tcl_config.state_repo.clone(),
+                        self.tcl_config.ssh_key.clone(),
                     );
 
-                    if let Err(e) = persistence.save_changes(
+                    match persistence.save_changes(
                         self.interp.interpreter(),
                         &changes,
                         &user_info,
                         &request.code,
                     ) {
-                        warn!("Failed to save state: {}", e);
-                    } else {
-                        debug!("State saved successfully");
+                        Ok(commit_info) => {
+                            debug!("State saved successfully");
+                            output.commit_info = commit_info;
+                        }
+                        Err(e) => {
+                            warn!("Failed to save state: {}", e);
+                        }
                     }
                 }
             }
@@ -373,6 +387,7 @@ impl TclThreadWorker {
         let persistence = StatePersistence::with_repo(
             self.tcl_config.state_path.clone(),
             self.tcl_config.state_repo.clone(),
+            self.tcl_config.ssh_key.clone(),
         );
 
         match persistence.get_history(count) {
@@ -381,6 +396,7 @@ impl TclThreadWorker {
                     let _ = request.response_tx.send(EvalResult {
                         output: "No commits found".to_string(),
                         is_error: false,
+                        commit_info: None,
                     });
                     return;
                 }
@@ -400,12 +416,14 @@ impl TclThreadWorker {
                 let _ = request.response_tx.send(EvalResult {
                     output: output.trim_end().to_string(),
                     is_error: false,
+                    commit_info: None,
                 });
             }
             Err(e) => {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: {}", e),
                     is_error: true,
+                    commit_info: None,
                 });
             }
         }
@@ -417,6 +435,7 @@ impl TclThreadWorker {
             let _ = request.response_tx.send(EvalResult {
                 output: "error: rollback requires admin privileges (use tclAdmin)".to_string(),
                 is_error: true,
+                commit_info: None,
             });
             return;
         }
@@ -430,6 +449,7 @@ impl TclThreadWorker {
             let _ = request.response_tx.send(EvalResult {
                 output: "error: usage: rollback <commit-hash>".to_string(),
                 is_error: true,
+                commit_info: None,
             });
             return;
         };
@@ -438,6 +458,7 @@ impl TclThreadWorker {
             let _ = request.response_tx.send(EvalResult {
                 output: "error: usage: rollback <commit-hash>".to_string(),
                 is_error: true,
+                commit_info: None,
             });
             return;
         }
@@ -445,6 +466,7 @@ impl TclThreadWorker {
         let persistence = StatePersistence::with_repo(
             self.tcl_config.state_path.clone(),
             self.tcl_config.state_repo.clone(),
+            self.tcl_config.ssh_key.clone(),
         );
 
         match persistence.rollback_to(hash) {
@@ -456,12 +478,14 @@ impl TclThreadWorker {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("Rolled back to commit {}. Note: Restart bot to reload state.", hash),
                     is_error: false,
+                    commit_info: None,
                 });
             }
             Err(e) => {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: {}", e),
                     is_error: true,
+                    commit_info: None,
                 });
             }
         }
@@ -477,6 +501,7 @@ impl TclThreadWorker {
             let _ = request.response_tx.send(EvalResult {
                 output: "error: usage: chanlist <channel>".to_string(),
                 is_error: true,
+                commit_info: None,
             });
             return;
         };
@@ -485,6 +510,7 @@ impl TclThreadWorker {
             let _ = request.response_tx.send(EvalResult {
                 output: "error: usage: chanlist <channel>".to_string(),
                 is_error: true,
+                commit_info: None,
             });
             return;
         }
@@ -497,6 +523,7 @@ impl TclThreadWorker {
                         let _ = request.response_tx.send(EvalResult {
                             output: String::new(),
                             is_error: false,
+                            commit_info: None,
                         });
                     } else {
                         let mut sorted: Vec<_> = nicks.iter().cloned().collect();
@@ -504,6 +531,7 @@ impl TclThreadWorker {
                         let _ = request.response_tx.send(EvalResult {
                             output: sorted.join(" "),
                             is_error: false,
+                            commit_info: None,
                         });
                     }
                 } else {
@@ -511,6 +539,7 @@ impl TclThreadWorker {
                     let _ = request.response_tx.send(EvalResult {
                         output: String::new(),
                         is_error: false,
+                        commit_info: None,
                     });
                 }
             }
@@ -518,6 +547,7 @@ impl TclThreadWorker {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: failed to read channel members: {}", e),
                     is_error: true,
+                    commit_info: None,
                 });
             }
         }

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use git2::{Repository, Signature, IndexAddOption};
+use git2::{Repository, Signature, IndexAddOption, Cred, RemoteCallbacks, PushOptions};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -112,6 +112,7 @@ impl StateChanges {
 pub struct StatePersistence {
     state_path: PathBuf,
     state_repo: Option<String>,
+    ssh_key: Option<PathBuf>,
 }
 
 impl StatePersistence {
@@ -119,11 +120,19 @@ impl StatePersistence {
     /// NOTE: Prefer using with_repo() to support remote state cloning
     #[allow(dead_code)]
     pub fn new(state_path: PathBuf) -> Self {
-        Self { state_path, state_repo: None }
+        Self {
+            state_path,
+            state_repo: None,
+            ssh_key: None,
+        }
     }
 
-    pub fn with_repo(state_path: PathBuf, state_repo: Option<String>) -> Self {
-        Self { state_path, state_repo }
+    pub fn with_repo(state_path: PathBuf, state_repo: Option<String>, ssh_key: Option<PathBuf>) -> Self {
+        Self {
+            state_path,
+            state_repo,
+            ssh_key,
+        }
     }
 
     /// Ensure state directory and git repository are initialized
@@ -208,7 +217,8 @@ impl StatePersistence {
     }
 
     /// Push changes to remote repository if configured
-    fn push_to_remote(&self) -> Result<()> {
+    /// Supports both HTTPS and SSH (with key or agent)
+    pub fn push_to_remote(&self) -> Result<()> {
         // Only push if we have a remote URL configured
         if self.state_repo.is_none() {
             debug!("No remote repository configured, skipping push");
@@ -232,15 +242,56 @@ impl StatePersistence {
             }
         };
 
+        // Set up credentials callback for SSH
+        let mut callbacks = RemoteCallbacks::new();
+        let ssh_key = self.ssh_key.clone();
+
+        callbacks.credentials(move |_url, username_from_url, _allowed_types| {
+            let username = username_from_url.unwrap_or("git");
+
+            // Try SSH key if configured
+            if let Some(ref key_path) = ssh_key {
+                debug!("Using SSH key: {:?}", key_path);
+                return Cred::ssh_key(username, None, key_path, None);
+            }
+
+            // Fall back to SSH agent
+            debug!("Using SSH agent for authentication");
+            Cred::ssh_key_from_agent(username)
+        });
+
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(callbacks);
+
         // Push to remote
         info!("Pushing to remote repository: {}", remote_url);
 
         // Try pushing to main first
-        if let Err(e) = remote.push(&["refs/heads/main:refs/heads/main"], None) {
+        if let Err(e) = remote.push(
+            &["refs/heads/main:refs/heads/main"],
+            Some(&mut push_options)
+        ) {
             // If main doesn't exist, try master
             debug!("Push to main failed ({}), trying master", e);
-            remote.push(&["refs/heads/master:refs/heads/master"], None)
-                .map_err(|e2| anyhow!("Failed to push to main: {} and master: {}", e, e2))?;
+
+            // Need fresh callbacks for retry
+            let mut callbacks2 = RemoteCallbacks::new();
+            let ssh_key2 = self.ssh_key.clone();
+            callbacks2.credentials(move |_url, username_from_url, _allowed_types| {
+                let username = username_from_url.unwrap_or("git");
+                if let Some(ref key_path) = ssh_key2 {
+                    return Cred::ssh_key(username, None, key_path, None);
+                }
+                Cred::ssh_key_from_agent(username)
+            });
+
+            let mut push_options2 = PushOptions::new();
+            push_options2.remote_callbacks(callbacks2);
+
+            remote.push(
+                &["refs/heads/master:refs/heads/master"],
+                Some(&mut push_options2)
+            ).map_err(|e2| anyhow!("Failed to push to main: {} and master: {}", e, e2))?;
             info!("Successfully pushed to master");
         } else {
             info!("Successfully pushed to main");

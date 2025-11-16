@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tcl::Interpreter;
 use tracing::debug;
 
@@ -20,7 +20,7 @@ impl SafeTclInterp {
 
 impl SafeTclInterp {
     /// Create a new safe TCL interpreter
-    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>) -> Result<Self> {
+    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
 
@@ -61,6 +61,7 @@ impl SafeTclInterp {
             let persistence = crate::state::StatePersistence::with_repo(
                 state_path.to_path_buf(),
                 state_repo.clone(),
+                ssh_key.clone(),
             );
             // This will clone from remote or create directory structure
             if let Err(e) = persistence.ensure_initialized() {
@@ -282,7 +283,7 @@ mod tests {
     #[test]
     fn test_basic_eval() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
 
         let result = interp.eval("expr {1 + 1}").unwrap();
         assert_eq!(result.trim(), "2");
@@ -291,7 +292,7 @@ mod tests {
     #[test]
     fn test_dangerous_commands_blocked() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
 
         // These should fail or be unavailable
         let result = interp.eval("exec ls");
@@ -301,7 +302,7 @@ mod tests {
     #[test]
     fn test_proc_creation() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
 
         interp.eval("proc hello {} { return \"world\" }").unwrap();
         let result = interp.eval("hello").unwrap();
