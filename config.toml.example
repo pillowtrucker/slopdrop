@@ -1,0 +1,168 @@
+# Slopdrop Configuration
+#
+# This file configures slopdrop's behavior across all frontends.
+# Slopdrop supports multiple frontends that can run simultaneously:
+#   - IRC bot (--irc, default)
+#   - CLI REPL (--cli)
+#   - TUI (--tui)
+#   - Web server (--web)
+#
+# Usage examples:
+#   ./slopdrop                    # IRC bot only (default)
+#   ./slopdrop --cli              # CLI REPL only
+#   ./slopdrop --tui              # TUI only
+#   ./slopdrop --web              # Web server only
+#   ./slopdrop --irc --web        # Both IRC and Web
+#   ./slopdrop --cli --tui --web  # All except IRC
+
+# ============================================================================
+# IRC FRONTEND CONFIGURATION
+# ============================================================================
+# Used when running with --irc (or no flags, as IRC is default)
+
+[server]
+# IRC server hostname
+hostname = "irc.libera.chat"
+
+# IRC server port (usually 6667 for plaintext, 6697 for TLS)
+port = 6697
+
+# Use TLS/SSL connection
+use_tls = true
+
+# Bot nickname
+nickname = "slopdrop"
+
+# Channels to join automatically
+# The bot will respond to 'tcl' and 'tclAdmin' commands in these channels
+channels = ["#bottest"]
+
+# ============================================================================
+# SECURITY CONFIGURATION
+# ============================================================================
+# Applies to all frontends
+
+[security]
+# Privileged users (admins) using hostmask patterns (IRC-style)
+# Admins can:
+#   - Define new procedures with 'tcl proc ...'
+#   - Use tclAdmin commands (history, rollback)
+#   - Execute admin-only operations via web API (is_admin: true)
+#
+# Hostmask pattern syntax (supports wildcards):
+#   * - matches any sequence of characters
+#   ? - matches a single character
+#
+# Examples:
+#   "alice!*@*"                 - user alice from any host
+#   "*!*@*.example.com"         - anyone from example.com domain
+#   "bob!~user@192.168.1.*"     - bob with ident ~user from 192.168.1.x
+#   "admin!~admin@203.0.113.5"  - exact hostmask match
+#
+# For CLI/TUI/Web frontends, admins are identified by:
+#   - CLI/TUI: Local username (e.g., "alice@local")
+#   - Web: Set is_admin: true in API requests (no auth yet)
+privileged_users = [
+    "admin!*@*"
+]
+
+# Timeout for TCL evaluation in milliseconds
+# Prevents infinite loops from hanging the bot
+# Default: 30000 (30 seconds)
+eval_timeout_ms = 30000
+
+# ============================================================================
+# TCL INTERPRETER CONFIGURATION
+# ============================================================================
+# Applies to all frontends (shared TCL state)
+
+[tcl]
+# Directory for TCL state persistence
+# All TCL state is saved here and versioned with git
+# Each evaluation that changes state creates a git commit
+state_path = "./state"
+
+# Maximum lines of output to show at once
+# Excess output is cached and available via 'more' command
+# For IRC: 'tcl more'
+# For CLI: '.more'
+# For TUI: F2 key
+# For Web: GET /api/more
+max_output_lines = 10
+
+# ---- Optional Git Remote Configuration ----
+
+# Git repository URL for state synchronization (optional)
+# If set and state_path doesn't exist, will clone from this URL on startup
+# Otherwise creates a new local git repository
+#
+# Supported URL formats:
+#   HTTPS: "https://github.com/user/bot-state.git"
+#   SSH:   "git@github.com:user/bot-state.git"
+#   Local: "/path/to/repo.git"
+#
+# Examples:
+#   state_repo = "https://github.com/myuser/slopdrop-state.git"
+#   state_repo = "git@github.com:myuser/slopdrop-state.git"
+#   state_repo = "https://gitea.example.com/myuser/bot-state.git"
+#
+# Note: If using SSH URLs, you may also need to set ssh_key below
+# state_repo = "https://github.com/user/bot-state.git"
+
+# SSH private key path for git push authentication (optional)
+# Required when using SSH URLs (git@github.com:user/repo.git)
+# Falls back to SSH agent if not specified
+#
+# Examples:
+#   ssh_key = "/home/user/.ssh/id_rsa"
+#   ssh_key = "/home/user/.ssh/bot_deploy_key"
+#
+# Note: Make sure the key has write access to the repository
+# ssh_key = "/home/user/.ssh/id_rsa"
+
+# ============================================================================
+# CLI FRONTEND CONFIGURATION (future)
+# ============================================================================
+# These settings will configure the CLI REPL when implemented
+
+# [cli]
+# Prompt string (default: "slopdrop> ")
+# prompt = "tcl> "
+#
+# History file location (default: ~/.slopdrop_history)
+# history_file = "/home/user/.slopdrop_history"
+#
+# Maximum history entries (default: 1000)
+# history_size = 1000
+
+# ============================================================================
+# TUI FRONTEND CONFIGURATION (future)
+# ============================================================================
+# These settings will configure the TUI when implemented
+
+# [tui]
+# Color scheme (default: "default")
+# Options: default, dark, light, solarized
+# theme = "default"
+#
+# Refresh interval in milliseconds (default: 100)
+# refresh_ms = 100
+
+# ============================================================================
+# WEB FRONTEND CONFIGURATION (future)
+# ============================================================================
+# These settings will configure the web server when implemented
+
+# [web]
+# Listen address (default: "127.0.0.1")
+# bind_address = "127.0.0.1"
+#
+# Listen port (default: 8080)
+# port = 8080
+#
+# Enable CORS (default: false)
+# cors_enabled = true
+#
+# Authentication (future feature)
+# auth_enabled = false
+# auth_secret = "your-secret-key-here"

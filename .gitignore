@@ -1109,4 +1109,12 @@ zsdoc/data
 !/tests/_output/.gitkeep
 
 # End of https://www.toptal.com/developers/gitignore/api/java,haskell,scala,python,linux,windows,c,c++,ruby,emacs,assembler,tex,latex,zsh,bash,lua,nohup,perl,patch,pydev,autotools,scala,sbt,rust,valgrind
-n
+
+# State directory (separate git repository)
+state/
+
+# Test IRC server binary (downloaded by setup script)
+tests/ergo/ergo
+tests/ergo/*.db
+tests/ergo/*.db-shm
+tests/ergo/*.db-wal

@@ -1,6 +1,50 @@
 [package]
 name = "slopdrop"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+tokio = { version = "1", features = ["full"] }
+irc = "1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tcl = { git = "https://github.com/oooutlk/tcltk", package = "tcl" }
+futures = "0.3"
+sha1 = "0.10"
+git2 = "0.18"
+ureq = { version = "2", features = ["json"] }
+base64 = "0.21"
+chrono = "0.4"
+regex = "1"
+
+# Frontend support
+async-trait = "0.1"
+whoami = "1.5"
+
+# CLI frontend
+rustyline = { version = "13.0", optional = true }
+
+# TUI frontend
+ratatui = { version = "0.26", optional = true }
+crossterm = { version = "0.27", optional = true }
+
+# Web frontend
+axum = { version = "0.7", features = ["ws"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.5", features = ["fs", "cors"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["frontend-irc"]
+frontend-irc = []
+frontend-cli = ["rustyline"]
+frontend-tui = ["ratatui", "crossterm"]
+frontend-web = ["axum", "tower", "tower-http"]
+all-frontends = ["frontend-irc", "frontend-cli", "frontend-tui", "frontend-web"]
