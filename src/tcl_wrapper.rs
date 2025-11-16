@@ -53,6 +53,17 @@ impl SafeTclInterp {
         interpreter.eval(crate::smeggdrop_commands::encoding_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
 
+        // Ensure state directory exists and git repo is initialized
+        // This allows state to be loaded properly on first run
+        if !state_path.exists() {
+            debug!("State path doesn't exist, initializing: {:?}", state_path);
+            let persistence = crate::state::StatePersistence::new(state_path.to_path_buf());
+            // This will create the directory structure and initialize git repo
+            if let Err(e) = persistence.ensure_initialized() {
+                debug!("Failed to initialize state directory: {}. Will be created on first save.", e);
+            }
+        }
+
         // Load state if it exists
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);

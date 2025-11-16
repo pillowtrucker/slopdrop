@@ -107,6 +107,14 @@ impl StatePersistence {
         Self { state_path }
     }
 
+    /// Ensure state directory and git repository are initialized
+    /// Creates directory structure and initializes git repo if needed
+    /// This is called on bot startup to ensure state is ready
+    pub fn ensure_initialized(&self) -> Result<()> {
+        self.init_git_repo_if_needed()?;
+        Ok(())
+    }
+
     /// Save changed procs and vars to disk and commit to git
     pub fn save_changes(
         &self,
