@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Comprehensive integration tests for slopdrop IRC bot
 # Tests ALL functionality
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Setup script to download Ergo IRC server for testing
 # This avoids storing the binary in git
 
