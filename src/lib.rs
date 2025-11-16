@@ -13,3 +13,10 @@ pub mod tcl_thread;
 pub mod tcl_wrapper;
 pub mod types;
 pub mod validator;
+
+// Multi-frontend architecture
+pub mod frontend;
+pub mod tcl_service;
+
+// Frontend implementations
+pub mod frontends;
