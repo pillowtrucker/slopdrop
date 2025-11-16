@@ -8,7 +8,7 @@ use tcl::Interpreter;
 use tracing::{debug, info, warn};
 
 /// Information about a git commit
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommitInfo {
     pub commit_id: String,
     pub author: String,

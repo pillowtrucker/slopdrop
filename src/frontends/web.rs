@@ -50,9 +50,9 @@ impl Default for WebConfig {
 
 /// Shared application state
 #[derive(Clone)]
-struct AppState {
-    tcl_service: Arc<Mutex<TclService>>,
-    config: WebConfig,
+pub struct AppState {
+    pub tcl_service: Arc<Mutex<TclService>>,
+    pub config: WebConfig,
 }
 
 /// Request to evaluate TCL code
@@ -132,7 +132,7 @@ impl WebFrontend {
     }
 
     /// Build the axum router
-    fn build_router(state: AppState) -> Router {
+    pub fn build_router(state: AppState) -> Router {
         // CORS configuration
         let cors = CorsLayer::new()
             .allow_origin(Any)
@@ -201,6 +201,11 @@ impl Frontend for WebFrontend {
     fn is_running(&self) -> bool {
         *self.running.read().unwrap()
     }
+}
+
+/// Create a router for testing
+pub fn create_router(state: AppState) -> Router {
+    WebFrontend::build_router(state)
 }
 
 /// Serve the index page
