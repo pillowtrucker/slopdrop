@@ -48,6 +48,7 @@ async fn create_test_client(nick: &str) -> Result<Client, Box<dyn std::error::Er
         server: Some("127.0.0.1".to_string()),
         port: Some(16667),
         channels: vec!["#test".to_string()],
+        use_tls: Some(false), // Disable TLS for test server
         ..Default::default()
     };
 

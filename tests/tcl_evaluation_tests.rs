@@ -1,4 +1,8 @@
 use slopdrop::tcl_wrapper::SafeTclInterp;
+use slopdrop::tcl_thread::TclThreadHandle;
+use slopdrop::config::{SecurityConfig, TclConfig};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 use std::path::PathBuf;
 
@@ -84,20 +88,52 @@ fn test_dangerous_commands_blocked() {
     assert!(result.is_err());
 }
 
-// NOTE: Timeout test disabled because it can hang the test runner
-// The timeout mechanism works by spawning a thread and killing it,
-// but the test itself needs to complete within a reasonable time
-// #[test]
-// fn test_timeout_handling() {
-//     let (_temp, state_path) = create_temp_state();
-//     let interp = SafeTclInterp::new(100, &state_path, None, None).unwrap(); // 100ms timeout
-//
-//     // This should timeout (infinite loop)
-//     let result = interp.eval("while {1} {}");
-//     assert!(result.is_err());
-//     let err_msg = result.unwrap_err().to_string();
-//     assert!(err_msg.contains("timeout") || err_msg.contains("Timeout"));
-// }
+#[tokio::test]
+async fn test_timeout_handling() {
+    let (_temp, state_path) = create_temp_state();
+
+    // Create a TCL thread with a short timeout (500ms)
+    let security_config = SecurityConfig {
+        eval_timeout_ms: 500,
+        privileged_users: vec![],
+    };
+
+    let tcl_config = TclConfig {
+        state_path: state_path.clone(),
+        state_repo: None,
+        ssh_key: None,
+        max_output_lines: 10,
+    };
+
+    // Create empty channel members
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+
+    let mut tcl_thread = TclThreadHandle::spawn(
+        tcl_config,
+        security_config,
+        channel_members,
+    ).unwrap();
+
+    // Give the thread time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // This should timeout (infinite loop)
+    let result = tcl_thread.eval(
+        "while {1} {}".to_string(),
+        false,
+        "testuser".to_string(),
+        "testhost".to_string(),
+        "#test".to_string(),
+    ).await;
+
+    assert!(result.is_ok()); // The method returns Ok with error message on timeout
+    let eval_result = result.unwrap();
+    assert!(eval_result.is_error);
+    assert!(eval_result.output.contains("timeout") || eval_result.output.contains("timed out"));
+
+    // Cleanup
+    tcl_thread.shutdown();
+}
 
 #[test]
 fn test_variable_persistence() {
