@@ -6,13 +6,12 @@ use crate::config::{SecurityConfig, TclConfig};
 use crate::frontend::Frontend;
 use crate::state::CommitInfo;
 use crate::tcl_service::{EvalContext, EvalResponse, TclService};
-use crate::types::ChannelMembers;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::{
-    extract::{Query, State as AxumState, WebSocketUpgrade},
+    extract::{Query, State as AxumState},
     http::{Method, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::Html,
     routing::{get, post},
     Json, Router,
 };

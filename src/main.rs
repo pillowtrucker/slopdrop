@@ -26,7 +26,7 @@ use config::Config;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber;
 
 #[derive(Debug)]
