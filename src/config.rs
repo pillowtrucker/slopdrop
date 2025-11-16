@@ -31,6 +31,10 @@ pub struct TclConfig {
     /// If set and state_path doesn't exist, will clone from this URL
     /// Example: "https://github.com/user/bot-state.git"
     pub state_repo: Option<String>,
+    /// Optional SSH private key path for git push authentication
+    /// Required if using SSH URLs (git@github.com:user/repo.git)
+    /// Example: "/home/user/.ssh/id_rsa"
+    pub ssh_key: Option<PathBuf>,
 }
 
 impl Config {

@@ -23,3 +23,7 @@ max_output_lines = 10
 # Otherwise creates a new local git repository
 # Example: state_repo = "https://gitea.phosphoros.delivery/wrath/shaniqua-smeggdrop"
 # state_repo = "https://github.com/user/bot-state.git"
+# SSH private key path for git push authentication (optional)
+# Required when using SSH URLs (git@github.com:user/repo.git)
+# Falls back to SSH agent if not specified
+# ssh_key = "/home/user/.ssh/id_rsa"
