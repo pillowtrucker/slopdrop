@@ -20,7 +20,27 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecurityConfig {
     pub privileged_users: Vec<String>,
+    /// Blacklisted user hostmask patterns (denied from running eval commands)
+    /// Example: ["baduser!*@*", "*!*@evil.example.com"]
+    #[serde(default)]
+    pub blacklisted_users: Vec<String>,
     pub eval_timeout_ms: u64,
+    /// Memory limit per evaluation in megabytes (Unix only, 0 = no limit)
+    /// Default: 256 MB
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit_mb: u64,
+    /// Maximum recursion depth for TCL procedures (0 = no limit)
+    /// Default: 1000
+    #[serde(default = "default_recursion_limit")]
+    pub max_recursion_depth: u32,
+}
+
+fn default_memory_limit() -> u64 {
+    256 // 256 MB default
+}
+
+fn default_recursion_limit() -> u32 {
+    1000 // 1000 levels deep
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

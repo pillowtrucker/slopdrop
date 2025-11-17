@@ -5,7 +5,6 @@
 use crate::config::{SecurityConfig, TclConfig};
 use crate::frontend::Frontend;
 use crate::tcl_service::{EvalContext, TclService};
-use crate::types::ChannelMembers;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use crossterm::{
@@ -16,16 +15,15 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    style::{Color, Style},
+    text::Line,
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::info;
 
 /// TUI frontend configuration
 #[derive(Clone, Debug)]
@@ -79,6 +77,8 @@ impl Default for AppState {
 
 /// TUI frontend implementation
 pub struct TuiFrontend {
+    /// Frontend name (for trait implementation)
+    #[allow(dead_code)]
     name: String,
     config: TuiConfig,
     tcl_service: TclService,

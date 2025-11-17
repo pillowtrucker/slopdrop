@@ -207,6 +207,12 @@ impl StatePersistence {
                 if let Err(e) = self.push_to_remote() {
                     warn!("Failed to push to remote: {}", e);
                 }
+
+                // Run git gc periodically (every 100 commits) to prevent repo bloat
+                if let Err(e) = self.maybe_run_git_gc() {
+                    warn!("Failed to run git gc: {}", e);
+                }
+
                 Ok(Some(commit_info))
             }
             Err(e) => {
@@ -686,6 +692,40 @@ impl StatePersistence {
             .map_err(|e| anyhow!("Failed to reset to commit: {}", e))?;
 
         info!("Rolled back to commit {}", commit_hash);
+        Ok(())
+    }
+
+    /// Run git gc if the commit count is a multiple of 100
+    /// This prevents the repository from growing too large over time
+    fn maybe_run_git_gc(&self) -> Result<()> {
+        let repo = Repository::open(&self.state_path)
+            .map_err(|e| anyhow!("Failed to open git repository: {}", e))?;
+
+        // Count total commits
+        let mut revwalk = repo.revwalk()?;
+        revwalk.push_head()?;
+        let commit_count = revwalk.count();
+
+        // Run gc every 100 commits
+        if commit_count % 100 == 0 {
+            info!("Running git gc (commit count: {})", commit_count);
+
+            // Run git gc using system command
+            use std::process::Command;
+            let output = Command::new("git")
+                .args(&["gc", "--auto", "--quiet"])
+                .current_dir(&self.state_path)
+                .output()
+                .map_err(|e| anyhow!("Failed to run git gc: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!("git gc failed: {}", stderr);
+            } else {
+                debug!("git gc completed successfully");
+            }
+        }
+
         Ok(())
     }
 }

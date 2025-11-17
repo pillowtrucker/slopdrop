@@ -5,11 +5,10 @@
 use crate::config::{SecurityConfig, TclConfig};
 use crate::frontend::Frontend;
 use crate::tcl_service::{EvalContext, TclService};
-use crate::types::ChannelMembers;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result as RustylineResult};
+use rustyline::DefaultEditor;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{error, info};
@@ -40,6 +39,8 @@ impl Default for CliConfig {
 
 /// CLI frontend implementation
 pub struct CliFrontend {
+    /// Frontend name (for trait implementation)
+    #[allow(dead_code)]
     name: String,
     config: CliConfig,
     tcl_service: TclService,

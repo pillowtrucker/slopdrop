@@ -1,7 +1,31 @@
 use anyhow::{anyhow, Result};
+use regex::Regex;
 use std::path::{Path, PathBuf};
 use tcl::Interpreter;
 use tracing::debug;
+
+/// Sanitize error messages to prevent information disclosure
+/// Removes filesystem paths and other sensitive information
+fn sanitize_error_message(error_msg: &str) -> String {
+    // Remove absolute paths (Unix and Windows style)
+    // Match patterns like /home/user/..., /var/..., C:\Users\..., etc.
+    let re_unix_path = Regex::new(r"/[a-zA-Z0-9_/.-]+").unwrap();
+    let re_win_path = Regex::new(r"[A-Za-z]:\\[a-zA-Z0-9_\\.-]+").unwrap();
+
+    let mut sanitized = error_msg.to_string();
+
+    // Replace Unix paths with generic placeholder
+    sanitized = re_unix_path.replace_all(&sanitized, "[PATH]").to_string();
+
+    // Replace Windows paths with generic placeholder
+    sanitized = re_win_path.replace_all(&sanitized, "[PATH]").to_string();
+
+    // Remove any remaining file:// URLs
+    let re_file_url = Regex::new(r"file://[^\s]+").unwrap();
+    sanitized = re_file_url.replace_all(&sanitized, "[FILE-URL]").to_string();
+
+    sanitized
+}
 
 /// Wrapper around a TCL interpreter with safety features
 /// Note: This is not Send/Sync due to TCL interpreter limitations
@@ -20,9 +44,17 @@ impl SafeTclInterp {
 
 impl SafeTclInterp {
     /// Create a new safe TCL interpreter
-    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>) -> Result<Self> {
+    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>, max_recursion_depth: u32) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
+
+        // Set recursion limit (0 = no limit, use TCL default)
+        if max_recursion_depth > 0 {
+            let recursion_cmd = format!("interp recursionlimit {{}} {}", max_recursion_depth);
+            interpreter.eval(recursion_cmd.as_str())
+                .map_err(|e| anyhow!("Failed to set recursion limit: {:?}", e))?;
+            debug!("Set TCL recursion limit to {}", max_recursion_depth);
+        }
 
         // Add tcllib path to auto_path for package loading (sha1, etc.)
         let _ = interpreter.eval("lappend auto_path /usr/share/tcltk");
@@ -217,7 +249,10 @@ impl SafeTclInterp {
                     .map(|obj| obj.get_string())
                     .unwrap_or_else(|| format!("{:?}", e));
 
-                Err(anyhow!("TCL Error: {}", error_info))
+                // Sanitize error message to prevent path disclosure
+                let sanitized = sanitize_error_message(&error_info);
+
+                Err(anyhow!("TCL Error: {}", sanitized))
             }
         }
     }
@@ -283,7 +318,7 @@ mod tests {
     #[test]
     fn test_basic_eval() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         let result = interp.eval("expr {1 + 1}").unwrap();
         assert_eq!(result.trim(), "2");
@@ -292,7 +327,7 @@ mod tests {
     #[test]
     fn test_dangerous_commands_blocked() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         // These should fail or be unavailable
         let result = interp.eval("exec ls");
@@ -302,7 +337,7 @@ mod tests {
     #[test]
     fn test_proc_creation() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         interp.eval("proc hello {} { return \"world\" }").unwrap();
         let result = interp.eval("hello").unwrap();

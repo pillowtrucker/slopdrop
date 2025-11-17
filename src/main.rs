@@ -26,6 +26,9 @@ use config::Config;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
+use tokio::signal;
+// warn! is used in conditional compilation blocks when features are not enabled
+#[allow(unused_imports)]
 use tracing::{error, info, warn};
 use tracing_subscriber;
 
@@ -262,15 +265,27 @@ async fn main() -> Result<()> {
         tasks.push(tcl_handle);
     }
 
-    // Wait for all tasks to complete
+    // Wait for shutdown signal or task completion
     info!("All frontends started. Press Ctrl+C to stop.");
 
-    for task in tasks {
-        if let Err(e) = task.await {
-            error!("Task error: {}", e);
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Received shutdown signal (Ctrl+C)");
+        }
+        _ = wait_for_tasks(tasks) => {
+            info!("All tasks completed");
         }
     }
 
     info!("Slopdrop shut down successfully");
     Ok(())
+}
+
+/// Wait for any task to complete
+async fn wait_for_tasks(tasks: Vec<tokio::task::JoinHandle<()>>) {
+    for task in tasks {
+        if let Err(e) = task.await {
+            error!("Task error: {}", e);
+        }
+    }
 }

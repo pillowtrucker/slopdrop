@@ -34,6 +34,9 @@ impl EvalContext {
         }
     }
 
+    /// Builder pattern to set channel
+    /// NOTE: Currently unused but part of fluent builder API
+    #[allow(dead_code)]
     pub fn with_channel(mut self, channel: String) -> Self {
         self.channel = Some(channel);
         self
@@ -237,13 +240,17 @@ impl TclService {
         Ok(())
     }
 
-    /// Check if a user is admin
+    /// Check if a user is admin based on hostmask pattern matching
+    /// NOTE: Used in tests; IRC frontend uses TclPlugin's auth instead
+    #[allow(dead_code)]
     pub fn is_admin(&self, hostmask: &str) -> bool {
         self.security_config.privileged_users.iter()
             .any(|pattern| crate::hostmask::matches_hostmask(hostmask, pattern))
     }
 
-    /// Shutdown the service
+    /// Shutdown the service gracefully
+    /// NOTE: Used by frontends in their stop() methods during graceful shutdown
+    #[allow(dead_code)]
     pub fn shutdown(&mut self) {
         self.tcl_thread.shutdown();
     }

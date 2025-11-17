@@ -11,6 +11,9 @@ A modern rewrite of the TCL eval bot in Rust, providing safe TCL code evaluation
   - Privileged user authentication
   - Command sandboxing (exec, file, socket, etc. are disabled)
   - Separate admin and user execution modes
+  - **Memory limits** (Unix): Configurable per-evaluation memory caps
+  - **Timeout protection**: 30s default timeout with automatic thread restart
+  - **Crash recovery**: Automatic thread restart on OOM/panic
 - **Async Architecture**: Built on Tokio for high-performance concurrent operations
 - **Message Routing**: Efficient plugin-based architecture with mpsc channels
 
@@ -52,8 +55,11 @@ nickname = "slopdrop"
 channels = ["#bottest"]
 
 [security]
-privileged_users = ["admin"]
+privileged_users = ["admin!*@trusted.example.com"]
+blacklisted_users = []  # Optional: block abusive users by hostmask
 eval_timeout_ms = 30000
+memory_limit_mb = 256  # Unix only, 0 = no limit
+max_recursion_depth = 1000  # 0 = no limit
 
 [tcl]
 state_path = "./state"
@@ -69,7 +75,13 @@ cargo run -- config.toml
 ### Commands
 
 - `tcl <code>` - Evaluate TCL code in sandboxed mode
+- `tcl more` - Show more output from previous command (pagination)
 - `tclAdmin <code>` - Evaluate TCL code with admin privileges (privileged users only)
+- `tclAdmin history [n]` - View recent git commit history
+- `tclAdmin rollback <commit>` - Revert state to a specific commit
+- `tclAdmin blacklist list` - Show blacklisted users
+- `tclAdmin blacklist add <hostmask>` - Block a user by hostmask pattern
+- `tclAdmin blacklist remove <hostmask>` - Unblock a user
 
 ### Example
 
@@ -96,12 +108,36 @@ Communication between components uses Tokio mpsc channels for efficient async me
 
 ## Security
 
-The TCL interpreter is sandboxed by:
-- Disabling dangerous commands (exec, open, file, socket, source, load, cd, pwd, glob, exit)
-- Bracket balancing validation before evaluation
-- Timeout protection (30s default)
-- Privilege checking for admin commands
-- Output line limiting
+The bot implements **defense-in-depth** security for safe public deployment:
+
+### Execution Protection
+- **Timeout**: 30s default (configurable)
+- **Memory limit**: 256 MB on Unix systems (configurable)
+- **Recursion limit**: 1000 levels (configurable)
+- **Auto-restart**: Thread recovers gracefully from crashes/OOM
+
+### Network Protection (SSRF Prevention)
+- **URL validation**: Blocks localhost, private IPs, link-local addresses
+- **Rate limiting**: Per-eval (5), per-user (10/min), per-channel (25/min)
+- **Transfer limits**: 150KB per-request, 500KB cumulative per-eval
+- **Redirect limit**: Maximum 5 redirects
+
+### Access Control
+- **User blacklist**: Block abusive users by hostmask pattern
+- **Admin authentication**: Hostmask-based privilege checking
+- **Input validation**: Bracket balancing, error sanitization
+
+### Resource Limits
+- **Cache limits**: 1000 keys, 100KB per value, 1MB total per bucket
+- **Output pagination**: Configurable line limits
+- **Sandbox**: Dangerous commands disabled (exec, open, file, socket, source, etc.)
+
+### State Protection
+- **Git versioning**: All state changes tracked with author attribution
+- **Rollback**: Admin command to revert malicious changes
+- **Auto GC**: Repository garbage collection every 100 commits
+
+**For complete security documentation**, see: `PUBLIC_DEPLOYMENT_SECURITY.md`
 
 ## Differences from Original
 
