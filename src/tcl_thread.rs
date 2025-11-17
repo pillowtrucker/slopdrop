@@ -359,6 +359,20 @@ impl TclThreadWorker {
             }
         }
 
+        // Get eval count for rate limiting (needed for all commands)
+        let eval_count_result = self.interp.interpreter().eval("::httpx::increment_eval");
+        let eval_count = eval_count_result
+            .ok()
+            .and_then(|obj| obj.get_string().parse::<u64>().ok())
+            .unwrap_or(0);
+
+        // Set HTTP context variables (for rate limiting)
+        let set_channel = format!("set ::nick_channel {{{}}}", request.channel);
+        let _ = self.interp.interpreter().eval(set_channel.as_str());
+
+        // Set stock context for rate limiting
+        crate::stock_commands::set_stock_context(request.nick.clone(), eval_count);
+
         // Check for special commands
         let code_trimmed = request.code.trim();
         if code_trimmed == "history" || code_trimmed.starts_with("history ") {
@@ -373,13 +387,10 @@ impl TclThreadWorker {
             self.handle_chanlist_command(request);
             return;
         }
-
-        // Set HTTP context variables (for rate limiting)
-        // Increment eval count
-        let _ = self.interp.interpreter().eval("::httpx::increment_eval");
-        // Set channel context
-        let set_channel = format!("set ::nick_channel {{{}}}", request.channel);
-        let _ = self.interp.interpreter().eval(set_channel.as_str());
+        if code_trimmed.starts_with("stock::") {
+            self.handle_stock_command(request);
+            return;
+        }
 
         // Capture state before evaluation
         let state_before = InterpreterState::capture(self.interp.interpreter());
@@ -621,6 +632,28 @@ impl TclThreadWorker {
             Err(e) => {
                 let _ = request.response_tx.send(EvalResult {
                     output: format!("error: failed to read channel members: {}", e),
+                    is_error: true,
+                    commit_info: None,
+                });
+            }
+        }
+    }
+
+    fn handle_stock_command(&self, request: EvalRequest) {
+        let code = request.code.trim();
+
+        // Call the stock command handler from stock_commands module
+        match crate::stock_commands::handle_stock_command(code) {
+            Ok(output) => {
+                let _ = request.response_tx.send(EvalResult {
+                    output,
+                    is_error: false,
+                    commit_info: None,
+                });
+            }
+            Err(e) => {
+                let _ = request.response_tx.send(EvalResult {
+                    output: format!("error: {}", e),
                     is_error: true,
                     commit_info: None,
                 });
