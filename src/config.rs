@@ -20,6 +20,10 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecurityConfig {
     pub privileged_users: Vec<String>,
+    /// Blacklisted user hostmask patterns (denied from running eval commands)
+    /// Example: ["baduser!*@*", "*!*@evil.example.com"]
+    #[serde(default)]
+    pub blacklisted_users: Vec<String>,
     pub eval_timeout_ms: u64,
     /// Memory limit per evaluation in megabytes (Unix only, 0 = no limit)
     /// Default: 256 MB

@@ -89,6 +89,11 @@ impl TclPlugin {
             return self.handle_more_command(&message, response_tx).await;
         }
 
+        // Handle admin blacklist commands
+        if code.trim().starts_with("blacklist ") {
+            return self.handle_blacklist_command(&message, is_admin, code.trim(), response_tx).await;
+        }
+
         // Validate bracket balancing
         if let Err(e) = validator::validate_brackets(code) {
             self.send_response(&message, format!("error: {}", e), response_tx)
@@ -98,12 +103,25 @@ impl TclPlugin {
 
         debug!("Evaluating TCL: {} (admin={})", code, is_admin);
 
-        // Send to TCL thread with timeout
-        // Build hostmask for privilege checking: nick!ident@host
+        // Build hostmask for privilege and blacklist checking: nick!ident@host
         let ident = message.author.ident.clone().unwrap_or_else(|| "user".to_string());
         let host_part = message.author.host.clone().unwrap_or_else(|| "irc".to_string());
         let full_host = format!("{}@{}", ident, host_part);
+        let user_hostmask = format!("{}!{}", message.author.nick, full_host);
 
+        // Check if user is blacklisted
+        let blacklisted_pattern = self.security_config.blacklisted_users.iter()
+            .find(|pattern| crate::hostmask::matches_hostmask(&user_hostmask, pattern))
+            .cloned();
+
+        if let Some(pattern) = blacklisted_pattern {
+            let msg = "error: you are blacklisted and cannot use this bot";
+            self.send_response(&message, msg.to_string(), response_tx).await?;
+            info!("Blocked blacklisted user: {} (matched pattern: {})", user_hostmask, pattern);
+            return Ok(());
+        }
+
+        // Send to TCL thread with timeout
         let result = self.tcl_thread.eval(
             code.to_string(),
             is_admin,
@@ -303,6 +321,85 @@ impl TclPlugin {
                     text: "No cached output. Run a tcl command first.".to_string(),
                 })
                 .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Handle admin "blacklist" commands
+    async fn handle_blacklist_command(
+        &mut self,
+        message: &Message,
+        is_admin: bool,
+        code: &str,
+        response_tx: &mpsc::Sender<PluginCommand>,
+    ) -> Result<()> {
+        // Blacklist commands are admin-only
+        if !is_admin {
+            self.send_response(message, "error: blacklist commands require admin privileges (use tclAdmin)".to_string(), response_tx).await?;
+            return Ok(());
+        }
+
+        let parts: Vec<&str> = code.split_whitespace().collect();
+
+        if parts.len() < 2 {
+            self.send_response(message, "error: usage: blacklist <add|remove|list> [hostmask]".to_string(), response_tx).await?;
+            return Ok(());
+        }
+
+        let subcommand = parts[1];
+
+        match subcommand {
+            "add" => {
+                if parts.len() < 3 {
+                    self.send_response(message, "error: usage: blacklist add <hostmask>".to_string(), response_tx).await?;
+                    return Ok(());
+                }
+
+                let hostmask = parts[2..].join(" ");
+
+                // Check if already blacklisted
+                if self.security_config.blacklisted_users.contains(&hostmask) {
+                    self.send_response(message, format!("Hostmask '{}' is already blacklisted", hostmask), response_tx).await?;
+                    return Ok(());
+                }
+
+                // Add to blacklist
+                self.security_config.blacklisted_users.push(hostmask.clone());
+                info!("Admin {} added '{}' to blacklist", message.author.nick, hostmask);
+                self.send_response(message, format!("Added '{}' to blacklist (runtime only, not saved to config)", hostmask), response_tx).await?;
+            }
+
+            "remove" => {
+                if parts.len() < 3 {
+                    self.send_response(message, "error: usage: blacklist remove <hostmask>".to_string(), response_tx).await?;
+                    return Ok(());
+                }
+
+                let hostmask = parts[2..].join(" ");
+
+                // Find and remove
+                if let Some(pos) = self.security_config.blacklisted_users.iter().position(|x| x == &hostmask) {
+                    self.security_config.blacklisted_users.remove(pos);
+                    info!("Admin {} removed '{}' from blacklist", message.author.nick, hostmask);
+                    self.send_response(message, format!("Removed '{}' from blacklist", hostmask), response_tx).await?;
+                } else {
+                    self.send_response(message, format!("Hostmask '{}' is not in blacklist", hostmask), response_tx).await?;
+                }
+            }
+
+            "list" => {
+                if self.security_config.blacklisted_users.is_empty() {
+                    self.send_response(message, "Blacklist is empty".to_string(), response_tx).await?;
+                } else {
+                    let list = self.security_config.blacklisted_users.join(", ");
+                    self.send_response(message, format!("Blacklisted hostmasks ({}): {}", self.security_config.blacklisted_users.len(), list), response_tx).await?;
+                }
+            }
+
+            _ => {
+                self.send_response(message, format!("error: unknown blacklist subcommand '{}'. Use: add, remove, or list", subcommand), response_tx).await?;
+            }
         }
 
         Ok(())

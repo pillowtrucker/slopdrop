@@ -151,6 +151,49 @@ privileged_users = [
 - Certificate-based authentication (SASL EXTERNAL)
 - Dedicated admin channel
 
+### Layer 7: User Blacklist
+
+**Purpose**: Block abusive users from running eval commands
+
+- **Hostmask-based blocking**: Blacklist users by hostmask pattern
+- **Runtime management**: Admin commands to add/remove blacklisted users
+- **Persistent config**: Initial blacklist loaded from `config.toml`
+
+**Configuration**:
+```toml
+[security]
+blacklisted_users = [
+    "spammer!*@*",
+    "*!*@evil.example.com",
+    "abuser!*@192.168.1.*"
+]
+```
+
+**Admin Commands** (use `tclAdmin`):
+```
+tclAdmin blacklist list                    # Show all blacklisted hostmasks
+tclAdmin blacklist add baduser!*@*         # Add hostmask to blacklist
+tclAdmin blacklist remove baduser!*@*      # Remove hostmask from blacklist
+```
+
+**How it works**:
+1. Initial blacklist loaded from `config.toml` at startup
+2. Admin can add/remove entries at runtime (not saved to config)
+3. Before evaluating any TCL code, user's hostmask is checked against blacklist
+4. If match found, evaluation is denied with message: `error: you are blacklisted and cannot use this bot`
+
+**Use cases**:
+- Quickly ban persistent abusers
+- Block entire hostnames (e.g., `*!*@spam.example.com`)
+- Block IP ranges (e.g., `*!*@192.168.1.*`)
+- Temporary bans (add at runtime, removed on bot restart)
+
+**Important notes**:
+- Runtime blacklist changes are NOT saved to config file
+- To make blacklist permanent, add to `config.toml` and restart bot
+- Blacklist check happens BEFORE TCL evaluation (no resource consumption)
+- Uses same wildcard matching as admin hostmask patterns
+
 ---
 
 ## Attack Vectors & Protections
@@ -490,15 +533,24 @@ git log --stat
 4. Restart bot to reload state
 5. Consider banning offending user (IRC-level)
 
-### Scenario 2: HTTP Flood
+### Scenario 2: HTTP Flood or Persistent Abuse
 
-**Detection**: Bot becomes unresponsive, logs show HTTP rate limit errors
+**Detection**: Bot becomes unresponsive, logs show HTTP rate limit errors, or user repeatedly abusing bot
 
 **Response**:
-1. Check if single user is responsible (logs will show nick)
+1. Check if single user is responsible (logs will show nick and hostmask)
 2. User hitting per-user limit (10/min) - self-limiting, no action needed
-3. Coordinated attack hitting per-channel limit (25/min) - wait for rate limit window to expire
-4. If persistent, consider IRC-level measures (quiet, kick, ban)
+3. **Quick ban**: `tclAdmin blacklist add user!*@host` to block user immediately
+4. Coordinated attack hitting per-channel limit (25/min) - wait for rate limit window to expire
+5. If persistent, consider IRC-level measures (quiet, kick, ban)
+6. Add permanent ban to `config.toml` blacklist if needed
+
+**Blacklist commands**:
+```
+tclAdmin blacklist list                  # See current blacklist
+tclAdmin blacklist add baduser!*@*       # Ban user
+tclAdmin blacklist remove baduser!*@*    # Unban user
+```
 
 ### Scenario 3: OOM/Crash Loop
 
