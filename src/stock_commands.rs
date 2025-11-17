@@ -154,9 +154,14 @@ pub struct StockClient {
 
 impl StockClient {
     pub fn new() -> Self {
+        // Use builder with explicit User-Agent to avoid Yahoo Finance rate limiting
+        let provider = yahoo::YahooConnector::builder()
+            .build()
+            .unwrap_or_else(|_| yahoo::YahooConnector::new().unwrap());
+
         Self {
             rate_limiter: Arc::new(Mutex::new(StockRateLimiter::new())),
-            provider: yahoo::YahooConnector::new().unwrap(),
+            provider,
         }
     }
 
