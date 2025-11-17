@@ -24,6 +24,7 @@ fn create_test_service(state_path: PathBuf) -> TclService {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "alice!*@*.example.com".to_string()],
         memory_limit_mb: 256,
+        max_recursion_depth: 1000,
     };
 
     let tcl_config = TclConfig {

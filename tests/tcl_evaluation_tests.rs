@@ -16,7 +16,7 @@ fn create_temp_state() -> (TempDir, PathBuf) {
 #[test]
 fn test_basic_eval() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("expr {1 + 1}");
     assert!(result.is_ok());
@@ -26,7 +26,7 @@ fn test_basic_eval() {
 #[test]
 fn test_string_operations() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("string length \"hello\"").unwrap();
     assert_eq!(result.trim(), "5");
@@ -41,7 +41,7 @@ fn test_string_operations() {
 #[test]
 fn test_list_operations() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("llength {1 2 3 4 5}").unwrap();
     assert_eq!(result.trim(), "5");
@@ -56,7 +56,7 @@ fn test_list_operations() {
 #[test]
 fn test_proc_creation_and_call() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Create a proc
     let result = interp.eval("proc greet {name} { return \"Hello, $name!\" }");
@@ -73,7 +73,7 @@ fn test_proc_creation_and_call() {
 #[test]
 fn test_dangerous_commands_blocked() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // exec should be blocked
     let result = interp.eval("exec ls");
@@ -97,6 +97,7 @@ async fn test_timeout_handling() {
         eval_timeout_ms: 500,
         privileged_users: vec![],
         memory_limit_mb: 256,
+        max_recursion_depth: 1000,
     };
 
     let tcl_config = TclConfig {
@@ -139,7 +140,7 @@ async fn test_timeout_handling() {
 #[test]
 fn test_variable_persistence() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Set a variable
     let _ = interp.eval("set counter 0");
@@ -158,7 +159,7 @@ fn test_variable_persistence() {
 #[test]
 fn test_array_operations() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Create an array
     let _ = interp.eval("set arr(key1) value1");
@@ -181,7 +182,7 @@ fn test_array_operations() {
 #[test]
 fn test_foreach_loop() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         set result ""
@@ -198,7 +199,7 @@ fn test_foreach_loop() {
 #[test]
 fn test_for_loop() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         set sum 0
@@ -215,7 +216,7 @@ fn test_for_loop() {
 #[test]
 fn test_if_else() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         set x 10
@@ -247,7 +248,7 @@ fn test_if_else() {
 #[test]
 fn test_switch_statement() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         set day "monday"
@@ -266,7 +267,7 @@ fn test_switch_statement() {
 #[test]
 fn test_nested_procs() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let _ = interp.eval("proc add {a b} { expr {$a + $b} }");
     let _ = interp.eval("proc multiply {a b} { expr {$a * $b} }");
@@ -279,7 +280,7 @@ fn test_nested_procs() {
 #[test]
 fn test_error_handling() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Division by zero
     let result = interp.eval("expr {1 / 0}");
@@ -297,7 +298,7 @@ fn test_error_handling() {
 #[test]
 fn test_catch_command() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         if {[catch {expr {1 / 0}} result]} {
@@ -313,7 +314,7 @@ fn test_catch_command() {
 #[test]
 fn test_return_values() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Proc with return
     let _ = interp.eval("proc get_value {} { return 42 }");
@@ -329,7 +330,7 @@ fn test_return_values() {
 #[test]
 fn test_global_variables() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         set globalvar "global_value"
@@ -347,7 +348,7 @@ fn test_global_variables() {
 #[test]
 fn test_upvar_command() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         proc increment {varname} {
@@ -366,7 +367,7 @@ fn test_upvar_command() {
 #[test]
 fn test_format_command() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("format \"Hello %s\" \"World\"").unwrap();
     assert_eq!(result.trim(), "Hello World");
@@ -378,7 +379,7 @@ fn test_format_command() {
 #[test]
 fn test_regexp_matching() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("regexp {^[0-9]+$} \"12345\"").unwrap();
     assert_eq!(result.trim(), "1"); // true
@@ -390,7 +391,7 @@ fn test_regexp_matching() {
 #[test]
 fn test_regsub_substitution() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = "regsub {world} \"hello world\" \"TCL\" result; set result";
     let result = interp.eval(code).unwrap();
@@ -400,7 +401,7 @@ fn test_regsub_substitution() {
 #[test]
 fn test_scan_command() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let code = r#"
         scan "John 25" "%s %d" name age
@@ -414,7 +415,7 @@ fn test_scan_command() {
 #[test]
 fn test_join_and_split() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Join
     let result = interp.eval("join {a b c} \",\"").unwrap();
@@ -428,7 +429,7 @@ fn test_join_and_split() {
 #[test]
 fn test_lsort() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("lsort {3 1 4 1 5 9 2 6}").unwrap();
     assert_eq!(result.trim(), "1 1 2 3 4 5 6 9");
@@ -441,7 +442,7 @@ fn test_lsort() {
 #[test]
 fn test_lsearch() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     let result = interp.eval("lsearch {a b c d e} c").unwrap();
     assert_eq!(result.trim(), "2");
@@ -453,7 +454,7 @@ fn test_lsearch() {
 #[test]
 fn test_dict_operations() {
     let (_temp, state_path) = create_temp_state();
-    let interp = SafeTclInterp::new(5000, &state_path, None, None).unwrap();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
     // Create and query dict
     let code = r#"

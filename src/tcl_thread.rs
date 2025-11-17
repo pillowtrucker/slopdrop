@@ -286,6 +286,7 @@ impl TclThreadWorker {
             &tcl_config.state_path,
             tcl_config.state_repo.clone(),
             tcl_config.ssh_key.clone(),
+            security_config.max_recursion_depth,
         )?;
 
         // Register chanlist command

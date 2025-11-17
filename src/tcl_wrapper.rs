@@ -20,9 +20,17 @@ impl SafeTclInterp {
 
 impl SafeTclInterp {
     /// Create a new safe TCL interpreter
-    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>) -> Result<Self> {
+    pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>, max_recursion_depth: u32) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
+
+        // Set recursion limit (0 = no limit, use TCL default)
+        if max_recursion_depth > 0 {
+            let recursion_cmd = format!("interp recursionlimit {{}} {}", max_recursion_depth);
+            interpreter.eval(recursion_cmd.as_str())
+                .map_err(|e| anyhow!("Failed to set recursion limit: {:?}", e))?;
+            debug!("Set TCL recursion limit to {}", max_recursion_depth);
+        }
 
         // Add tcllib path to auto_path for package loading (sha1, etc.)
         let _ = interpreter.eval("lappend auto_path /usr/share/tcltk");
@@ -283,7 +291,7 @@ mod tests {
     #[test]
     fn test_basic_eval() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         let result = interp.eval("expr {1 + 1}").unwrap();
         assert_eq!(result.trim(), "2");
@@ -292,7 +300,7 @@ mod tests {
     #[test]
     fn test_dangerous_commands_blocked() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         // These should fail or be unavailable
         let result = interp.eval("exec ls");
@@ -302,7 +310,7 @@ mod tests {
     #[test]
     fn test_proc_creation() {
         let state_path = PathBuf::from("/tmp/tcl_test_state");
-        let interp = SafeTclInterp::new(30000, &state_path, None, None).unwrap();
+        let interp = SafeTclInterp::new(30000, &state_path, None, None, 1000).unwrap();
 
         interp.eval("proc hello {} { return \"world\" }").unwrap();
         let result = interp.eval("hello").unwrap();

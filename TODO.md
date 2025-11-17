@@ -179,10 +179,20 @@ Current implementation renames dangerous commands, could be better:
 - [ ] Handle network disconnections gracefully
 - [ ] Reconnect logic for IRC
 
-### 13. Resource Management
-- [ ] Limit memory usage of TCL interpreter
-- [ ] Limit recursion depth
-- [ ] Clean up old state files (git gc)
+### 13. Resource Management ✅ MOSTLY COMPLETE
+- [x] **Limit memory usage of TCL interpreter** ✅ COMPLETE (2025-11-17)
+  - Memory limits via setrlimit(RLIMIT_AS) on Unix
+  - Configurable via `memory_limit_mb` (default 256 MB)
+  - Auto-restart on OOM with state reload
+  - See `OOM_PROTECTION.md` for details
+- [x] **Limit recursion depth** ✅ COMPLETE (2025-11-17)
+  - Uses TCL's built-in `interp recursionlimit` command
+  - Configurable via `max_recursion_depth` (default 1000)
+  - Prevents stack overflow from deeply recursive functions
+- [x] **Clean up old state files (git gc)** ✅ COMPLETE (2025-11-17)
+  - Automatic `git gc --auto` every 100 commits
+  - Prevents unbounded repository growth
+  - Runs quietly in background
 - [ ] Garbage collection for cache buckets
 - [ ] Rate limiting per user (not just per channel)
 

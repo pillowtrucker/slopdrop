@@ -25,10 +25,18 @@ pub struct SecurityConfig {
     /// Default: 256 MB
     #[serde(default = "default_memory_limit")]
     pub memory_limit_mb: u64,
+    /// Maximum recursion depth for TCL procedures (0 = no limit)
+    /// Default: 1000
+    #[serde(default = "default_recursion_limit")]
+    pub max_recursion_depth: u32,
 }
 
 fn default_memory_limit() -> u64 {
     256 // 256 MB default
+}
+
+fn default_recursion_limit() -> u32 {
+    1000 // 1000 levels deep
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
