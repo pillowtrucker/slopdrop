@@ -1,7 +1,31 @@
 use anyhow::{anyhow, Result};
+use regex::Regex;
 use std::path::{Path, PathBuf};
 use tcl::Interpreter;
 use tracing::debug;
+
+/// Sanitize error messages to prevent information disclosure
+/// Removes filesystem paths and other sensitive information
+fn sanitize_error_message(error_msg: &str) -> String {
+    // Remove absolute paths (Unix and Windows style)
+    // Match patterns like /home/user/..., /var/..., C:\Users\..., etc.
+    let re_unix_path = Regex::new(r"/[a-zA-Z0-9_/.-]+").unwrap();
+    let re_win_path = Regex::new(r"[A-Za-z]:\\[a-zA-Z0-9_\\.-]+").unwrap();
+
+    let mut sanitized = error_msg.to_string();
+
+    // Replace Unix paths with generic placeholder
+    sanitized = re_unix_path.replace_all(&sanitized, "[PATH]").to_string();
+
+    // Replace Windows paths with generic placeholder
+    sanitized = re_win_path.replace_all(&sanitized, "[PATH]").to_string();
+
+    // Remove any remaining file:// URLs
+    let re_file_url = Regex::new(r"file://[^\s]+").unwrap();
+    sanitized = re_file_url.replace_all(&sanitized, "[FILE-URL]").to_string();
+
+    sanitized
+}
 
 /// Wrapper around a TCL interpreter with safety features
 /// Note: This is not Send/Sync due to TCL interpreter limitations
@@ -225,7 +249,10 @@ impl SafeTclInterp {
                     .map(|obj| obj.get_string())
                     .unwrap_or_else(|| format!("{:?}", e));
 
-                Err(anyhow!("TCL Error: {}", error_info))
+                // Sanitize error message to prevent path disclosure
+                let sanitized = sanitize_error_message(&error_info);
+
+                Err(anyhow!("TCL Error: {}", sanitized))
             }
         }
     }
