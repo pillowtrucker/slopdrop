@@ -9,22 +9,29 @@ namespace eval httpx {
     variable request_interval 60
     variable post_limit 150000
     variable transfer_limit 150000
+    variable transfer_limit_per_eval 500000
+    variable max_redirects 5
     variable time_limit 5000
 
     variable eval_count 0
     variable requests_history
     array set requests_history {}
 
+    variable bytes_transferred
+    array set bytes_transferred {}
+
     proc now {} {
         clock seconds
     }
 
-    proc check_limits {} {
+    proc check_limits {bytes_to_transfer} {
         variable eval_count
         variable requests_history
+        variable bytes_transferred
         variable requests_per_eval
         variable requests_per_minute
         variable request_interval
+        variable transfer_limit_per_eval
 
         set channel [get_channel]
         if {$channel eq ""} {
@@ -35,6 +42,9 @@ namespace eval httpx {
         if {![info exists requests_history($channel)]} {
             set requests_history($channel) [list]
         }
+        if {![info exists bytes_transferred($channel)]} {
+            set bytes_transferred($channel) [dict create]
+        }
 
         set now_time [now]
         set threshold [expr {$now_time - $request_interval}]
@@ -43,6 +53,7 @@ namespace eval httpx {
         set new_history [list]
         set recent_count 0
         set eval_count_current 0
+        set new_bytes_dict [dict create]
 
         foreach req $requests_history($channel) {
             lassign $req timestamp eval_id
@@ -55,9 +66,18 @@ namespace eval httpx {
             }
         }
 
-        set requests_history($channel) $new_history
+        # Clean old byte counters
+        dict for {eval_id bytes} $bytes_transferred($channel) {
+            # Keep current eval's counter
+            if {$eval_id == $eval_count} {
+                dict set new_bytes_dict $eval_id $bytes
+            }
+        }
 
-        # Check per-eval limit
+        set requests_history($channel) $new_history
+        set bytes_transferred($channel) $new_bytes_dict
+
+        # Check per-eval request limit
         if {$eval_count_current >= $requests_per_eval} {
             error "too many HTTP requests in this eval (max $requests_per_eval requests)"
         }
@@ -66,11 +86,22 @@ namespace eval httpx {
         if {$recent_count >= $requests_per_minute} {
             error "too many HTTP requests (max $requests_per_minute requests in $request_interval seconds)"
         }
+
+        # Check accumulated transfer limit for this eval
+        set current_bytes 0
+        if {[dict exists $bytes_transferred($channel) $eval_count]} {
+            set current_bytes [dict get $bytes_transferred($channel) $eval_count]
+        }
+
+        if {[expr {$current_bytes + $bytes_to_transfer}] > $transfer_limit_per_eval} {
+            error "total transfer limit exceeded for this eval (max $transfer_limit_per_eval bytes, have $current_bytes, trying $bytes_to_transfer)"
+        }
     }
 
-    proc record_request {} {
+    proc record_request {bytes} {
         variable eval_count
         variable requests_history
+        variable bytes_transferred
 
         set channel [get_channel]
         if {$channel eq ""} {
@@ -80,8 +111,18 @@ namespace eval httpx {
         if {![info exists requests_history($channel)]} {
             set requests_history($channel) [list]
         }
+        if {![info exists bytes_transferred($channel)]} {
+            set bytes_transferred($channel) [dict create]
+        }
 
         lappend requests_history($channel) [list [now] $eval_count]
+
+        # Track bytes transferred
+        set current_bytes 0
+        if {[dict exists $bytes_transferred($channel) $eval_count]} {
+            set current_bytes [dict get $bytes_transferred($channel) $eval_count]
+        }
+        dict set bytes_transferred($channel) $eval_count [expr {$current_bytes + $bytes}]
     }
 
     proc get_channel {} {
@@ -99,15 +140,23 @@ namespace eval httpx {
     proc http_get {url} {
         variable transfer_limit
         variable time_limit
+        variable max_redirects
 
-        check_limits
+        # Pre-check (assume max transfer for limit checking)
+        check_limits $transfer_limit
 
+        # Configure http package to limit redirects
         set token [::http::geturl $url \
             -timeout $time_limit \
-            -blocksize 1024]
+            -blocksize 1024 \
+            -maxredirects $max_redirects]
 
         set result [handle_response $token]
-        record_request
+
+        # Extract actual bytes transferred
+        lassign $result code headers body
+        set bytes [string length $body]
+        record_request $bytes
 
         return $result
     }
@@ -116,38 +165,57 @@ namespace eval httpx {
         variable post_limit
         variable time_limit
         variable transfer_limit
+        variable max_redirects
 
-        check_limits
+        set body_len [string length $body]
 
-        if {[string length $body] > $post_limit} {
+        if {$body_len > $post_limit} {
             error "post body exceeds $post_limit bytes"
         }
+
+        # Pre-check (assume max transfer for limit checking)
+        check_limits [expr {$body_len + $transfer_limit}]
 
         set token [::http::geturl $url \
             -timeout $time_limit \
             -blocksize 1024 \
             -query $body \
-            -type "application/x-www-form-urlencoded"]
+            -type "application/x-www-form-urlencoded" \
+            -maxredirects $max_redirects]
 
         set result [handle_response $token]
-        record_request
+
+        # Extract actual bytes transferred (request body + response body)
+        lassign $result code headers resp_body
+        set total_bytes [expr {$body_len + [string length $resp_body]}]
+        record_request $total_bytes
 
         return $result
     }
 
     proc http_head {url} {
         variable time_limit
+        variable max_redirects
 
-        check_limits
+        # HEAD requests don't transfer much data (headers only, ~1KB estimate)
+        check_limits 1024
 
         set token [::http::geturl $url \
             -timeout $time_limit \
-            -validate 1]
+            -validate 1 \
+            -maxredirects $max_redirects]
 
         upvar #0 $token state
         set headers $state(meta)
+
+        # Estimate header size (rough approximation)
+        set header_size 0
+        dict for {key val} $headers {
+            set header_size [expr {$header_size + [string length $key] + [string length $val] + 4}]
+        }
+
         ::http::cleanup $token
-        record_request
+        record_request $header_size
 
         return $headers
     }
