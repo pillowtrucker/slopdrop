@@ -37,6 +37,8 @@ impl MessageAuthor {
 
     /// Get full hostmask in format: nick!ident@host
     /// Returns just nick if ident/host are not available
+    /// NOTE: Currently unused but part of public API for hostmask operations
+    #[allow(dead_code)]
     pub fn hostmask(&self) -> String {
         match (&self.ident, &self.host) {
             (Some(ident), Some(host)) => format!("{}!{}@{}", self.nick, ident, host),

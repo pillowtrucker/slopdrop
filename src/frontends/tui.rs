@@ -77,6 +77,8 @@ impl Default for AppState {
 
 /// TUI frontend implementation
 pub struct TuiFrontend {
+    /// Frontend name (for trait implementation)
+    #[allow(dead_code)]
     name: String,
     config: TuiConfig,
     tcl_service: TclService,

@@ -39,6 +39,8 @@ impl Default for CliConfig {
 
 /// CLI frontend implementation
 pub struct CliFrontend {
+    /// Frontend name (for trait implementation)
+    #[allow(dead_code)]
     name: String,
     config: CliConfig,
     tcl_service: TclService,

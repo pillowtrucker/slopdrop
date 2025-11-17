@@ -9,9 +9,10 @@ use crate::tcl_service::{EvalContext, EvalResponse, TclService};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::{
-    extract::{Query, State as AxumState},
-    http::{Method, StatusCode},
-    response::Html,
+    extract::{Query, Request, State as AxumState},
+    http::{Method, StatusCode, header},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -106,6 +107,8 @@ struct GenericResponse {
 
 /// Web frontend implementation
 pub struct WebFrontend {
+    /// Frontend name (for trait implementation)
+    #[allow(dead_code)]
     name: String,
     config: WebConfig,
     tcl_service: Arc<Mutex<TclService>>,
@@ -138,15 +141,24 @@ impl WebFrontend {
             .allow_methods([Method::GET, Method::POST])
             .allow_headers(Any);
 
-        Router::new()
+        let mut router = Router::new()
             .route("/", get(serve_index))
             .route("/api/eval", post(handle_eval))
             .route("/api/more", get(handle_more))
             .route("/api/history", get(handle_history))
             .route("/api/rollback", post(handle_rollback))
-            .route("/api/health", get(handle_health))
-            .layer(cors)
-            .with_state(state)
+            .route("/api/health", get(handle_health));
+
+        // Add authentication middleware if enabled
+        if state.config.enable_auth {
+            info!("Web authentication enabled");
+            router = router.layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ));
+        }
+
+        router.layer(cors).with_state(state)
     }
 
     /// Run the web server
@@ -202,7 +214,43 @@ impl Frontend for WebFrontend {
     }
 }
 
+/// Authentication middleware
+async fn auth_middleware(
+    AxumState(state): AxumState<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    // Skip auth for health endpoint
+    if request.uri().path() == "/api/health" {
+        return next.run(request).await;
+    }
+
+    // Check for Bearer token if auth is enabled
+    if let Some(expected_token) = &state.config.auth_token {
+        match request.headers().get(header::AUTHORIZATION) {
+            Some(auth_header) => {
+                if let Ok(auth_str) = auth_header.to_str() {
+                    // Check for "Bearer <token>" format
+                    if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                        if token == expected_token {
+                            return next.run(request).await;
+                        }
+                    }
+                }
+                // Invalid or missing token
+                (StatusCode::UNAUTHORIZED, "Invalid authentication token").into_response()
+            }
+            None => (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+        }
+    } else {
+        // Auth enabled but no token configured - deny all
+        (StatusCode::UNAUTHORIZED, "Authentication not configured").into_response()
+    }
+}
+
 /// Create a router for testing
+/// NOTE: Used in web_frontend_tests.rs for integration testing
+#[allow(dead_code)]
 pub fn create_router(state: AppState) -> Router {
     WebFrontend::build_router(state)
 }
