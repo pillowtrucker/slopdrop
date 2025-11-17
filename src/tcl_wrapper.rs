@@ -76,7 +76,7 @@ impl SafeTclInterp {
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
-        // Inject other smeggdrop commands (cache, utils, encoding)
+        // Inject other smeggdrop commands (cache, utils, encoding, stock)
         // These don't require package loading so they can be loaded after making safe
         interpreter.eval(crate::smeggdrop_commands::cache_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject cache commands: {:?}", e))?;
@@ -84,6 +84,8 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to inject utility commands: {:?}", e))?;
         interpreter.eval(crate::smeggdrop_commands::encoding_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::stock_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject stock commands: {:?}", e))?;
 
         // Ensure state directory exists and git repo is initialized
         // If state_repo is set and state doesn't exist, clone from remote

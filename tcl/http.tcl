@@ -239,11 +239,10 @@ namespace eval httpx {
         # Pre-check (assume max transfer for limit checking)
         check_limits $transfer_limit
 
-        # Configure http package to limit redirects
+        # Configure http package
         set token [::http::geturl $url \
             -timeout $time_limit \
-            -blocksize 1024 \
-            -maxredirects $max_redirects]
+            -blocksize 1024]
 
         set result [handle_response $token]
 
@@ -277,8 +276,7 @@ namespace eval httpx {
             -timeout $time_limit \
             -blocksize 1024 \
             -query $body \
-            -type "application/x-www-form-urlencoded" \
-            -maxredirects $max_redirects]
+            -type "application/x-www-form-urlencoded"]
 
         set result [handle_response $token]
 
@@ -302,8 +300,7 @@ namespace eval httpx {
 
         set token [::http::geturl $url \
             -timeout $time_limit \
-            -validate 1 \
-            -maxredirects $max_redirects]
+            -validate 1]
 
         upvar #0 $token state
         set headers $state(meta)
