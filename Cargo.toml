@@ -26,6 +26,10 @@ regex = "1"
 async-trait = "0.1"
 whoami = "1.5"
 
+# Resource limits (Unix-only)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.27", features = ["resource"] }
+
 # CLI frontend
 rustyline = { version = "13.0", optional = true }
 

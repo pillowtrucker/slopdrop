@@ -26,6 +26,7 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
     let security_config = SecurityConfig {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "web!*".to_string()],
+        memory_limit_mb: 256,
     };
 
     let tcl_config = TclConfig {

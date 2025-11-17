@@ -9,6 +9,34 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+#[cfg(unix)]
+use nix::sys::resource::{setrlimit, Resource};
+
+/// Set memory limit for current process (Unix only)
+#[cfg(unix)]
+fn set_memory_limit(limit_mb: u64) -> Result<()> {
+    if limit_mb == 0 {
+        // 0 means no limit
+        return Ok(());
+    }
+
+    let limit_bytes = limit_mb * 1024 * 1024;
+
+    // Set virtual memory limit (RLIMIT_AS)
+    setrlimit(Resource::RLIMIT_AS, limit_bytes, limit_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to set memory limit: {}", e))?;
+
+    info!("Memory limit set to {} MB", limit_mb);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_memory_limit(_limit_mb: u64) -> Result<()> {
+    // Memory limits not supported on non-Unix platforms
+    warn!("Memory limits not supported on this platform");
+    Ok(())
+}
+
 /// Request to evaluate TCL code
 #[derive(Debug)]
 pub struct EvalRequest {
@@ -63,6 +91,11 @@ impl TclThreadHandle {
         let channel_members_clone = channel_members.clone();
 
         let thread_handle = thread::spawn(move || {
+            // Set memory limit for this thread
+            if let Err(e) = set_memory_limit(security_config_clone.memory_limit_mb) {
+                error!("Failed to set memory limit: {}", e);
+            }
+
             let worker = TclThreadWorker::new(
                 tcl_config_clone,
                 security_config_clone,
@@ -107,6 +140,11 @@ impl TclThreadHandle {
         let channel_members = self.channel_members.clone();
 
         let thread_handle = thread::spawn(move || {
+            // Set memory limit for this thread
+            if let Err(e) = set_memory_limit(security_config.memory_limit_mb) {
+                error!("Failed to set memory limit after restart: {}", e);
+            }
+
             let worker = TclThreadWorker::new(tcl_config, security_config, channel_members);
             if let Err(e) = worker {
                 error!("Failed to create TCL worker after restart: {}", e);
@@ -145,14 +183,50 @@ impl TclThreadHandle {
         };
 
         // Send request to TCL thread
-        self.command_tx
-            .send(TclThreadCommand::Eval(request))
-            .map_err(|e| anyhow::anyhow!("Failed to send to TCL thread: {}", e))?;
+        if let Err(e) = self.command_tx.send(TclThreadCommand::Eval(request)) {
+            // Channel closed - thread probably crashed/panicked
+            error!("TCL thread channel closed (thread crashed): {}", e);
+
+            // Restart the thread
+            if let Err(restart_err) = self.restart() {
+                error!("Failed to restart TCL thread after crash: {}", restart_err);
+                return Ok(EvalResult {
+                    output: format!("error: thread crashed and failed to restart: {}", restart_err),
+                    is_error: true,
+                    commit_info: None,
+                });
+            }
+
+            return Ok(EvalResult {
+                output: "error: thread crashed (likely out of memory), restarted".to_string(),
+                is_error: true,
+                commit_info: None,
+            });
+        }
 
         // Wait for response with timeout
         match tokio::time::timeout(self.timeout, response_rx).await {
             Ok(Ok(result)) => Ok(result),
-            Ok(Err(e)) => Err(anyhow::anyhow!("Response channel closed: {}", e)),
+            Ok(Err(e)) => {
+                // Response channel closed unexpectedly - thread crashed
+                error!("TCL thread died unexpectedly: {}", e);
+
+                // Restart the thread
+                if let Err(restart_err) = self.restart() {
+                    error!("Failed to restart TCL thread after crash: {}", restart_err);
+                    return Ok(EvalResult {
+                        output: format!("error: thread died and failed to restart: {}", restart_err),
+                        is_error: true,
+                        commit_info: None,
+                    });
+                }
+
+                Ok(EvalResult {
+                    output: "error: thread died unexpectedly (likely out of memory), restarted".to_string(),
+                    is_error: true,
+                    commit_info: None,
+                })
+            }
             Err(_) => {
                 // Timeout! The TCL thread is hung
                 warn!("TCL evaluation timed out after {}ms - thread is hung, restarting", self.timeout.as_millis());

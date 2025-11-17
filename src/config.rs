@@ -21,6 +21,14 @@ pub struct ServerConfig {
 pub struct SecurityConfig {
     pub privileged_users: Vec<String>,
     pub eval_timeout_ms: u64,
+    /// Memory limit per evaluation in megabytes (Unix only, 0 = no limit)
+    /// Default: 256 MB
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit_mb: u64,
+}
+
+fn default_memory_limit() -> u64 {
+    256 // 256 MB default
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

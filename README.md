@@ -11,6 +11,9 @@ A modern rewrite of the TCL eval bot in Rust, providing safe TCL code evaluation
   - Privileged user authentication
   - Command sandboxing (exec, file, socket, etc. are disabled)
   - Separate admin and user execution modes
+  - **Memory limits** (Unix): Configurable per-evaluation memory caps
+  - **Timeout protection**: 30s default timeout with automatic thread restart
+  - **Crash recovery**: Automatic thread restart on OOM/panic
 - **Async Architecture**: Built on Tokio for high-performance concurrent operations
 - **Message Routing**: Efficient plugin-based architecture with mpsc channels
 

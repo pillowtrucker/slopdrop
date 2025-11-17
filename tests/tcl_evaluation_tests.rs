@@ -96,6 +96,7 @@ async fn test_timeout_handling() {
     let security_config = SecurityConfig {
         eval_timeout_ms: 500,
         privileged_users: vec![],
+        memory_limit_mb: 256,
     };
 
     let tcl_config = TclConfig {
