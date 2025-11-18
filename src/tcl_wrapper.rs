@@ -91,16 +91,13 @@ impl SafeTclInterp {
             debug!("Clock command initialization failed: {:?}", e);
         }
 
-        // Load TLS package for HTTPS support BEFORE making interpreter safe
-        // This registers https:// URL handler with http package
-        let tls_init = r#"
-            catch {
-                package require tls
-                ::http::register https 443 [list ::tls::socket -autoservername true]
-            }
+        // Load TclCurl package for HTTP/HTTPS support BEFORE making interpreter safe
+        // TclCurl handles HTTPS natively through libcurl
+        let curl_init = r#"
+            package require TclCurl
         "#;
-        if let Err(e) = interpreter.eval(tls_init) {
-            debug!("TLS package not available (HTTPS will not work): {:?}", e);
+        if let Err(e) = interpreter.eval(curl_init) {
+            debug!("TclCurl package not available (HTTP/HTTPS will not work): {:?}", e);
         }
 
         // Make the interpreter safe (AFTER loading packages)
