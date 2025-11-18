@@ -199,6 +199,9 @@ namespace eval timtom {
             "buy pony" {
                 return [buy_pony $nick]
             }
+            "stare" {
+                return [stare $nick]
+            }
             default {
                 # Check for state triggers
                 if {[check_states $text_lower $nick result]} {
@@ -218,14 +221,14 @@ namespace eval timtom {
                 }
                 # Check for bet command
                 if {$first_word eq "bet"} {
-                    return [blackjack_bet $nick [lindex $words 1]]
+                    return [blackjack_bet [lindex $words 1]]
                 }
                 # Check for marry/divorce
                 if {$first_word eq "marry"} {
-                    return [marry $nick]
+                    return [marry]
                 }
                 if {$first_word eq "divorce"} {
-                    return [divorce $nick]
+                    return [divorce]
                 }
                 # Check for person lookup (& nick)
                 if {$first_word eq "&" && [llength $words] >= 2} {
@@ -252,11 +255,13 @@ namespace eval timtom {
     # Core Commands
     # =========================================================================
 
-    proc greet {nick} {
+    proc greet {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         return "$nick, this is TIMTOM. How may I serve you?"
     }
 
-    proc sex {nick} {
+    proc sex {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set r [expr {int(rand() * 68) + 1}]
         if {$r == 41} {
             return "ok, $nick, I will have sex with you now."
@@ -265,15 +270,18 @@ namespace eval timtom {
         }
     }
 
-    proc horses {nick} {
+    proc horses {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         return "$nick, I like horses too."
     }
 
-    proc jesus {nick} {
+    proc jesus {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         return "$nick, Jesus loves you more than $::channel. I'm sorry. $::channel just doesn't compare."
     }
 
-    proc wheel {nick} {
+    proc wheel {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set can_spin [get_stat $nick "spin"]
         if {$can_spin != 0} {
             return "I think it would be a good idea if $nick would spin the wheel."
@@ -282,11 +290,24 @@ namespace eval timtom {
         }
     }
 
+    proc stare {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
+        set stares [list \
+            "TIMTOM stares at $nick." \
+            "TIMTOM stares deeply into $nick's eyes." \
+            "TIMTOM gives $nick an uncomfortable stare." \
+            "TIMTOM locks eyes with $nick and doesn't blink." \
+            "TIMTOM gazes intensely at $nick." \
+        ]
+        return [lindex $stares [expr {int(rand() * [llength $stares])}]]
+    }
+
     # =========================================================================
     # Money System
     # =========================================================================
 
-    proc money {nick} {
+    proc money {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set amount [get_money $nick]
         set formatted [format_money $amount]
 
@@ -348,7 +369,8 @@ namespace eval timtom {
     # Wheel of Fortune (Spin)
     # =========================================================================
 
-    proc spin {nick} {
+    proc spin {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set can_spin [get_stat $nick "spin"]
         if {$can_spin == 0} {
             return "$nick, please let someone else spin."
@@ -509,7 +531,8 @@ namespace eval timtom {
     }
 
     # Enable spinning for a user (called when wheel is mentioned)
-    proc enable_spin {nick} {
+    proc enable_spin {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set_stat $nick "spin" 1
     }
 
@@ -597,7 +620,8 @@ namespace eval timtom {
         }
     }
 
-    proc flip {nick} {
+    proc flip {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set allowed [get_stat $nick "flip_allowed"]
         if {$allowed eq "0"} {
             return "$nick, you got your million. Please let someone else flip now."
@@ -631,7 +655,8 @@ namespace eval timtom {
         }
     }
 
-    proc bonus {nick} {
+    proc bonus {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set ok [get_state "ok"]
         if {$ok eq "1"} {
             add_money $nick 5000
@@ -641,7 +666,7 @@ namespace eval timtom {
         return ""
     }
 
-    proc marry {nick} {
+    proc marry {} {
         set nicks [names]
         if {[llength $nicks] < 2} {
             return "Not enough people in the channel for a marriage!"
@@ -654,7 +679,7 @@ namespace eval timtom {
         return "I now pronounce $person1 and $person2 married! Congratulations!"
     }
 
-    proc divorce {nick} {
+    proc divorce {} {
         set nicks [names]
         if {[llength $nicks] < 2} {
             return "Not enough people in the channel for a divorce!"
@@ -671,7 +696,8 @@ namespace eval timtom {
     # Pony and Unicorn System
     # =========================================================================
 
-    proc my_ponies {nick} {
+    proc my_ponies {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set count [get_stat $nick "pony"]
         if {$count == 0} {
             return "Hey $nick! You don't have any ponies yet. Type 'buy pony' to get one for \$1000!"
@@ -682,7 +708,8 @@ namespace eval timtom {
         }
     }
 
-    proc my_unicorns {nick} {
+    proc my_unicorns {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set count [get_stat $nick "unicorn"]
         if {$count == 0} {
             return "Hey $nick! You don't have any unicorns yet. Win them in special events!"
@@ -715,7 +742,8 @@ namespace eval timtom {
         }
     }
 
-    proc buy_pony {nick} {
+    proc buy_pony {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set cost 1000
         set current [get_money $nick]
         if {$current < $cost} {
@@ -730,12 +758,14 @@ namespace eval timtom {
     # Blackjack Game
     # =========================================================================
 
-    proc blackjack_start {nick} {
+    proc blackjack_start {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set_stat $nick "blackjack" 2
         return "WELCOME TO BLACKJACK [string toupper $nick]! I'm your dealer TIMTOM. My goal is to give you an enjoyable BLACKJACK experience. Drinks and tacos and everything else are right here - just ask, silly! Now please place your bet and we'll get started. The min bet is \$5000 and the max bet is \$20,000. Please keep the bets in whole dollar amounts. Good luck!"
     }
 
-    proc blackjack_bet {nick amount} {
+    proc blackjack_bet {amount {nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set state [get_stat $nick "blackjack"]
         if {$state != 2} {
             return ""
@@ -817,7 +847,8 @@ namespace eval timtom {
         }
     }
 
-    proc blackjack_hit {nick} {
+    proc blackjack_hit {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set state [get_stat $nick "blackjack"]
         if {$state < 3} {
             return ""
@@ -856,7 +887,8 @@ namespace eval timtom {
         return "Ok, $nick, you got $card_name. This gives you $new_total. Do you wish to hit or stand?"
     }
 
-    proc blackjack_stand {nick} {
+    proc blackjack_stand {{nick ""}} {
+        if {$nick eq ""} { set nick $::nick }
         set state [get_stat $nick "blackjack"]
         if {$state < 3} {
             return ""
@@ -1011,7 +1043,8 @@ namespace eval timtom {
     namespace export handle help greet money spin wheel flip blackjack_start \
         blackjack_bet blackjack_hit blackjack_stand serve_all drink food \
         bong marry divorce my_ponies my_unicorns buy_pony bonus enable_spin \
-        format_money get_money set_money add_money get_stat set_stat add_stat
+        format_money get_money set_money add_money get_stat set_stat add_stat \
+        stare sex horses jesus
     namespace ensemble create
 }
 
