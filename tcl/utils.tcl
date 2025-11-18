@@ -50,3 +50,119 @@ proc last {list} {
 proc rest {list} {
     lrange $list 1 end
 }
+
+# Safe file path operations (string-only, no filesystem access)
+# These replace the blocked 'file' command for common path manipulation
+
+proc file args {
+    # Safe subset of TCL's file command - only string operations
+    if {[llength $args] < 1} {
+        error "wrong # args: should be \"file subcommand ?arg ...?\""
+    }
+
+    set subcmd [lindex $args 0]
+    set rest [lrange $args 1 end]
+
+    switch -- $subcmd {
+        join {
+            # Join path components
+            if {[llength $rest] < 1} {
+                error "wrong # args: should be \"file join name ?name ...?\""
+            }
+            set result ""
+            foreach part $rest {
+                if {$result eq "" || [string index $part 0] eq "/"} {
+                    set result $part
+                } elseif {[string index $result end] eq "/"} {
+                    append result $part
+                } else {
+                    append result "/" $part
+                }
+            }
+            return $result
+        }
+        extension {
+            # Get file extension
+            if {[llength $rest] != 1} {
+                error "wrong # args: should be \"file extension name\""
+            }
+            set name [lindex $rest 0]
+            set idx [string last "." $name]
+            if {$idx == -1} {
+                return ""
+            }
+            # Make sure the dot is after the last slash
+            set slashidx [string last "/" $name]
+            if {$slashidx > $idx} {
+                return ""
+            }
+            return [string range $name $idx end]
+        }
+        rootname {
+            # Get name without extension
+            if {[llength $rest] != 1} {
+                error "wrong # args: should be \"file rootname name\""
+            }
+            set name [lindex $rest 0]
+            set idx [string last "." $name]
+            if {$idx == -1} {
+                return $name
+            }
+            # Make sure the dot is after the last slash
+            set slashidx [string last "/" $name]
+            if {$slashidx > $idx} {
+                return $name
+            }
+            return [string range $name 0 [expr {$idx - 1}]]
+        }
+        dirname {
+            # Get directory portion
+            if {[llength $rest] != 1} {
+                error "wrong # args: should be \"file dirname name\""
+            }
+            set name [lindex $rest 0]
+            set idx [string last "/" $name]
+            if {$idx == -1} {
+                return "."
+            } elseif {$idx == 0} {
+                return "/"
+            }
+            return [string range $name 0 [expr {$idx - 1}]]
+        }
+        tail {
+            # Get filename portion
+            if {[llength $rest] != 1} {
+                error "wrong # args: should be \"file tail name\""
+            }
+            set name [lindex $rest 0]
+            set idx [string last "/" $name]
+            if {$idx == -1} {
+                return $name
+            }
+            return [string range $name [expr {$idx + 1}] end]
+        }
+        split {
+            # Split path into components
+            if {[llength $rest] != 1} {
+                error "wrong # args: should be \"file split name\""
+            }
+            set name [lindex $rest 0]
+            set parts [split $name "/"]
+            # Handle absolute paths
+            if {[string index $name 0] eq "/"} {
+                set parts [lreplace $parts 0 0 "/"]
+            }
+            # Remove empty parts (from consecutive slashes)
+            set result {}
+            foreach part $parts {
+                if {$part ne ""} {
+                    lappend result $part
+                }
+            }
+            return $result
+        }
+        default {
+            error "bad option \"$subcmd\": must be dirname, extension, join, rootname, split, or tail"
+        }
+    }
+}
