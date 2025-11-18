@@ -2,6 +2,12 @@
 //!
 //! This module provides a frontend-agnostic TCL evaluation service
 //! that can be used by multiple frontends (IRC, CLI, TUI, Web, etc.)
+//!
+//! NOTE: Currently unused - frontends use TclThreadHandle directly.
+//! This abstraction is kept for future unified frontend management
+//! where multiple frontends share a single TCL service instance.
+
+#![allow(dead_code)]
 
 use crate::config::{SecurityConfig, TclConfig};
 use crate::state::{CommitInfo, StatePersistence};
