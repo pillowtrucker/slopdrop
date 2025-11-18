@@ -73,6 +73,13 @@ impl SafeTclInterp {
             debug!("Bot will work but SHA1 command will not be available");
         }
 
+        // Force-load the clock package BEFORE making interpreter safe
+        // TCL loads clock.tcl lazily via [source [file join $tcl_library clock.tcl]]
+        // which fails after we block source/file. Loading it now ensures it's available.
+        if let Err(e) = interpreter.eval("clock seconds") {
+            debug!("Clock command initialization failed: {:?}", e);
+        }
+
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
