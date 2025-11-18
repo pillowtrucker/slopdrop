@@ -37,7 +37,7 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "web!*".to_string()],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 

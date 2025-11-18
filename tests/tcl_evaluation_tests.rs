@@ -97,7 +97,7 @@ async fn test_timeout_handling() {
         eval_timeout_ms: 500,
         privileged_users: vec![],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 

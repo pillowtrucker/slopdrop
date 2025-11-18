@@ -12,7 +12,7 @@ fn test_extract_admin_nicks_from_hostmasks() {
             "*!*@*.admin.net".to_string(), // Wildcard nick should be skipped
         ],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -95,7 +95,7 @@ fn test_empty_admin_list() {
         eval_timeout_ms: 5000,
         privileged_users: vec![],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -121,7 +121,7 @@ fn test_wildcard_only_patterns() {
             "*!*@host.example.com".to_string(),
         ],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -148,7 +148,7 @@ fn test_complex_hostmask_patterns() {
             "charlie!?admin@host*.net".to_string(),
         ],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -177,7 +177,7 @@ fn test_duplicate_admin_nicks() {
             "bob!*@*.example.com".to_string(),
         ],
         blacklisted_users: vec![],
-        memory_limit_mb: 256,
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
