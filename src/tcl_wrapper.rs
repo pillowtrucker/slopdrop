@@ -121,12 +121,13 @@ impl SafeTclInterp {
         // Hide dangerous commands that could break out of sandbox
         // Note: socket is allowed for http package (protected by timeout and rate limiting)
         // Note: namespace is allowed for cache commands to work
+        // Note: apply is allowed - needed for functional programming and stolen-treasure.tcl
         let dangerous_commands = vec![
             "interp",
             // "namespace",  // Allowed for cache/utils commands
             "trace",
             "vwait",
-            "apply",
+            // "apply",  // Allowed - needed for lambdas and stolen-treasure.tcl
             "yield",
             "exec",
             "open",
@@ -148,6 +149,12 @@ impl SafeTclInterp {
 
         // Note: Proc tracking is handled via state diff mechanism in tcl_thread.rs
         // We capture full state before/after each eval and detect changes
+
+        // Define context commands that return cached variables
+        // These are set once and read from global variables updated before each eval
+        let _ = interp.eval("proc nick {} {return $::nick}");
+        let _ = interp.eval("proc channel {} {return $::channel}");
+        let _ = interp.eval("proc mask {} {return $::mask}");
 
         debug!("Safe TCL interpreter configured");
         Ok(())
@@ -268,7 +275,8 @@ impl SafeTclInterp {
         mask: &str,
         channel: &str,
     ) -> Result<String> {
-        // Set context variables using eval
+        // Set context variables that the nick/channel/mask procs will read
+        // The procs are defined once in setup_safe_interp
         let _ = self.interpreter.eval(format!("set ::nick {{{}}}", nick).as_str());
         let _ = self.interpreter.eval(format!("set ::channel {{{}}}", channel).as_str());
         let _ = self.interpreter.eval(format!("set ::mask {{{}}}", mask).as_str());
