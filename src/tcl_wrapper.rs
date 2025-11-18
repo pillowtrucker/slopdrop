@@ -113,6 +113,8 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
         interpreter.eval(crate::smeggdrop_commands::magick_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject magick commands: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::timtom_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject timtom commands: {:?}", e))?;
 
         // Stock commands are handled natively in Rust (see stock_commands.rs and tcl_thread.rs)
         // No TCL injection needed - commands are intercepted before TCL evaluation
