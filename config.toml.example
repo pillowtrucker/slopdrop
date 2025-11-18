@@ -71,6 +71,24 @@ privileged_users = [
 # Default: 30000 (30 seconds)
 eval_timeout_ms = 30000
 
+# Memory limit per evaluation in megabytes (Unix only, 0 = no limit)
+# Uses RLIMIT_AS which limits entire process address space.
+# WARNING: Small values cause crashes. If enabling, use >= 1024 MB.
+# Default: 0 (disabled)
+# memory_limit_mb = 0
+
+# Maximum recursion depth for TCL procedures (0 = no limit)
+# Prevents stack overflow from deeply nested procedure calls
+# Default: 1000
+# max_recursion_depth = 1000
+
+# Blacklisted users (denied from running eval commands)
+# Uses same hostmask pattern syntax as privileged_users
+# Examples:
+#   "baduser!*@*"           - block user baduser from any host
+#   "*!*@evil.example.com"  - block anyone from evil.example.com
+# blacklisted_users = []
+
 # ============================================================================
 # TCL INTERPRETER CONFIGURATION
 # ============================================================================
