@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{fs, thread};
@@ -14,18 +15,32 @@ use tokio::time::sleep;
 use irc::client::prelude::*;
 use irc::proto::Command as IrcCommand;
 use futures::StreamExt;
+use once_cell::sync::Lazy;
 
 use slopdrop::config::{SecurityConfig, ServerConfig, TclConfig};
 use slopdrop::irc_client::IrcClient;
 use slopdrop::tcl_plugin::TclPlugin;
 use slopdrop::types::ChannelMembers;
 
-/// Helper to start the Ergo IRC server for testing
-struct TestIrcServer {
-    process: Child,
+/// Global test counter for unique IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Get a unique test ID
+fn get_unique_test_id() -> u64 {
+    TEST_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-impl TestIrcServer {
+/// Shared IRC server for all tests
+static SHARED_SERVER: Lazy<Arc<SharedTestIrcServer>> = Lazy::new(|| {
+    Arc::new(SharedTestIrcServer::start().expect("Failed to start shared IRC server"))
+});
+
+/// Shared IRC server that lives for the duration of all tests
+struct SharedTestIrcServer {
+    _process: Child,
+}
+
+impl SharedTestIrcServer {
     fn start() -> Result<Self, Box<dyn std::error::Error>> {
         // Clean up old test database
         let _ = fs::remove_file("/tmp/ergo-test.db");
@@ -42,18 +57,10 @@ impl TestIrcServer {
         // Give server time to start
         thread::sleep(Duration::from_secs(2));
 
-        Ok(Self { process })
+        Ok(Self { _process: process })
     }
 }
 
-impl Drop for TestIrcServer {
-    fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-        // Clean up test database
-        let _ = fs::remove_file("/tmp/ergo-test.db");
-    }
-}
 
 /// Helper struct to manage the full bot (IrcClient + TclPlugin)
 struct TestBot {
@@ -62,7 +69,7 @@ struct TestBot {
 }
 
 impl TestBot {
-    async fn start(state_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn start_with_channel(state_path: &str, channel: &str, bot_nick: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
 
         // Create communication channels
@@ -74,8 +81,8 @@ impl TestBot {
             hostname: "127.0.0.1".to_string(),
             port: 16667,
             use_tls: false,
-            nickname: "testbot".to_string(),
-            channels: vec!["#test".to_string()],
+            nickname: bot_nick.to_string(),
+            channels: vec![channel.to_string()],
         };
 
         let security_config = SecurityConfig {
@@ -141,12 +148,12 @@ impl TestBot {
 }
 
 /// Helper to create a test IRC client that's ready to send messages
-async fn create_test_client(nick: &str) -> Result<(Client, irc::client::ClientStream), Box<dyn std::error::Error>> {
+async fn create_test_client_with_channel(nick: &str, channel: &str) -> Result<(Client, irc::client::ClientStream), Box<dyn std::error::Error>> {
     let config = Config {
         nickname: Some(nick.to_string()),
         server: Some("127.0.0.1".to_string()),
         port: Some(16667),
-        channels: vec!["#test".to_string()],
+        channels: vec![channel.to_string()],
         use_tls: Some(false),
         ..Default::default()
     };
@@ -155,6 +162,8 @@ async fn create_test_client(nick: &str) -> Result<(Client, irc::client::ClientSt
     let mut stream = client.stream()?;
     client.identify()?;
 
+    let target_channel = channel.to_string();
+
     // Wait for JOIN to complete by consuming messages until we see it
     let timeout = sleep(Duration::from_secs(5));
     tokio::pin!(timeout);
@@ -162,29 +171,27 @@ async fn create_test_client(nick: &str) -> Result<(Client, irc::client::ClientSt
     loop {
         tokio::select! {
             Some(Ok(message)) = stream.next() => {
-                if let IrcCommand::JOIN(channel, _, _) = message.command {
-                    if channel == "#test" {
+                if let IrcCommand::JOIN(joined_channel, _, _) = message.command {
+                    if joined_channel == target_channel {
                         break;
                     }
                 }
             }
             _ = &mut timeout => {
-                return Err("Timeout waiting for JOIN".into());
+                return Err(format!("Timeout waiting for JOIN to {}", channel).into());
             }
         }
     }
-
-    // Small delay for the join to fully propagate
-    sleep(Duration::from_millis(500)).await;
 
     Ok((client, stream))
 }
 
 /// Helper to wait for a specific response from the bot
-async fn wait_for_response(
+async fn wait_for_response_from(
     stream: &mut irc::client::ClientStream,
     timeout_secs: u64,
     channel: &str,
+    bot_nick: &str,
 ) -> Option<String> {
     let timeout = sleep(Duration::from_secs(timeout_secs));
     tokio::pin!(timeout);
@@ -196,7 +203,7 @@ async fn wait_for_response(
                     if target == channel {
                         // Check if it's from the bot
                         if let Some(irc::proto::Prefix::Nickname(ref nick, _, _)) = message.prefix {
-                            if nick == "testbot" {
+                            if nick == bot_nick {
                                 return Some(msg);
                             }
                         }
@@ -211,10 +218,12 @@ async fn wait_for_response(
 }
 
 /// Helper to wait for multiple responses
-async fn wait_for_responses(
+async fn wait_for_responses_from(
     stream: &mut irc::client::ClientStream,
     expected_count: usize,
     timeout_secs: u64,
+    channel: &str,
+    bot_nick: &str,
 ) -> Vec<String> {
     let mut responses = Vec::new();
     let timeout = sleep(Duration::from_secs(timeout_secs));
@@ -224,9 +233,9 @@ async fn wait_for_responses(
         tokio::select! {
             Some(Ok(message)) = stream.next() => {
                 if let IrcCommand::PRIVMSG(target, msg) = message.command {
-                    if target == "#test" {
+                    if target == channel {
                         if let Some(irc::proto::Prefix::Nickname(nick, _, _)) = message.prefix {
-                            if nick == "testbot" {
+                            if nick == bot_nick {
                                 responses.push(msg);
                                 if responses.len() >= expected_count {
                                     return responses;
@@ -249,19 +258,31 @@ async fn wait_for_responses(
 
 #[tokio::test]
 async fn test_live_basic_tcl_eval() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    // Ensure shared server is running
+    let _server = Lazy::force(&SHARED_SERVER);
+
+    // Generate unique identifiers for this test
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick)
+        .await
+        .expect("Failed to start bot");
 
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel)
+        .await
+        .expect("Failed to connect");
 
     // Test basic expression
-    client.send_privmsg("#test", "tcl expr {1 + 1}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl expr {1 + 1}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "2", "Expected '2' but got '{}'", response);
     } else {
         panic!("No response received for basic tcl eval");
@@ -272,19 +293,21 @@ async fn test_live_basic_tcl_eval() {
 
 #[tokio::test]
 async fn test_live_string_operations() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    client.send_privmsg(&channel, "tcl string toupper hello").expect("Failed to send");
 
-    // Test string toupper
-    client.send_privmsg("#test", "tcl string toupper hello").expect("Failed to send");
-
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "HELLO");
     } else {
         panic!("No response received for string toupper");
@@ -295,19 +318,22 @@ async fn test_live_string_operations() {
 
 #[tokio::test]
 async fn test_live_list_operations() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test list operations
-    client.send_privmsg("#test", "tcl llength {a b c d e}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl llength {a b c d e}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "5");
     } else {
         panic!("No response received for llength");
@@ -318,19 +344,22 @@ async fn test_live_list_operations() {
 
 #[tokio::test]
 async fn test_live_math_operations() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test math expression
-    client.send_privmsg("#test", "tcl expr {sqrt(16) + pow(2, 3)}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl expr {sqrt(16) + pow(2, 3)}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         let value: f64 = response.trim().parse().expect("Not a number");
         assert!((value - 12.0).abs() < 0.001, "Expected 12.0, got {}", value);
     } else {
@@ -346,26 +375,28 @@ async fn test_live_math_operations() {
 
 #[tokio::test]
 async fn test_live_define_proc() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Define a proc
-    client.send_privmsg("#test", "tcl proc double {x} { expr {$x * 2} }").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl proc double {x} { expr {$x * 2} }").expect("Failed to send");
 
     // Wait for definition confirmation (or empty response)
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
     // Now call the proc
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl double 21").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl double 21").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "42");
     } else {
         panic!("No response received for proc call");
@@ -376,29 +407,31 @@ async fn test_live_define_proc() {
 
 #[tokio::test]
 async fn test_live_variable_persistence() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Set a variable
-    client.send_privmsg("#test", "tcl set testvar 12345").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl set testvar 12345").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "12345");
     } else {
         panic!("No response received for set");
     }
 
     // Get the variable back
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl set testvar").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl set testvar").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "12345");
     } else {
         panic!("No response received for get");
@@ -413,19 +446,22 @@ async fn test_live_variable_persistence() {
 
 #[tokio::test]
 async fn test_live_map_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test map command
-    client.send_privmsg("#test", "tcl map {1 2 3} {x {expr {$x * 2}}}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl map {1 2 3} {x {expr {$x * 2}}}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "2 4 6");
     } else {
         panic!("No response received for map");
@@ -436,19 +472,22 @@ async fn test_live_map_command() {
 
 #[tokio::test]
 async fn test_live_seq_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test seq command
-    client.send_privmsg("#test", "tcl seq 1 5").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl seq 1 5").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "1 2 3 4 5");
     } else {
         panic!("No response received for seq");
@@ -459,29 +498,31 @@ async fn test_live_seq_command() {
 
 #[tokio::test]
 async fn test_live_first_last_rest() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test first
-    client.send_privmsg("#test", "tcl first {a b c}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl first {a b c}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "a");
     } else {
         panic!("No response received for first");
     }
 
     // Test last
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl last {a b c}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl last {a b c}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "c");
     } else {
         panic!("No response received for last");
@@ -496,24 +537,26 @@ async fn test_live_first_last_rest() {
 
 #[tokio::test]
 async fn test_live_cache_put_get() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Put value in cache
-    client.send_privmsg("#test", "tcl cache put mybucket mykey myvalue").expect("Failed to send");
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    client.send_privmsg(&channel, "tcl cache put mybucket mykey myvalue").expect("Failed to send");
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
     // Get value from cache
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl cache get mybucket mykey").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl cache get mybucket mykey").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "myvalue");
     } else {
         panic!("No response received for cache get");
@@ -524,34 +567,35 @@ async fn test_live_cache_put_get() {
 
 #[tokio::test]
 async fn test_live_cache_exists() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Check non-existent key
-    client.send_privmsg("#test", "tcl cache exists mybucket nonexistent").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl cache exists mybucket nonexistent").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "0");
     } else {
         panic!("No response received for cache exists");
     }
 
     // Put value
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl cache put mybucket testkey testvalue").expect("Failed to send");
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    client.send_privmsg(&channel, "tcl cache put mybucket testkey testvalue").expect("Failed to send");
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
     // Check existent key
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl cache exists mybucket testkey").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl cache exists mybucket testkey").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "1");
     } else {
         panic!("No response received for cache exists after put");
@@ -566,29 +610,31 @@ async fn test_live_cache_exists() {
 
 #[tokio::test]
 async fn test_live_base64_encode_decode() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Base64 encode
-    client.send_privmsg("#test", "tcl base64 {hello world}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl base64 {hello world}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "aGVsbG8gd29ybGQ=");
     } else {
         panic!("No response received for base64");
     }
 
     // Base64 decode
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl unbase64 aGVsbG8gd29ybGQ=").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl unbase64 aGVsbG8gd29ybGQ=").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "hello world");
     } else {
         panic!("No response received for unbase64");
@@ -599,19 +645,22 @@ async fn test_live_base64_encode_decode() {
 
 #[tokio::test]
 async fn test_live_url_encode_decode() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // URL encode
-    client.send_privmsg("#test", "tcl url_encode {hello world!}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl url_encode {hello world!}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "hello%20world%21");
     } else {
         panic!("No response received for url_encode");
@@ -626,19 +675,22 @@ async fn test_live_url_encode_decode() {
 
 #[tokio::test]
 async fn test_live_syntax_error() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Unbalanced brackets
-    client.send_privmsg("#test", "tcl expr {1 + 1").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl expr {1 + 1").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert!(response.contains("error"), "Expected error message, got: {}", response);
     } else {
         panic!("No response received for syntax error");
@@ -649,19 +701,22 @@ async fn test_live_syntax_error() {
 
 #[tokio::test]
 async fn test_live_undefined_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Undefined command
-    client.send_privmsg("#test", "tcl nonexistentcommand").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl nonexistentcommand").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert!(response.contains("error") || response.contains("invalid command"),
                 "Expected error message, got: {}", response);
     } else {
@@ -677,19 +732,22 @@ async fn test_live_undefined_command() {
 
 #[tokio::test]
 async fn test_live_blocked_exec_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Try to execute system command (should be blocked)
-    client.send_privmsg("#test", "tcl exec ls").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl exec ls").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert!(response.contains("error") || response.contains("invalid command"),
                 "exec should be blocked, got: {}", response);
     } else {
@@ -701,19 +759,22 @@ async fn test_live_blocked_exec_command() {
 
 #[tokio::test]
 async fn test_live_blocked_socket_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Try to open socket (should be blocked)
-    client.send_privmsg("#test", "tcl socket localhost 80").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl socket localhost 80").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert!(response.contains("error") || response.contains("invalid command"),
                 "socket should be blocked, got: {}", response);
     } else {
@@ -729,19 +790,22 @@ async fn test_live_blocked_socket_command() {
 
 #[tokio::test]
 async fn test_live_file_join() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test file join
-    client.send_privmsg("#test", "tcl file join /home user docs").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl file join /home user docs").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "/home/user/docs");
     } else {
         panic!("No response received for file join");
@@ -752,19 +816,22 @@ async fn test_live_file_join() {
 
 #[tokio::test]
 async fn test_live_file_extension() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test file extension
-    client.send_privmsg("#test", "tcl file extension /path/to/file.txt").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl file extension /path/to/file.txt").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), ".txt");
     } else {
         panic!("No response received for file extension");
@@ -775,19 +842,22 @@ async fn test_live_file_extension() {
 
 #[tokio::test]
 async fn test_live_file_dirname() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test file dirname
-    client.send_privmsg("#test", "tcl file dirname /path/to/file.txt").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl file dirname /path/to/file.txt").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "/path/to");
     } else {
         panic!("No response received for file dirname");
@@ -802,26 +872,28 @@ async fn test_live_file_dirname() {
 
 #[tokio::test]
 async fn test_live_trigger_registration() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Register a trigger using the bind command
     // triggers bind <event> <pattern> <proc>
     // First define the proc
-    client.send_privmsg("#test", "tcl proc myhandler {nick mask chan text} { return \"Got text from $nick\" }").expect("Failed to send");
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    client.send_privmsg(&channel, "tcl proc myhandler {nick mask chan text} { return \"Got text from $nick\" }").expect("Failed to send");
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
     // Now bind it
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl triggers bind TEXT #test myhandler").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl triggers bind TEXT #test myhandler").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         // Should get a success message
         assert!(response.contains("Bound"), "Expected bind success message, got: {}", response);
     } else {
@@ -829,10 +901,9 @@ async fn test_live_trigger_registration() {
     }
 
     // List triggers
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl triggers list_bindings").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl triggers list_bindings").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         // Should contain TEXT and #test
         assert!(response.contains("TEXT") || response.contains("myhandler"),
                 "Expected trigger list to contain binding info, got: {}", response);
@@ -849,20 +920,23 @@ async fn test_live_trigger_registration() {
 
 #[tokio::test]
 async fn test_live_timer_schedule() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // List timers (should be empty or just show format)
-    client.send_privmsg("#test", "tcl timers list").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl timers list").expect("Failed to send");
 
     // Just verify we get a response (not an error)
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         // Response should be empty list or timer list
         assert!(!response.contains("invalid command"), "timers command should exist");
     } else {
@@ -878,20 +952,23 @@ async fn test_live_timer_schedule() {
 
 #[tokio::test]
 async fn test_live_nick_variable() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Get nick variable (should be the sender's nick)
-    client.send_privmsg("#test", "tcl nick").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl nick").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
-        assert_eq!(response.trim(), "testuser");
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert_eq!(response.trim(), client_nick);
     } else {
         panic!("No response received for nick");
     }
@@ -901,20 +978,23 @@ async fn test_live_nick_variable() {
 
 #[tokio::test]
 async fn test_live_channel_variable() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Get channel variable
-    client.send_privmsg("#test", "tcl set ::channel").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl set ::channel").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
-        assert_eq!(response.trim(), "#test");
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert_eq!(response.trim(), channel);
     } else {
         panic!("No response received for channel");
     }
@@ -928,19 +1008,22 @@ async fn test_live_channel_variable() {
 
 #[tokio::test]
 async fn test_live_select_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test select command
-    client.send_privmsg("#test", "tcl select {1 2 3 4 5} {x {expr {$x > 2}}}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl select {1 2 3 4 5} {x {expr {$x > 2}}}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "3 4 5");
     } else {
         panic!("No response received for select");
@@ -951,19 +1034,22 @@ async fn test_live_select_command() {
 
 #[tokio::test]
 async fn test_live_lfilter_command() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test lfilter command
-    client.send_privmsg("#test", "tcl lfilter {test*} {testing test123 other testbot}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl lfilter {test*} {testing test123 other testbot}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert!(response.contains("testing"), "Expected 'testing' in result: {}", response);
         assert!(response.contains("test123"), "Expected 'test123' in result: {}", response);
         assert!(response.contains("testbot"), "Expected 'testbot' in result: {}", response);
@@ -981,27 +1067,28 @@ async fn test_live_lfilter_command() {
 
 #[tokio::test]
 async fn test_live_command_sequence() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Sequence of commands building on each other
-    client.send_privmsg("#test", "tcl set x 10").expect("Failed to send");
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    client.send_privmsg(&channel, "tcl set x 10").expect("Failed to send");
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl set y 20").expect("Failed to send");
-    let _ = wait_for_response(&mut stream, 5, "#test").await;
+    client.send_privmsg(&channel, "tcl set y 20").expect("Failed to send");
+    let _ = wait_for_response_from(&mut stream, 5, &channel, &bot_nick).await;
 
-    sleep(Duration::from_millis(500)).await;
-    client.send_privmsg("#test", "tcl expr {$x + $y}").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl expr {$x + $y}").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "30");
     } else {
         panic!("No response received for expression with variables");
@@ -1016,19 +1103,22 @@ async fn test_live_command_sequence() {
 
 #[tokio::test]
 async fn test_live_meta_uptime() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Get uptime
-    client.send_privmsg("#test", "tcl meta uptime").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl meta uptime").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         // Should be a number >= 0
         let uptime: i64 = response.trim().parse().expect("Uptime should be a number");
         assert!(uptime >= 0, "Uptime should be non-negative");
@@ -1045,19 +1135,22 @@ async fn test_live_meta_uptime() {
 
 #[tokio::test]
 async fn test_live_clock_seconds() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Get clock seconds
-    client.send_privmsg("#test", "tcl clock seconds").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl clock seconds").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         let seconds: i64 = response.trim().parse().expect("Clock seconds should be a number");
         // Should be a reasonable timestamp (after 2020)
         assert!(seconds > 1577836800, "Timestamp should be after 2020");
@@ -1074,19 +1167,22 @@ async fn test_live_clock_seconds() {
 
 #[tokio::test]
 async fn test_live_httpx_namespace() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Check httpx namespace exists
-    client.send_privmsg("#test", "tcl namespace exists ::httpx").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl namespace exists ::httpx").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "1");
     } else {
         panic!("No response received for httpx namespace check");
@@ -1097,19 +1193,22 @@ async fn test_live_httpx_namespace() {
 
 #[tokio::test]
 async fn test_live_httpx_normalize_url() {
-    let _server = TestIrcServer::start().expect("Failed to start IRC server");
-    let state_path = format!("/tmp/slopdrop_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
     let _ = fs::remove_dir_all(&state_path);
     fs::create_dir_all(&state_path).expect("Failed to create state directory");
 
-    let _bot = TestBot::start(&state_path).await.expect("Failed to start bot");
-
-    let (client, mut stream) = create_test_client("testuser").await.expect("Failed to connect");
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
     // Test URL normalization
-    client.send_privmsg("#test", "tcl ::httpx::normalize_url example.com").expect("Failed to send");
+    client.send_privmsg(&channel, "tcl ::httpx::normalize_url example.com").expect("Failed to send");
 
-    if let Some(response) = wait_for_response(&mut stream, 10, "#test").await {
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
         assert_eq!(response.trim(), "http://example.com");
     } else {
         panic!("No response received for URL normalization");

@@ -46,6 +46,7 @@ tower-http = { version = "0.5", features = ["fs", "cors"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+once_cell = "1.19"
 
 [features]
 default = ["frontend-irc"]
