@@ -8,116 +8,6 @@ namespace eval timtom {
     variable bucket "timtom"
 
     # =========================================================================
-    # Timer Infrastructure
-    # =========================================================================
-    # Timers are stored in cache as JSON-like lists
-    # Format: {id channel nick message fire_time repeat_count interval_ms}
-
-    variable timer_counter 0
-
-    # Schedule a timer
-    # Returns timer ID
-    proc schedule_timer {channel nick message delay_ms {repeat 1} {interval_ms 0}} {
-        variable bucket
-        variable timer_counter
-        incr timer_counter
-        set id "timer_$timer_counter"
-
-        set fire_time [expr {[clock milliseconds] + $delay_ms}]
-        set timer_data [list $id $channel $nick $message $fire_time $repeat $interval_ms]
-
-        # Store in timers list
-        set timers_key "timers"
-        if {[cache exists $bucket $timers_key]} {
-            set timers [cache get $bucket $timers_key]
-        } else {
-            set timers [list]
-        }
-        lappend timers $timer_data
-        cache put $bucket $timers_key $timers
-
-        return $id
-    }
-
-    # Cancel a timer by ID
-    proc cancel_timer {id} {
-        variable bucket
-        set timers_key "timers"
-        if {![cache exists $bucket $timers_key]} {
-            return
-        }
-        set timers [cache get $bucket $timers_key]
-        set new_timers [list]
-        foreach timer $timers {
-            if {[lindex $timer 0] ne $id} {
-                lappend new_timers $timer
-            }
-        }
-        cache put $bucket $timers_key $new_timers
-    }
-
-    # Cancel all timers matching a pattern
-    proc cancel_timers_like {pattern} {
-        variable bucket
-        set timers_key "timers"
-        if {![cache exists $bucket $timers_key]} {
-            return
-        }
-        set timers [cache get $bucket $timers_key]
-        set new_timers [list]
-        foreach timer $timers {
-            if {![string match $pattern [lindex $timer 0]]} {
-                lappend new_timers $timer
-            }
-        }
-        cache put $bucket $timers_key $new_timers
-    }
-
-    # Check for ready timers and return their messages
-    # Returns list of {channel message} pairs
-    proc check_timers {} {
-        variable bucket
-        set timers_key "timers"
-        if {![cache exists $bucket $timers_key]} {
-            return [list]
-        }
-
-        set timers [cache get $bucket $timers_key]
-        set now [clock milliseconds]
-        set ready [list]
-        set remaining [list]
-
-        foreach timer $timers {
-            lassign $timer id channel nick message fire_time repeat interval
-            if {$now >= $fire_time} {
-                # Timer is ready
-                lappend ready [list $channel $message]
-                # Check if it should repeat
-                if {$repeat > 1 || $repeat == -1} {
-                    set new_repeat [expr {$repeat == -1 ? -1 : $repeat - 1}]
-                    set new_fire [expr {$now + $interval}]
-                    lappend remaining [list $id $channel $nick $message $new_fire $new_repeat $interval]
-                }
-            } else {
-                lappend remaining $timer
-            }
-        }
-
-        cache put $bucket $timers_key $remaining
-        return $ready
-    }
-
-    # Get pending timer count
-    proc timer_count {} {
-        variable bucket
-        set timers_key "timers"
-        if {![cache exists $bucket $timers_key]} {
-            return 0
-        }
-        return [llength [cache get $bucket $timers_key]]
-    }
-
-    # =========================================================================
     # Helper Functions
     # =========================================================================
 
@@ -511,9 +401,9 @@ namespace eval timtom {
         # First message is immediate
         set msg "TIMTOM IS STARING AT $target_upper"
 
-        # Schedule the repeating stares using timer infrastructure
+        # Schedule the repeating stares using general timer framework
         # Timer fires 10 more times at 10-second intervals
-        schedule_timer $::channel $nick $msg 10000 10 10000
+        timers schedule $::channel $msg 10000 10 10000
 
         # Return immediate first stare
         return $msg
@@ -1431,8 +1321,7 @@ namespace eval timtom {
         bong marry divorce my_ponies my_unicorns buy_pony bonus enable_spin \
         format_money get_money set_money add_money get_stat set_stat add_stat \
         stare sex horses jesus timtom_help keek pizza crab nachos lasagna \
-        story_start story_begin schedule_timer cancel_timer cancel_timers_like \
-        check_timers timer_count
+        story_start story_begin
     namespace ensemble create
 }
 

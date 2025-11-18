@@ -38,6 +38,11 @@ pub fn trigger_commands() -> &'static str {
     include_str!("../tcl/triggers.tcl")
 }
 
+/// Returns general timer infrastructure
+pub fn timer_commands() -> &'static str {
+    include_str!("../tcl/timers.tcl")
+}
+
 /// Initialize all smeggdrop commands in the interpreter
 /// NOTE: Currently unused - we call individual command loaders in tcl_wrapper.rs
 /// to control loading order (some must load before making interpreter safe).

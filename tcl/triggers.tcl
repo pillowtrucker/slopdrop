@@ -3,13 +3,13 @@
 
 namespace eval triggers {
     # Storage for bindings: event_type -> list of {pattern proc_name}
-    # Event types: JOIN, PART, QUIT, KICK, NICK
+    # Event types: JOIN, PART, QUIT, KICK, NICK, TEXT
     variable bindings
     array set bindings {}
 
     # Bind a proc to an event
     # Usage: triggers bind <event> <pattern> <proc>
-    #   event: JOIN, PART, QUIT, KICK, NICK
+    #   event: JOIN, PART, QUIT, KICK, NICK, TEXT
     #   pattern: channel pattern (e.g., "#channel" or "*" for all)
     #   proc: proc name to call
     #
@@ -17,6 +17,7 @@ namespace eval triggers {
     # For QUIT: proc is called with: nick mask message
     # For KICK: proc is called with: nick kicker channel reason
     # For NICK: proc is called with: old_nick new_nick mask
+    # For TEXT: proc is called with: nick mask channel text
     proc bind {event pattern proc_name} {
         variable bindings
 
@@ -24,8 +25,8 @@ namespace eval triggers {
         set event [string toupper $event]
 
         # Validate event type
-        if {$event ni {JOIN PART QUIT KICK NICK}} {
-            error "Unknown event type '$event'. Valid types: JOIN, PART, QUIT, KICK, NICK"
+        if {$event ni {JOIN PART QUIT KICK NICK TEXT}} {
+            error "Unknown event type '$event'. Valid types: JOIN, PART, QUIT, KICK, NICK, TEXT"
         }
 
         # Initialize list if not exists
@@ -106,8 +107,8 @@ namespace eval triggers {
 
         # Determine channel for pattern matching
         switch $event {
-            JOIN - PART - KICK {
-                # args: nick mask channel [reason for kick]
+            JOIN - PART - KICK - TEXT {
+                # args: nick mask channel [text/reason]
                 set channel [lindex $args 2]
             }
             QUIT - NICK {
@@ -126,9 +127,9 @@ namespace eval triggers {
                 if {[catch {
                     set response [uplevel #0 [list $proc_name {*}$args]]
                     if {$response ne ""} {
-                        # For JOIN/PART/KICK, return response to the channel
+                        # Return response to the channel for relevant events
                         switch $event {
-                            JOIN - PART - KICK {
+                            JOIN - PART - KICK - TEXT {
                                 lappend results [list $channel $response]
                             }
                         }

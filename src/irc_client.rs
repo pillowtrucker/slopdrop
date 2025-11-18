@@ -81,11 +81,21 @@ impl IrcClient {
                     // Strip IRC formatting codes from the message
                     let clean_msg = irc_formatting::strip_irc_formatting(msg);
 
-                    // Log all public messages to channel history
+                    // Log all public messages to channel history and send TEXT event
                     if target.starts_with('#') {
                         let mask = format!("{}@{}", user, host);
                         command_tx
                             .send(PluginCommand::LogMessage {
+                                channel: target.clone(),
+                                nick: nick.clone(),
+                                mask: mask.clone(),
+                                text: clean_msg.clone(),
+                            })
+                            .await?;
+
+                        // Send TEXT event for trigger handling
+                        command_tx
+                            .send(PluginCommand::UserText {
                                 channel: target.clone(),
                                 nick: nick.clone(),
                                 mask,

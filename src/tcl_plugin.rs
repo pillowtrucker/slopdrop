@@ -90,6 +90,11 @@ impl TclPlugin {
                                 warn!("Error handling NICK event: {}", e);
                             }
                         }
+                        Some(PluginCommand::UserText { channel, nick, mask, text }) => {
+                            if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &response_tx).await {
+                                warn!("Error handling TEXT event: {}", e);
+                            }
+                        }
                         Some(PluginCommand::Shutdown) => {
                             info!("Shutting down TCL plugin");
                             break;
@@ -151,8 +156,8 @@ impl TclPlugin {
 
     /// Check for ready timers and send their messages
     async fn check_timers(&mut self, response_tx: &mpsc::Sender<PluginCommand>) -> Result<()> {
-        // Evaluate TCL to check timers
-        let result = self.tcl_thread.eval_simple("timtom check_timers".to_string()).await?;
+        // Evaluate TCL to check timers (using general timer framework)
+        let result = self.tcl_thread.eval_simple("timers check".to_string()).await?;
 
         if result.trim().is_empty() || result.trim() == "{}" {
             return Ok(());
