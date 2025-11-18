@@ -131,12 +131,12 @@ namespace eval timers {
     }
 
     # List all pending timers
-    # Usage: timers list
-    proc list {} {
+    # Usage: timers pending
+    proc pending {} {
         variable bucket
         set timers_key "active"
         if {![cache exists $bucket $timers_key]} {
-            return [list]
+            return {}
         }
         return [cache get $bucket $timers_key]
     }
@@ -150,7 +150,7 @@ namespace eval timers {
     }
 
     # Export and create ensemble
-    namespace export schedule cancel cancel_like check count list clear
+    namespace export schedule cancel cancel_like check count pending clear
     namespace ensemble create
 }
 
