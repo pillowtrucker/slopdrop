@@ -26,7 +26,9 @@ pub struct SecurityConfig {
     pub blacklisted_users: Vec<String>,
     pub eval_timeout_ms: u64,
     /// Memory limit per evaluation in megabytes (Unix only, 0 = no limit)
-    /// Default: 256 MB
+    /// Note: Uses RLIMIT_AS which limits entire process address space.
+    /// Set to 0 (disabled) by default as small values cause crashes.
+    /// If enabling, use values >= 1024 MB to account for process overhead.
     #[serde(default = "default_memory_limit")]
     pub memory_limit_mb: u64,
     /// Maximum recursion depth for TCL procedures (0 = no limit)
@@ -36,7 +38,7 @@ pub struct SecurityConfig {
 }
 
 fn default_memory_limit() -> u64 {
-    256 // 256 MB default
+    0 // Disabled by default - RLIMIT_AS affects entire process, not just TCL thread
 }
 
 fn default_recursion_limit() -> u32 {
