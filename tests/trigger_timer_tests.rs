@@ -325,8 +325,14 @@ fn test_trigger_dispatch_join() {
 
     // Dispatch
     let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
-    assert!(result.contains("#test"));
-    assert!(result.contains("Hello testuser!"));
+    println!("Trigger dispatch returned: '{}'", result);
+    assert!(result.contains("#test"), "Result should contain channel");
+    assert!(result.contains("Hello testuser!"), "Result should contain message");
+
+    // Verify the format matches what parse_timer_list expects
+    // Should be: {{#test} {Hello testuser!}}
+    assert!(result.contains("{#test}"), "Channel should be braced");
+    assert!(result.contains("{Hello testuser!}"), "Message should be braced");
 }
 
 #[test]

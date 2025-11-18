@@ -1356,8 +1356,8 @@ proc timtom_welcome {nick mask channel} {
         "$nick has graced $channel with their presence! Welcome, friend!" \
     ]
 
-    # Only welcome sometimes (1 in 3 chance)
-    if {rand() < 0.33} {
+    # Welcome most of the time (70% chance)
+    if {rand() < 0.70} {
         return [lindex $greetings [expr {int(rand() * [llength $greetings])}]]
     }
 

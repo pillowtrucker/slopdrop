@@ -700,4 +700,14 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], ("#bottest".to_string(), "TIMTOM IS STARING AT WRATH".to_string()));
     }
+
+    #[test]
+    fn test_parse_trigger_response() {
+        let plugin = create_test_plugin();
+
+        // Test trigger dispatch response format (same as timer format)
+        let result = plugin.parse_timer_list("{{#test} {Welcome testuser!}}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("#test".to_string(), "Welcome testuser!".to_string()));
+    }
 }
