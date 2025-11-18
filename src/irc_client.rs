@@ -81,11 +81,21 @@ impl IrcClient {
                     // Strip IRC formatting codes from the message
                     let clean_msg = irc_formatting::strip_irc_formatting(msg);
 
-                    // Log all public messages to channel history
+                    // Log all public messages to channel history and send TEXT event
                     if target.starts_with('#') {
                         let mask = format!("{}@{}", user, host);
                         command_tx
                             .send(PluginCommand::LogMessage {
+                                channel: target.clone(),
+                                nick: nick.clone(),
+                                mask: mask.clone(),
+                                text: clean_msg.clone(),
+                            })
+                            .await?;
+
+                        // Send TEXT event for trigger handling
+                        command_tx
+                            .send(PluginCommand::UserText {
                                 channel: target.clone(),
                                 nick: nick.clone(),
                                 mask,
@@ -126,7 +136,7 @@ impl IrcClient {
                 debug!("Invited to {}, joining", channel);
                 self.client.send_join(channel)?;
             }
-            Command::KICK(ref channel, ref nick, ref _reason) => {
+            Command::KICK(ref channel, ref nick, ref reason) => {
                 if nick == self.client.current_nickname() {
                     info!("Kicked from {}, rejoining in 10s", channel);
                     // Wait 10 seconds then automatically rejoin
@@ -135,30 +145,85 @@ impl IrcClient {
                 } else {
                     // Someone else was kicked, remove from member list
                     self.remove_member(channel, nick);
+
+                    // Send event to plugin for trigger handling
+                    let kicker = if let Some(Prefix::Nickname(ref kicker_nick, _, _)) = message.prefix {
+                        kicker_nick.clone()
+                    } else {
+                        "unknown".to_string()
+                    };
+                    command_tx
+                        .send(PluginCommand::UserKick {
+                            channel: channel.clone(),
+                            nick: nick.clone(),
+                            kicker,
+                            reason: reason.clone().unwrap_or_default(),
+                        })
+                        .await?;
                 }
             }
             Command::JOIN(ref channel, _, _) => {
-                if let Some(Prefix::Nickname(ref nick, _, _)) = message.prefix {
+                if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
                     debug!("{} joined {}", nick, channel);
                     self.add_member(channel, nick);
+
+                    // Send event to plugin for trigger handling
+                    let mask = format!("{}@{}", user, host);
+                    command_tx
+                        .send(PluginCommand::UserJoin {
+                            channel: channel.clone(),
+                            nick: nick.clone(),
+                            mask,
+                        })
+                        .await?;
                 }
             }
             Command::PART(ref channel, _) => {
-                if let Some(Prefix::Nickname(ref nick, _, _)) = message.prefix {
+                if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
                     debug!("{} left {}", nick, channel);
                     self.remove_member(channel, nick);
+
+                    // Send event to plugin for trigger handling
+                    let mask = format!("{}@{}", user, host);
+                    command_tx
+                        .send(PluginCommand::UserPart {
+                            channel: channel.clone(),
+                            nick: nick.clone(),
+                            mask,
+                        })
+                        .await?;
                 }
             }
-            Command::QUIT(_) => {
-                if let Some(Prefix::Nickname(ref nick, _, _)) = message.prefix {
+            Command::QUIT(ref quit_msg) => {
+                if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
                     debug!("{} quit", nick);
                     self.remove_member_from_all(nick);
+
+                    // Send event to plugin for trigger handling
+                    let mask = format!("{}@{}", user, host);
+                    command_tx
+                        .send(PluginCommand::UserQuit {
+                            nick: nick.clone(),
+                            mask,
+                            message: quit_msg.clone().unwrap_or_default(),
+                        })
+                        .await?;
                 }
             }
             Command::NICK(ref new_nick) => {
-                if let Some(Prefix::Nickname(ref old_nick, _, _)) = message.prefix {
+                if let Some(Prefix::Nickname(ref old_nick, ref user, ref host)) = message.prefix {
                     debug!("{} changed nick to {}", old_nick, new_nick);
                     self.rename_member(old_nick, new_nick);
+
+                    // Send event to plugin for trigger handling
+                    let mask = format!("{}@{}", user, host);
+                    command_tx
+                        .send(PluginCommand::UserNick {
+                            old_nick: old_nick.clone(),
+                            new_nick: new_nick.clone(),
+                            mask,
+                        })
+                        .await?;
                 }
             }
             Command::Response(Response::RPL_NAMREPLY, ref args) => {

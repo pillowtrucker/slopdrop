@@ -256,6 +256,20 @@ impl TclThreadHandle {
         }
     }
 
+    /// Simple eval for system-level operations (like timer checking)
+    /// Uses a "system" context without user tracking
+    pub async fn eval_simple(&mut self, code: String) -> Result<String> {
+        let result = self.eval(
+            code,
+            false,
+            "system".to_string(),
+            "system@bot".to_string(),
+            "system".to_string(),
+        ).await?;
+
+        Ok(result.output)
+    }
+
     /// Log a message to the channel history
     pub fn log_message(&self, channel: String, nick: String, mask: String, text: String) {
         let _ = self.command_tx.send(TclThreadCommand::LogMessage {

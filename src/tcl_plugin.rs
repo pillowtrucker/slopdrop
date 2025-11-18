@@ -6,7 +6,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tokio::time::interval;
+use tracing::{debug, error, info, warn};
 
 /// Cache entry for paginated output
 struct OutputCache {
@@ -48,25 +49,205 @@ impl TclPlugin {
     ) -> Result<()> {
         info!("TCL plugin started");
 
-        while let Some(command) = command_rx.recv().await {
-            match command {
-                PluginCommand::EvalTcl { message, is_admin } => {
-                    if let Err(e) = self.handle_eval(message, is_admin, &response_tx).await {
-                        error!("Error handling TCL eval: {}", e);
+        // Timer polling interval (1 second)
+        let mut timer_interval = interval(Duration::from_secs(1));
+
+        loop {
+            tokio::select! {
+                // Handle incoming commands
+                command = command_rx.recv() => {
+                    match command {
+                        Some(PluginCommand::EvalTcl { message, is_admin }) => {
+                            if let Err(e) = self.handle_eval(message, is_admin, &response_tx).await {
+                                error!("Error handling TCL eval: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::LogMessage { channel, nick, mask, text }) => {
+                            self.tcl_thread.log_message(channel, nick, mask, text);
+                        }
+                        Some(PluginCommand::UserJoin { channel, nick, mask }) => {
+                            if let Err(e) = self.handle_event("JOIN", &[&nick, &mask, &channel], &response_tx).await {
+                                warn!("Error handling JOIN event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserPart { channel, nick, mask }) => {
+                            if let Err(e) = self.handle_event("PART", &[&nick, &mask, &channel], &response_tx).await {
+                                warn!("Error handling PART event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserQuit { nick, mask, message }) => {
+                            if let Err(e) = self.handle_event("QUIT", &[&nick, &mask, &message], &response_tx).await {
+                                warn!("Error handling QUIT event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserKick { channel, nick, kicker, reason }) => {
+                            if let Err(e) = self.handle_event("KICK", &[&nick, &kicker, &channel, &reason], &response_tx).await {
+                                warn!("Error handling KICK event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserNick { old_nick, new_nick, mask }) => {
+                            if let Err(e) = self.handle_event("NICK", &[&old_nick, &new_nick, &mask], &response_tx).await {
+                                warn!("Error handling NICK event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserText { channel, nick, mask, text }) => {
+                            if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &response_tx).await {
+                                warn!("Error handling TEXT event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::Shutdown) => {
+                            info!("Shutting down TCL plugin");
+                            break;
+                        }
+                        Some(_) => {}
+                        None => {
+                            // Channel closed
+                            break;
+                        }
                     }
                 }
-                PluginCommand::LogMessage { channel, nick, mask, text } => {
-                    self.tcl_thread.log_message(channel, nick, mask, text);
+                // Poll timers periodically
+                _ = timer_interval.tick() => {
+                    if let Err(e) = self.check_timers(&response_tx).await {
+                        warn!("Error checking timers: {}", e);
+                    }
                 }
-                PluginCommand::Shutdown => {
-                    info!("Shutting down TCL plugin");
-                    break;
-                }
-                _ => {}
             }
         }
 
         Ok(())
+    }
+
+    /// Handle an IRC event and dispatch to registered triggers
+    async fn handle_event(
+        &mut self,
+        event: &str,
+        args: &[&str],
+        response_tx: &mpsc::Sender<PluginCommand>,
+    ) -> Result<()> {
+        // Build TCL command to dispatch event
+        let tcl_args: Vec<String> = args.iter().map(|s| format!("{{{}}}", s)).collect();
+        let dispatch_cmd = format!("triggers dispatch {} {}", event, tcl_args.join(" "));
+
+        debug!("Dispatching event: {}", dispatch_cmd);
+
+        // Evaluate the dispatch command
+        let result = self.tcl_thread.eval_simple(dispatch_cmd).await?;
+
+        if result.trim().is_empty() || result.trim() == "{}" {
+            return Ok(());
+        }
+
+        // Parse the TCL list of {channel message} pairs and send responses
+        let responses = self.parse_timer_list(&result);
+
+        for (channel, message) in responses {
+            debug!("Trigger response for {}: {}", channel, message);
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel,
+                    text: message,
+                })
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Check for ready timers and send their messages
+    async fn check_timers(&mut self, response_tx: &mpsc::Sender<PluginCommand>) -> Result<()> {
+        // Evaluate TCL to check timers (using general timer framework)
+        let result = self.tcl_thread.eval_simple("timers check".to_string()).await?;
+
+        if result.trim().is_empty() || result.trim() == "{}" {
+            return Ok(());
+        }
+
+        // Parse the TCL list of {channel message} pairs
+        // Format: {{channel1 message1} {channel2 message2} ...}
+        let timers = self.parse_timer_list(&result);
+
+        for (channel, message) in timers {
+            debug!("Timer fired for {}: {}", channel, message);
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel,
+                    text: message,
+                })
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Parse a TCL list of {channel message} pairs
+    fn parse_timer_list(&self, tcl_list: &str) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        let trimmed = tcl_list.trim();
+
+        if trimmed.is_empty() {
+            return result;
+        }
+
+        // Simple parser for TCL list format
+        // Each element is {channel message}
+        let mut depth = 0;
+        let mut current = String::new();
+        let mut in_element = false;
+
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    if depth == 1 {
+                        in_element = true;
+                        current.clear();
+                    } else {
+                        current.push(ch);
+                    }
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 && in_element {
+                        // Parse {channel message}
+                        if let Some((channel, message)) = self.parse_timer_element(&current) {
+                            result.push((channel, message));
+                        }
+                        in_element = false;
+                    } else if depth > 0 {
+                        current.push(ch);
+                    }
+                }
+                _ => {
+                    if in_element {
+                        current.push(ch);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Parse a single timer element: "channel message"
+    fn parse_timer_element(&self, element: &str) -> Option<(String, String)> {
+        let trimmed = element.trim();
+
+        // Check if message is braced
+        if let Some(space_idx) = trimmed.find(' ') {
+            let channel = trimmed[..space_idx].to_string();
+            let rest = trimmed[space_idx + 1..].trim();
+
+            // Handle braced message
+            if rest.starts_with('{') && rest.ends_with('}') {
+                let message = rest[1..rest.len() - 1].to_string();
+                return Some((channel, message));
+            } else {
+                return Some((channel, rest.to_string()));
+            }
+        }
+
+        None
     }
 
     async fn handle_eval(
