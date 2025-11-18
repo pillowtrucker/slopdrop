@@ -13,7 +13,7 @@ anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-tcl = { git = "https://github.com/oooutlk/tcltk", package = "tcl", rev = "4943d68" }
+tcl = { git = "https://github.com/oooutlk/tcltk", package = "tcl" }
 futures = "0.3"
 sha1 = "0.10"
 git2 = "0.18"
