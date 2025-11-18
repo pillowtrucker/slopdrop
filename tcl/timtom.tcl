@@ -8,6 +8,116 @@ namespace eval timtom {
     variable bucket "timtom"
 
     # =========================================================================
+    # Timer Infrastructure
+    # =========================================================================
+    # Timers are stored in cache as JSON-like lists
+    # Format: {id channel nick message fire_time repeat_count interval_ms}
+
+    variable timer_counter 0
+
+    # Schedule a timer
+    # Returns timer ID
+    proc schedule_timer {channel nick message delay_ms {repeat 1} {interval_ms 0}} {
+        variable bucket
+        variable timer_counter
+        incr timer_counter
+        set id "timer_$timer_counter"
+
+        set fire_time [expr {[clock milliseconds] + $delay_ms}]
+        set timer_data [list $id $channel $nick $message $fire_time $repeat $interval_ms]
+
+        # Store in timers list
+        set timers_key "timers"
+        if {[cache exists $bucket $timers_key]} {
+            set timers [cache get $bucket $timers_key]
+        } else {
+            set timers [list]
+        }
+        lappend timers $timer_data
+        cache put $bucket $timers_key $timers
+
+        return $id
+    }
+
+    # Cancel a timer by ID
+    proc cancel_timer {id} {
+        variable bucket
+        set timers_key "timers"
+        if {![cache exists $bucket $timers_key]} {
+            return
+        }
+        set timers [cache get $bucket $timers_key]
+        set new_timers [list]
+        foreach timer $timers {
+            if {[lindex $timer 0] ne $id} {
+                lappend new_timers $timer
+            }
+        }
+        cache put $bucket $timers_key $new_timers
+    }
+
+    # Cancel all timers matching a pattern
+    proc cancel_timers_like {pattern} {
+        variable bucket
+        set timers_key "timers"
+        if {![cache exists $bucket $timers_key]} {
+            return
+        }
+        set timers [cache get $bucket $timers_key]
+        set new_timers [list]
+        foreach timer $timers {
+            if {![string match $pattern [lindex $timer 0]]} {
+                lappend new_timers $timer
+            }
+        }
+        cache put $bucket $timers_key $new_timers
+    }
+
+    # Check for ready timers and return their messages
+    # Returns list of {channel message} pairs
+    proc check_timers {} {
+        variable bucket
+        set timers_key "timers"
+        if {![cache exists $bucket $timers_key]} {
+            return [list]
+        }
+
+        set timers [cache get $bucket $timers_key]
+        set now [clock milliseconds]
+        set ready [list]
+        set remaining [list]
+
+        foreach timer $timers {
+            lassign $timer id channel nick message fire_time repeat interval
+            if {$now >= $fire_time} {
+                # Timer is ready
+                lappend ready [list $channel $message]
+                # Check if it should repeat
+                if {$repeat > 1 || $repeat == -1} {
+                    set new_repeat [expr {$repeat == -1 ? -1 : $repeat - 1}]
+                    set new_fire [expr {$now + $interval}]
+                    lappend remaining [list $id $channel $nick $message $new_fire $new_repeat $interval]
+                }
+            } else {
+                lappend remaining $timer
+            }
+        }
+
+        cache put $bucket $timers_key $remaining
+        return $ready
+    }
+
+    # Get pending timer count
+    proc timer_count {} {
+        variable bucket
+        set timers_key "timers"
+        if {![cache exists $bucket $timers_key]} {
+            return 0
+        }
+        return [llength [cache get $bucket $timers_key]]
+    }
+
+    # =========================================================================
     # Helper Functions
     # =========================================================================
 
@@ -200,12 +310,114 @@ namespace eval timtom {
                 return [buy_pony $nick]
             }
             "stare" {
-                return [stare $nick]
+                return [stare]
+            }
+            "timer" - "dong" - "dongz" {
+                # These trigger staring at self
+                return [stare]
+            }
+            "help" {
+                return [timtom_help]
+            }
+            "keek" {
+                return [keek $nick]
+            }
+            "pizza" {
+                return [pizza $nick]
+            }
+            "crab" {
+                return [crab $nick]
+            }
+            "nachos" {
+                return [nachos $nick]
+            }
+            "lasagna" {
+                return [lasagna $nick]
+            }
+            "story" {
+                return [story_start $nick]
+            }
+            "begin" {
+                return [story_begin $nick]
+            }
+            "gamme" {
+                return [shoutout_gamme]
+            }
+            "aesop" {
+                return [shoutout_aesop]
+            }
+            "avi" {
+                return [shoutout_avi]
+            }
+            "bats" {
+                return [shoutout_bats]
+            }
+            "blackjesus" {
+                return [shoutout_blackjesus]
+            }
+            "b0nk" {
+                return [shoutout_b0nk]
+            }
+            "bzb" {
+                return [shoutout_bzb]
+            }
+            "flamoot" {
+                return [shoutout_flamoot]
+            }
+            "gnol" {
+                return [shoutout_gnol]
+            }
+            "hlp" {
+                return [shoutout_hlp]
+            }
+            "jbs" {
+                return [shoutout_jbs]
+            }
+            "mano" {
+                return [shoutout_mano]
+            }
+            "mandingo" {
+                return [shoutout_mandingo]
+            }
+            "matthew" {
+                return [shoutout_matthew]
+            }
+            "mao" {
+                return [shoutout_mao]
+            }
+            "nay" {
+                return [shoutout_nay]
+            }
+            "ninjalie" {
+                return [shoutout_ninjalie]
+            }
+            "noodle" {
+                return [shoutout_noodle]
+            }
+            "nza" {
+                return [shoutout_nza]
+            }
+            "oclet" {
+                return [shoutout_oclet]
+            }
+            "overfien" {
+                return [shoutout_overfien]
+            }
+            "dubz" {
+                return [shoutout_dubz]
+            }
+            "papersk1n" {
+                return [shoutout_papersk1n]
             }
             default {
                 # Check for state triggers
                 if {[check_states $text_lower $nick result]} {
                     return $result
+                }
+                # Check for stare with target
+                if {[string match "stare *" $text_lower]} {
+                    set target [join [lrange $words 1 end]]
+                    return [stare $target]
                 }
                 # Check for drink orders
                 if {[string match "drink *" $text_lower]} {
@@ -290,16 +502,21 @@ namespace eval timtom {
         }
     }
 
-    proc stare {{nick ""}} {
-        if {$nick eq ""} { set nick $::nick }
-        set stares [list \
-            "TIMTOM stares at $nick." \
-            "TIMTOM stares deeply into $nick's eyes." \
-            "TIMTOM gives $nick an uncomfortable stare." \
-            "TIMTOM locks eyes with $nick and doesn't blink." \
-            "TIMTOM gazes intensely at $nick." \
-        ]
-        return [lindex $stares [expr {int(rand() * [llength $stares])}]]
+    proc stare {{target ""}} {
+        set nick $::nick
+        if {$target eq ""} { set target $nick }
+        set target_upper [string toupper $target]
+
+        # Schedule 11 stare messages, 10 seconds apart (like original mIRC)
+        # First message is immediate
+        set msg "TIMTOM IS STARING AT $target_upper"
+
+        # Schedule the repeating stares using timer infrastructure
+        # Timer fires 10 more times at 10-second intervals
+        schedule_timer $::channel $nick $msg 10000 10 10000
+
+        # Return immediate first stare
+        return $msg
     }
 
     # =========================================================================
@@ -1032,6 +1249,175 @@ namespace eval timtom {
     }
 
     # =========================================================================
+    # Additional Commands
+    # =========================================================================
+
+    proc timtom_help {} {
+        set line1 "Hi, how are you doing? My name is TIMTOM and you are in $::channel. I am a servant to the people, and like to fancy myself as quite the capable gentleman. If there's anything you need don't hesitate to ask."
+        set line2 "Some of our popular features include hot soup and hot tea, horses, and NEVER FEAR: we offer the sacrament of marriage and also deal in divorces, and Wheel of Fortune is always on. Kick off your shoes, relax, and don't worry about a thing. The internet cannot hurt you now. You are in $::channel."
+        return "$line1\n$line2"
+    }
+
+    proc keek {nick} {
+        set r [expr {int(rand() * 64) + 1}]
+        if {$r == 1} {
+            return "Your name is $nick. My life is a life of horse castles."
+        }
+        return ""
+    }
+
+    proc pizza {nick} {
+        set cost 2.22
+        set current [get_money $nick]
+        if {$current >= $cost} {
+            add_money $nick [expr {-$cost}]
+            set responses [list \
+                "TIMTOM serves hot pizza to $nick. Enjoy!" \
+                "Here's a delicious slice of pizza for you, $nick!" \
+                "One piping hot pizza for $nick coming right up!" \
+            ]
+            return [lindex $responses [expr {int(rand() * [llength $responses])}]]
+        } else {
+            return "Sorry $nick, pizza costs \$2.22 and you only have [format_money $current]."
+        }
+    }
+
+    proc crab {nick} {
+        set cost 5.00
+        set current [get_money $nick]
+        if {$current >= $cost} {
+            add_money $nick [expr {-$cost}]
+            return "TIMTOM serves delicious crab to $nick. Enjoy!"
+        } else {
+            return "Sorry $nick, crab costs \$5.00 and you only have [format_money $current]."
+        }
+    }
+
+    proc nachos {nick} {
+        return "TIMTOM serves cheesy nachos to $nick. Enjoy!"
+    }
+
+    proc lasagna {nick} {
+        return "TIMTOM serves fresh lasagna to $nick. Enjoy!"
+    }
+
+    proc story_start {nick} {
+        set_stat $nick "story" 1
+        return "Hello, $nick, I understand that you would like to hear a story now. This would be my utmost pleasure. To begin the story please type \"begin\"."
+    }
+
+    proc story_begin {nick} {
+        set state [get_stat $nick "story"]
+        if {$state != 1} {
+            return ""
+        }
+        set_stat $nick "story" 0
+
+        set stories [list \
+            "Once upon a time, there was a horse named Gerald. Gerald lived in $::channel and ate oats every day. One day, Gerald found a golden carrot. He ate it and became the king of all horses. The end." \
+            "In a land far away, there lived a brave chatter named $nick. They ventured into the treacherous channel of $::channel and found friendship, laughter, and unlimited soup. The end." \
+            "There once was a bot named TIMTOM who served the people of $::channel with unwavering dedication. Day after day, TIMTOM provided soup, tea, marriages, and stares. And everyone was happy forever. The end." \
+        ]
+        return [lindex $stories [expr {int(rand() * [llength $stories])}]]
+    }
+
+    # =========================================================================
+    # User Shoutouts
+    # =========================================================================
+
+    proc shoutout_gamme {} {
+        return "GOLD $::nick, without your perseverance and dedication $::channel wouldn't be the channel it is today. Keep up the good work and may $::channel continue to grow!"
+    }
+
+    proc shoutout_aesop {} {
+        return "GOLD You are an excellent chatter and just an all around great person to be around $::nick. You can stop by $::channel anytime and that's fine by me."
+    }
+
+    proc shoutout_avi {} {
+        return "You are a strong chatter and exhibit all the qualities of a wonderful human being, $::nick. Never be a stranger to $::channel."
+    }
+
+    proc shoutout_bats {} {
+        return "GOLD Hey, $::nick, you're the best. I hope you're having fun here in $::channel because quite frankly we're all delighted and even a bit humbled that you'd hang out here with us. Keep up the strong chatter."
+    }
+
+    proc shoutout_blackjesus {} {
+        return "BlackJesus is our lord and savior. Praise be to BlackJesus in $::channel."
+    }
+
+    proc shoutout_b0nk {} {
+        return "B0nk is a legend of $::channel. All hail B0nk!"
+    }
+
+    proc shoutout_bzb {} {
+        return "BZB brings the good vibes to $::channel. Keep on chatting, BZB!"
+    }
+
+    proc shoutout_flamoot {} {
+        return "Flamoot graces us with their presence in $::channel. We are blessed!"
+    }
+
+    proc shoutout_gnol {} {
+        return "Gnol is a pillar of the $::channel community. Respect to Gnol!"
+    }
+
+    proc shoutout_hlp {} {
+        return "HLP helps us all. Thank you HLP for being part of $::channel!"
+    }
+
+    proc shoutout_jbs {} {
+        return "JBS is always there when you need them. $::channel appreciates you, JBS!"
+    }
+
+    proc shoutout_mano {} {
+        return "Mano, you bring joy to $::channel. Keep being awesome!"
+    }
+
+    proc shoutout_mandingo {} {
+        return "Mandingo is a force of nature in $::channel. All bow before Mandingo!"
+    }
+
+    proc shoutout_matthew {} {
+        return "Matthew, you're a wonderful addition to $::channel. Keep up the great work!"
+    }
+
+    proc shoutout_mao {} {
+        return "Mao leads the way in $::channel. Forward, comrades!"
+    }
+
+    proc shoutout_nay {} {
+        return "Nay brings positivity to $::channel. We appreciate you, Nay!"
+    }
+
+    proc shoutout_ninjalie {} {
+        return "Ninjalie, stealthy and awesome in $::channel. Keep being ninja!"
+    }
+
+    proc shoutout_noodle {} {
+        return "Noodle is delicious, just like your presence in $::channel!"
+    }
+
+    proc shoutout_nza {} {
+        return "NZA, you're always welcome in $::channel. Thanks for being here!"
+    }
+
+    proc shoutout_oclet {} {
+        return "Oclet, a true friend of $::channel. Stay awesome!"
+    }
+
+    proc shoutout_overfien {} {
+        return "Overfien, you're over the top in the best way possible. $::channel loves you!"
+    }
+
+    proc shoutout_dubz {} {
+        return "DUBZ, dropping those dubs in $::channel. Keep it real!"
+    }
+
+    proc shoutout_papersk1n {} {
+        return "Papersk1n, thin but strong, just like your dedication to $::channel!"
+    }
+
+    # =========================================================================
     # Help Command
     # =========================================================================
 
@@ -1044,7 +1430,9 @@ namespace eval timtom {
         blackjack_bet blackjack_hit blackjack_stand serve_all drink food \
         bong marry divorce my_ponies my_unicorns buy_pony bonus enable_spin \
         format_money get_money set_money add_money get_stat set_stat add_stat \
-        stare sex horses jesus
+        stare sex horses jesus timtom_help keek pizza crab nachos lasagna \
+        story_start story_begin schedule_timer cancel_timer cancel_timers_like \
+        check_timers timer_count
     namespace ensemble create
 }
 
