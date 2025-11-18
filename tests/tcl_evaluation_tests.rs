@@ -1,7 +1,7 @@
 use slopdrop::tcl_wrapper::SafeTclInterp;
 use slopdrop::tcl_thread::TclThreadHandle;
 use slopdrop::config::{SecurityConfig, TclConfig};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 use std::path::PathBuf;
@@ -96,6 +96,7 @@ async fn test_timeout_handling() {
     let security_config = SecurityConfig {
         eval_timeout_ms: 500,
         privileged_users: vec![],
+        blacklisted_users: vec![],
         memory_limit_mb: 256,
         max_recursion_depth: 1000,
     };

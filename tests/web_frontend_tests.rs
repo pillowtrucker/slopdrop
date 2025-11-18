@@ -1,17 +1,27 @@
+#[cfg(feature = "frontend-web")]
 use axum::body::Body;
+#[cfg(feature = "frontend-web")]
 use axum::http::{Request, StatusCode};
+#[cfg(feature = "frontend-web")]
 use slopdrop::config::{SecurityConfig, TclConfig};
+#[cfg(feature = "frontend-web")]
 use slopdrop::tcl_service::TclService;
+#[cfg(feature = "frontend-web")]
 use std::collections::HashMap;
+#[cfg(feature = "frontend-web")]
 use std::sync::{Arc, RwLock};
+#[cfg(feature = "frontend-web")]
 use tempfile::TempDir;
+#[cfg(feature = "frontend-web")]
 use tokio::sync::Mutex;
+#[cfg(feature = "frontend-web")]
 use tower::util::ServiceExt; // for oneshot
 
 #[cfg(feature = "frontend-web")]
 use slopdrop::frontends::web::{create_router, AppState};
 
 /// Helper function to create a temporary state directory
+#[cfg(feature = "frontend-web")]
 fn create_temp_state() -> (TempDir, std::path::PathBuf) {
     let temp = TempDir::new().unwrap();
     let state_path = temp.path().join("state");
@@ -26,6 +36,7 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
     let security_config = SecurityConfig {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "web!*".to_string()],
+        blacklisted_users: vec![],
         memory_limit_mb: 256,
         max_recursion_depth: 1000,
     };
