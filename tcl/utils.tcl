@@ -51,6 +51,69 @@ proc rest {list} {
     lrange $list 1 end
 }
 
+# IRC context commands - return info about current evaluation context
+proc names {} {
+    # Return list of nicks in current channel
+    chanlist $::channel
+}
+
+proc hostmask {{who ""}} {
+    # Return hostmask - for now just return the current mask
+    # Full implementation would need getchanhost which requires IRC state
+    return $::mask
+}
+
+# Meta namespace - info about evaluation context
+namespace eval meta {
+    proc uptime {} {
+        # Return bot uptime in seconds
+        if {[info exists ::slopdrop_start_time]} {
+            expr {[clock seconds] - $::slopdrop_start_time}
+        } else {
+            return 0
+        }
+    }
+
+    proc eval_count {} {
+        if {[info exists ::eval_count]} {
+            return $::eval_count
+        } else {
+            return 0
+        }
+    }
+
+    proc line {} {
+        if {[info exists ::line]} {
+            return $::line
+        } else {
+            return ""
+        }
+    }
+
+    namespace export uptime eval_count line
+    namespace ensemble create
+}
+
+# Initialize start time if not set
+if {![info exists ::slopdrop_start_time]} {
+    set ::slopdrop_start_time [clock seconds]
+}
+
+# Log command - returns log lines for current channel
+# This is a placeholder that returns empty list
+# Full implementation would need log storage infrastructure
+proc log {} {
+    if {[info exists ::slopdrop_log_lines($::channel)]} {
+        return $::slopdrop_log_lines($::channel)
+    }
+    return [list]
+}
+
+# Initialize log storage
+if {![info exists ::slopdrop_log_lines]} {
+    array set ::slopdrop_log_lines {}
+}
+
 # Safe file path operations (string-only, no filesystem access)
 # These replace the blocked 'file' command for common path manipulation
 

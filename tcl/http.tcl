@@ -352,7 +352,8 @@ namespace eval httpx {
     }
 }
 
-# Export http commands
+# Export http commands as ensemble
+# This creates "http get", "http post", "http head" commands
 namespace eval http {
     proc get {url} {
         ::httpx::http_get $url
@@ -365,4 +366,7 @@ namespace eval http {
     proc head {url} {
         ::httpx::http_head $url
     }
+
+    namespace export get post head
+    namespace ensemble create
 }
