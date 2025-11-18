@@ -1,13 +1,16 @@
 # Encoding command - wrapper around TCL's ::encoding
 # Blocks system encoding modification for security
 
+# First, rename the original encoding command to preserve it
+rename encoding _tcl_encoding_original
+
 proc encoding args {
     # Block system encoding modification
     if {[string match s* [lindex $args 0]] && [llength $args] > 1} {
         error "can't modify system encoding"
     }
-    # Call TCL's built-in encoding command
-    uplevel [concat ::encoding $args]
+    # Call TCL's built-in encoding command (renamed above)
+    uplevel 1 [list _tcl_encoding_original {*}$args]
 }
 
 # Additional encoding utilities as separate commands

@@ -85,8 +85,36 @@ fn test_encoding_blocks_system_modification() {
     assert!(result.unwrap_err().to_string().contains("can't modify system encoding"));
 }
 
-// Note: encoding convertto/convertfrom and encoding names are blocked
-// in the safe interpreter for security reasons
+#[test]
+fn test_encoding_names() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // encoding names should return list of available encodings
+    let result = interp.eval("encoding names").unwrap();
+    // Should contain utf-8 at minimum
+    assert!(result.contains("utf-8"), "encoding names should include utf-8");
+}
+
+#[test]
+fn test_encoding_convertto() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // encoding convertto should work for basic conversions
+    let result = interp.eval("encoding convertto utf-8 hello").unwrap();
+    assert_eq!(result.trim(), "hello");
+}
+
+#[test]
+fn test_encoding_convertfrom() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // encoding convertfrom should work
+    let result = interp.eval("encoding convertfrom utf-8 hello").unwrap();
+    assert_eq!(result.trim(), "hello");
+}
 
 // =============================================================================
 // Utility Module Tests
@@ -493,8 +521,41 @@ fn test_cache_key_limit() {
     assert_eq!(result.trim(), "value5");
 }
 
-// Note: cache fetch with lazy initialization needs the cache namespace to be
-// properly set up, which requires the full interpreter initialization
+#[test]
+fn test_cache_fetch_lazy_init() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Debug: First test that manual put/get works
+    interp.eval("cache put testbucket manualkey manualvalue").unwrap();
+    let manual_exists = interp.eval("cache exists testbucket manualkey").unwrap();
+    assert_eq!(manual_exists.trim(), "1", "Manual put should create key");
+
+    // Now test fetch
+    // The issue is that fetch uses uplevel which may not work correctly
+    // Let's do the fetch inline to verify the script executes
+    let result = interp.eval(r#"
+        if {[cache exists testbucket newkey]} {
+            cache get testbucket newkey
+        } else {
+            set value "computed"
+            cache put testbucket newkey $value
+            set value
+        }
+    "#).unwrap();
+    assert_eq!(result.trim(), "computed");
+
+    // Check if key exists after inline fetch
+    let exists = interp.eval("cache exists testbucket newkey").unwrap();
+    assert_eq!(exists.trim(), "1", "Key should exist after inline fetch");
+
+    // Now test with actual cache fetch - the issue may be with uplevel in the namespace
+    let result2 = interp.eval("cache fetch testbucket fetchkey {set x computed2; set x}").unwrap();
+    assert_eq!(result2.trim(), "computed2");
+
+    let fetch_exists = interp.eval("cache exists testbucket fetchkey").unwrap();
+    assert_eq!(fetch_exists.trim(), "1", "Fetch should store the key");
+}
 
 #[test]
 fn test_cache_delete_nonexistent() {
