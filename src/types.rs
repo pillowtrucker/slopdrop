@@ -81,6 +81,14 @@ pub enum PluginCommand {
     /// Send a message to IRC
     SendToIrc { channel: String, text: String },
 
+    /// Log a message (for channel history)
+    LogMessage {
+        channel: String,
+        nick: String,
+        mask: String,
+        text: String,
+    },
+
     /// Shutdown the plugin
     /// NOTE: Currently unused - bot shutdown is handled differently.
     /// Kept for potential graceful shutdown implementation.

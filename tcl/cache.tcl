@@ -100,4 +100,9 @@ namespace eval cache {
       error "bucket \"$bucket_name\" doesn't have key \"$key\""
     }
   }
+
+  # Export procs and create ensemble command
+  # This makes "cache exists foo bar" call "cache::exists foo bar"
+  namespace export keys exists get put fetch delete
+  namespace ensemble create
 }

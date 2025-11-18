@@ -63,6 +63,12 @@ pub struct EvalResult {
 /// Commands that can be sent to the TCL thread
 pub enum TclThreadCommand {
     Eval(EvalRequest),
+    LogMessage {
+        channel: String,
+        nick: String,
+        mask: String,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -250,6 +256,16 @@ impl TclThreadHandle {
         }
     }
 
+    /// Log a message to the channel history
+    pub fn log_message(&self, channel: String, nick: String, mask: String, text: String) {
+        let _ = self.command_tx.send(TclThreadCommand::LogMessage {
+            channel,
+            nick,
+            mask,
+            text,
+        });
+    }
+
     /// Shutdown the TCL thread
     pub fn shutdown(&mut self) {
         info!("Shutting down TCL thread");
@@ -327,11 +343,69 @@ impl TclThreadWorker {
                 TclThreadCommand::Eval(request) => {
                     self.handle_eval(request);
                 }
+                TclThreadCommand::LogMessage { channel, nick, mask, text } => {
+                    self.handle_log_message(channel, nick, mask, text);
+                }
                 TclThreadCommand::Shutdown => {
                     info!("TCL thread worker shutting down");
                     break;
                 }
             }
+        }
+    }
+
+    fn handle_log_message(&self, channel: String, nick: String, mask: String, text: String) {
+        // Store message in ::slopdrop_log_lines($channel)
+        // Format: {timestamp nick mask message}
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Escape TCL special characters in text
+        let escaped_text = text
+            .replace('\\', "\\\\")
+            .replace('{', "\\{")
+            .replace('}', "\\}")
+            .replace('[', "\\[")
+            .replace(']', "\\]")
+            .replace('$', "\\$")
+            .replace('"', "\\\"");
+
+        let escaped_nick = nick
+            .replace('\\', "\\\\")
+            .replace('{', "\\{")
+            .replace('}', "\\}");
+
+        let escaped_mask = mask
+            .replace('\\', "\\\\")
+            .replace('{', "\\{")
+            .replace('}', "\\}");
+
+        let escaped_channel = channel
+            .replace('\\', "\\\\")
+            .replace('{', "\\{")
+            .replace('}', "\\}");
+
+        // Add to log array with size limit (default 1000 lines per channel)
+        let tcl_code = format!(r#"
+            set entry [list {} {{{}}} {{{}}} {{{}}}]
+            if {{![info exists ::slopdrop_log_lines({})}} {{
+                set ::slopdrop_log_lines({}) [list]
+            }}
+            lappend ::slopdrop_log_lines({}) $entry
+            # Keep only last 1000 entries
+            if {{[llength $::slopdrop_log_lines({})] > 1000}} {{
+                set ::slopdrop_log_lines({}) [lrange $::slopdrop_log_lines({}) end-999 end]
+            }}
+        "#,
+            timestamp, escaped_nick, escaped_mask, escaped_text,
+            escaped_channel, escaped_channel, escaped_channel,
+            escaped_channel, escaped_channel, escaped_channel
+        );
+
+        if let Err(e) = self.interp.interpreter().eval(tcl_code.as_str()) {
+            debug!("Failed to log message: {:?}", e);
         }
     }
 

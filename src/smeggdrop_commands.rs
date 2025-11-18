@@ -23,6 +23,11 @@ pub fn sha1_command() -> &'static str {
     include_str!("../tcl/sha1.tcl")
 }
 
+/// Returns ImageMagick placeholder commands
+pub fn magick_commands() -> &'static str {
+    include_str!("../tcl/magick.tcl")
+}
+
 /// Initialize all smeggdrop commands in the interpreter
 /// NOTE: Currently unused - we call individual command loaders in tcl_wrapper.rs
 /// to control loading order (some must load before making interpreter safe).

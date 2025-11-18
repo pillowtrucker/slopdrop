@@ -81,6 +81,19 @@ impl IrcClient {
                     // Strip IRC formatting codes from the message
                     let clean_msg = irc_formatting::strip_irc_formatting(msg);
 
+                    // Log all public messages to channel history
+                    if target.starts_with('#') {
+                        let mask = format!("{}@{}", user, host);
+                        command_tx
+                            .send(PluginCommand::LogMessage {
+                                channel: target.clone(),
+                                nick: nick.clone(),
+                                mask,
+                                text: clean_msg.clone(),
+                            })
+                            .await?;
+                    }
+
                     // Check if message starts with "tcl " or "tclAdmin "
                     if clean_msg.starts_with("tcl ") || clean_msg.starts_with("tclAdmin ") {
                         // Only respond to commands in channels, not private messages

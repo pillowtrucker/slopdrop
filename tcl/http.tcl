@@ -1,7 +1,9 @@
-# HTTP command implementation with rate limiting
+# HTTP command implementation with rate limiting using TclCurl
 # Limits: 5 per eval, 25 per minute (channel), 10 per minute (user)
 
-package require http
+# Note: We use TclCurl directly, not TCL's http package
+# Don't "package require http" as it conflicts with our http ensemble
+package require TclCurl
 
 namespace eval httpx {
     variable requests_per_eval 5
@@ -183,11 +185,20 @@ namespace eval httpx {
         incr eval_count
     }
 
+    proc normalize_url {url} {
+        # Auto-prepend http:// if no protocol specified
+        set url_lower [string tolower $url]
+        if {![string match "http://*" $url_lower] && ![string match "https://*" $url_lower]} {
+            set url "http://$url"
+        }
+        return $url
+    }
+
     proc validate_url {url} {
         # Convert to lowercase for case-insensitive matching
         set url_lower [string tolower $url]
 
-        # Block non-HTTP(S) schemes
+        # Block non-HTTP(S) schemes (should already have protocol from normalize_url)
         if {![string match "http://*" $url_lower] && ![string match "https://*" $url_lower]} {
             error "only http:// and https:// URLs are allowed"
         }
@@ -231,7 +242,9 @@ namespace eval httpx {
     proc http_get {url} {
         variable transfer_limit
         variable time_limit
-        variable max_redirects
+
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
 
         # Validate URL for security (SSRF prevention)
         validate_url $url
@@ -239,26 +252,49 @@ namespace eval httpx {
         # Pre-check (assume max transfer for limit checking)
         check_limits $transfer_limit
 
-        # Configure http package
-        set token [::http::geturl $url \
-            -timeout $time_limit \
-            -blocksize 1024]
+        # Use TclCurl for the request
+        set curlHandle [curl::init]
+        set html {}
+        array set http_resp_header [list]
 
-        set result [handle_response $token]
+        $curlHandle configure \
+            -url $url \
+            -nosignal 1 \
+            -bodyvar html \
+            -headervar http_resp_header \
+            -timeout [expr {$time_limit / 1000}] \
+            -followlocation 1 \
+            -maxredirs 5
 
-        # Extract actual bytes transferred
-        lassign $result code headers body
-        set bytes [string length $body]
+        catch { $curlHandle perform } curlErrorNumber
+
+        if { $curlErrorNumber != 0 } {
+            $curlHandle cleanup
+            error [curl::easystrerror $curlErrorNumber]
+        }
+
+        set ret [list]
+        lappend ret [$curlHandle getinfo responsecode]
+        lappend ret [array get http_resp_header]
+        lappend ret $html
+
+        array unset http_resp_header
+        $curlHandle cleanup
+
+        # Record actual bytes transferred
+        set bytes [string length $html]
         record_request $bytes
 
-        return $result
+        return $ret
     }
 
     proc http_post {url body} {
         variable post_limit
         variable time_limit
         variable transfer_limit
-        variable max_redirects
+
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
 
         # Validate URL for security (SSRF prevention)
         validate_url $url
@@ -272,25 +308,46 @@ namespace eval httpx {
         # Pre-check (assume max transfer for limit checking)
         check_limits [expr {$body_len + $transfer_limit}]
 
-        set token [::http::geturl $url \
-            -timeout $time_limit \
-            -blocksize 1024 \
-            -query $body \
-            -type "application/x-www-form-urlencoded"]
+        # Use TclCurl for the request
+        set curlHandle [curl::init]
+        set html {}
 
-        set result [handle_response $token]
+        $curlHandle configure \
+            -url $url \
+            -nosignal 1 \
+            -bodyvar html \
+            -post 1 \
+            -postfields $body \
+            -timeout [expr {$time_limit / 1000}] \
+            -followlocation 1 \
+            -maxredirs 5
 
-        # Extract actual bytes transferred (request body + response body)
-        lassign $result code headers resp_body
-        set total_bytes [expr {$body_len + [string length $resp_body]}]
+        catch { $curlHandle perform } curlErrorNumber
+
+        if { $curlErrorNumber != 0 } {
+            $curlHandle cleanup
+            error [curl::easystrerror $curlErrorNumber]
+        }
+
+        set ret [list]
+        lappend ret [$curlHandle getinfo responsecode]
+        lappend ret {}  ;# headers not captured in post
+        lappend ret $html
+
+        $curlHandle cleanup
+
+        # Record actual bytes transferred (request body + response body)
+        set total_bytes [expr {$body_len + [string length $html]}]
         record_request $total_bytes
 
-        return $result
+        return $ret
     }
 
     proc http_head {url} {
         variable time_limit
-        variable max_redirects
+
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
 
         # Validate URL for security (SSRF prevention)
         validate_url $url
@@ -298,61 +355,16 @@ namespace eval httpx {
         # HEAD requests don't transfer much data (headers only, ~1KB estimate)
         check_limits 1024
 
-        set token [::http::geturl $url \
-            -timeout $time_limit \
-            -validate 1]
+        # Use http get but return only headers
+        set resp [http_get $url]
 
-        upvar #0 $token state
-        set headers $state(meta)
-
-        # Estimate header size (rough approximation)
-        set header_size 0
-        dict for {key val} $headers {
-            set header_size [expr {$header_size + [string length $key] + [string length $val] + 4}]
-        }
-
-        ::http::cleanup $token
-        record_request $header_size
-
-        return $headers
-    }
-
-    proc handle_response {token} {
-        variable transfer_limit
-
-        upvar #0 $token state
-
-        # Check status
-        set status $state(status)
-        if {$status ne "ok"} {
-            ::http::cleanup $token
-            error "HTTP request failed: $status"
-        }
-
-        # Check transfer limit
-        if {[info exists state(currentsize)] && $state(currentsize) > $transfer_limit} {
-            ::http::cleanup $token
-            error "transfer exceeded $transfer_limit bytes"
-        }
-
-        # Build result: [status_code, headers, body]
-        set code [::http::ncode $token]
-        set headers $state(meta)
-        set body $state(body)
-
-        # Check body size
-        if {[string length $body] > $transfer_limit} {
-            ::http::cleanup $token
-            error "transfer exceeded $transfer_limit bytes"
-        }
-
-        ::http::cleanup $token
-
-        return [list $code $headers $body]
+        # Return just the headers
+        return [lindex $resp 1]
     }
 }
 
-# Export http commands
+# Export http commands as ensemble
+# This creates "http get", "http post", "http head" commands
 namespace eval http {
     proc get {url} {
         ::httpx::http_get $url
@@ -365,4 +377,7 @@ namespace eval http {
     proc head {url} {
         ::httpx::http_head $url
     }
+
+    namespace export get post head
+    namespace ensemble create
 }

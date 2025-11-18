@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 use yahoo_finance_api as yahoo;
 
@@ -19,13 +19,14 @@ struct RequestRecord {
     user: String,
 }
 
+/// Cached stock quote data
 #[derive(Debug, Clone)]
-struct CachedQuote {
-    timestamp: u64,
-    symbol: String,
-    price: f64,
-    change_percent: f64,
-    volume: u64,
+pub(crate) struct CachedQuote {
+    pub timestamp: u64,
+    pub symbol: String,
+    pub price: f64,
+    pub change_percent: f64,
+    pub volume: u64,
 }
 
 /// Rate limiter for stock price queries
@@ -71,12 +72,12 @@ impl StockRateLimiter {
         self.cache.retain(|_, quote| quote.timestamp >= threshold);
     }
 
-    pub fn get_cached(&mut self, symbol: &str) -> Option<CachedQuote> {
+    pub(crate) fn get_cached(&mut self, symbol: &str) -> Option<CachedQuote> {
         self.cleanup_cache();
         self.cache.get(symbol).cloned()
     }
 
-    pub fn put_cache(&mut self, quote: CachedQuote) {
+    pub(crate) fn put_cache(&mut self, quote: CachedQuote) {
         self.cache.insert(quote.symbol.clone(), quote);
     }
 
@@ -172,7 +173,7 @@ impl StockClient {
     }
 
     /// Get current price for a stock symbol
-    pub fn get_quote(&self, symbol: &str) -> Result<CachedQuote> {
+    pub(crate) fn get_quote(&self, symbol: &str) -> Result<CachedQuote> {
         // Check cache first
         if let Ok(mut limiter) = self.rate_limiter.lock() {
             if let Some(cached) = limiter.get_cached(symbol) {
@@ -256,6 +257,9 @@ lazy_static::lazy_static! {
 }
 
 /// Generate TCL wrapper commands that call back into Rust
+/// NOTE: Currently unused - stock commands are intercepted in Rust before TCL evaluation.
+/// Kept for reference in case we want to switch to TCL-based dispatch.
+#[allow(dead_code)]
 pub fn stock_commands() -> &'static str {
     r#"
 # Stock price tracking commands (Rust-backed)

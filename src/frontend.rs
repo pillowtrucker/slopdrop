@@ -12,6 +12,9 @@ pub trait Frontend: Send + Sync {
     fn name(&self) -> &str;
 
     /// Start the frontend
+    /// NOTE: Currently unused - frontends are started directly in main.rs, not via this trait method.
+    /// Kept as part of the trait interface for future unified frontend management.
+    #[allow(dead_code)]
     async fn start(&mut self) -> Result<()>;
 
     /// Stop the frontend gracefully

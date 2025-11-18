@@ -73,6 +73,33 @@ impl SafeTclInterp {
             debug!("Bot will work but SHA1 command will not be available");
         }
 
+        // Force-load the clock package BEFORE making interpreter safe
+        // TCL loads clock.tcl lazily via [source [file join $tcl_library clock.tcl]]
+        // which fails after we block source/file. Loading it now ensures it's available.
+        // We need to trigger ALL clock subcommands that do lazy loading:
+        // - clock seconds: basic time
+        // - clock format: loads formatting code
+        // - clock scan: loads parsing code
+        // - clock clicks: usually built-in
+        let clock_init = r#"
+            clock seconds
+            clock format [clock seconds]
+            clock scan "now"
+            clock clicks
+        "#;
+        if let Err(e) = interpreter.eval(clock_init) {
+            debug!("Clock command initialization failed: {:?}", e);
+        }
+
+        // Load TclCurl package for HTTP/HTTPS support BEFORE making interpreter safe
+        // TclCurl handles HTTPS natively through libcurl
+        let curl_init = r#"
+            package require TclCurl
+        "#;
+        if let Err(e) = interpreter.eval(curl_init) {
+            debug!("TclCurl package not available (HTTP/HTTPS will not work): {:?}", e);
+        }
+
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
@@ -84,6 +111,8 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to inject utility commands: {:?}", e))?;
         interpreter.eval(crate::smeggdrop_commands::encoding_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::magick_commands())
+            .map_err(|e| anyhow::anyhow!("Failed to inject magick commands: {:?}", e))?;
 
         // Stock commands are handled natively in Rust (see stock_commands.rs and tcl_thread.rs)
         // No TCL injection needed - commands are intercepted before TCL evaluation
@@ -126,7 +155,7 @@ impl SafeTclInterp {
             "interp",
             // "namespace",  // Allowed for cache/utils commands
             "trace",
-            "vwait",
+            // "vwait",  // Allowed - needed by http package for event loop
             // "apply",  // Allowed - needed for lambdas and stolen-treasure.tcl
             "yield",
             "exec",
