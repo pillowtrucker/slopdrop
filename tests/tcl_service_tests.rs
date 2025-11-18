@@ -23,7 +23,8 @@ fn create_test_service(state_path: PathBuf) -> TclService {
     let security_config = SecurityConfig {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "alice!*@*.example.com".to_string()],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 

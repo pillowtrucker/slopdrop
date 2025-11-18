@@ -11,7 +11,8 @@ fn test_extract_admin_nicks_from_hostmasks() {
             "charlie!*@192.168.1.*".to_string(),
             "*!*@*.admin.net".to_string(), // Wildcard nick should be skipped
         ],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -93,7 +94,8 @@ fn test_empty_admin_list() {
     let security_config = SecurityConfig {
         eval_timeout_ms: 5000,
         privileged_users: vec![],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -118,7 +120,8 @@ fn test_wildcard_only_patterns() {
             "*!admin@*".to_string(),
             "*!*@host.example.com".to_string(),
         ],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -144,7 +147,8 @@ fn test_complex_hostmask_patterns() {
             "bob!*@192.168.?.???".to_string(),
             "charlie!?admin@host*.net".to_string(),
         ],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
@@ -172,7 +176,8 @@ fn test_duplicate_admin_nicks() {
             "alice!*@host2.example.com".to_string(),
             "bob!*@*.example.com".to_string(),
         ],
-        memory_limit_mb: 256,
+        blacklisted_users: vec![],
+        memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
     };
 
