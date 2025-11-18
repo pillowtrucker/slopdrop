@@ -258,6 +258,96 @@ proc lgrep {pattern list} {
     return $result
 }
 
+# select - filter a list based on a condition
+# Usage: select {list} {varname {expr}}
+# Example: select {1 2 3 4 5} {x {expr {$x > 2}}}
+proc select {list body} {
+    set varname [lindex $body 0]
+    set code [lindex $body 1]
+    set result [list]
+    foreach item $list {
+        uplevel 1 [list set $varname $item]
+        if {[uplevel 1 $code]} {
+            lappend result $item
+        }
+    }
+    return $result
+}
+
+# format_log_line - format a log entry for display
+proc format_log_line {line} {
+    if {$line eq ""} {
+        return ""
+    }
+    set nick [lindex $line 1]
+    set msg [lindex $line 3]
+    return "<$nick> $msg"
+}
+
+# lastlink - get the last URL from recent channel history
+proc lastlink {} {
+    set msgs [lastlog_text 200]
+    # Look for https first, then http
+    set https_urls [lfilter {*https://*} $msgs]
+    if {[llength $https_urls] > 0} {
+        # Extract just the URL from the message
+        set msg [last $https_urls]
+        if {[regexp {https://[^\s]+} $msg url]} {
+            return $url
+        }
+    }
+    set http_urls [lfilter {*http://*} $msgs]
+    if {[llength $http_urls] > 0} {
+        set msg [last $http_urls]
+        if {[regexp {https?://[^\s]+} $msg url]} {
+            return $url
+        }
+    }
+    return ""
+}
+
+# lastlog - get formatted last message from a user
+proc lastlog {who} {
+    set logline [last [log_for $who]]
+    if {$logline eq ""} {
+        return "No messages found for $who"
+    }
+    format_log_line $logline
+}
+
+# ^ - history lookup with optional nick and pattern filter
+# Usage: ^ ?n? ?who? ?match?
+#   n - how far back to look (default 1)
+#   who - filter by nick (empty = all)
+#   match - filter by pattern (empty = all)
+proc ^ {{n 1} {who {}} {match {}}} {
+    # Adjust n if looking at own messages or doing pattern search
+    if {$who ne "" && [string toupper $who] eq [string toupper [nick]]} {
+        set n [expr {$n + 1}]
+    } elseif {$match ne "" && $who eq ""} {
+        set n [expr {$n + 1}]
+    }
+
+    # Get filtered log entries
+    if {$who eq ""} {
+        set lines [lgrep "***:(?i)$match" [log]]
+    } else {
+        set lines [lgrep "***:(?i)$match" [log_for $who]]
+    }
+
+    # Return formatted entry
+    set idx [expr {[llength $lines] - $n}]
+    if {$idx < 0} {
+        return ""
+    }
+    format_log_line [lindex $lines $idx]
+}
+
+# lastsaid - alias for ^ with nick
+proc lastsaid {who {n 1}} {
+    ^ $n $who
+}
+
 # Initialize log storage
 if {![info exists ::slopdrop_log_lines]} {
     array set ::slopdrop_log_lines {}
