@@ -85,6 +85,9 @@ impl SafeTclInterp {
         interpreter.eval(crate::smeggdrop_commands::encoding_commands())
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
 
+        // Stock commands are handled natively in Rust (see stock_commands.rs and tcl_thread.rs)
+        // No TCL injection needed - commands are intercepted before TCL evaluation
+
         // Ensure state directory exists and git repo is initialized
         // If state_repo is set and state doesn't exist, clone from remote
         // Otherwise create empty repo if needed

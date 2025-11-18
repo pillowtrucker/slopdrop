@@ -8,6 +8,7 @@ pub mod irc_client;
 pub mod irc_formatting;
 pub mod smeggdrop_commands;
 pub mod state;
+pub mod stock_commands;
 pub mod tcl_plugin;
 pub mod tcl_thread;
 pub mod tcl_wrapper;
