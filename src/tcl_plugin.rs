@@ -55,6 +55,9 @@ impl TclPlugin {
                         error!("Error handling TCL eval: {}", e);
                     }
                 }
+                PluginCommand::LogMessage { channel, nick, mask, text } => {
+                    self.tcl_thread.log_message(channel, nick, mask, text);
+                }
                 PluginCommand::Shutdown => {
                     info!("Shutting down TCL plugin");
                     break;
