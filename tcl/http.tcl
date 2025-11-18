@@ -1,7 +1,8 @@
 # HTTP command implementation with rate limiting using TclCurl
 # Limits: 5 per eval, 25 per minute (channel), 10 per minute (user)
 
-package require http
+# Note: We use TclCurl directly, not TCL's http package
+# Don't "package require http" as it conflicts with our http ensemble
 package require TclCurl
 
 namespace eval httpx {
