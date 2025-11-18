@@ -83,12 +83,14 @@ impl IrcClient {
 
                     // Check if message starts with "tcl " or "tclAdmin "
                     if clean_msg.starts_with("tcl ") || clean_msg.starts_with("tclAdmin ") {
+                        // Only respond to commands in channels, not private messages
+                        if !target.starts_with('#') {
+                            debug!("Ignoring tcl command from private message ({})", nick);
+                            return Ok(());
+                        }
+
                         let is_admin = clean_msg.starts_with("tclAdmin ");
-                        let channel = if target.starts_with('#') {
-                            target.clone()
-                        } else {
-                            nick.clone() // Private message
-                        };
+                        let channel = target.clone();
 
                         let author = MessageAuthor::new(nick.clone(), channel)
                             .with_ident(user.clone())
