@@ -91,6 +91,18 @@ impl SafeTclInterp {
             debug!("Clock command initialization failed: {:?}", e);
         }
 
+        // Load TLS package for HTTPS support BEFORE making interpreter safe
+        // This registers https:// URL handler with http package
+        let tls_init = r#"
+            catch {
+                package require tls
+                ::http::register https 443 [list ::tls::socket -autoservername true]
+            }
+        "#;
+        if let Err(e) = interpreter.eval(tls_init) {
+            debug!("TLS package not available (HTTPS will not work): {:?}", e);
+        }
+
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
@@ -144,7 +156,7 @@ impl SafeTclInterp {
             "interp",
             // "namespace",  // Allowed for cache/utils commands
             "trace",
-            "vwait",
+            // "vwait",  // Allowed - needed by http package for event loop
             // "apply",  // Allowed - needed for lambdas and stolen-treasure.tcl
             "yield",
             "exec",

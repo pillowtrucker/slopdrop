@@ -183,11 +183,20 @@ namespace eval httpx {
         incr eval_count
     }
 
+    proc normalize_url {url} {
+        # Auto-prepend http:// if no protocol specified
+        set url_lower [string tolower $url]
+        if {![string match "http://*" $url_lower] && ![string match "https://*" $url_lower]} {
+            set url "http://$url"
+        }
+        return $url
+    }
+
     proc validate_url {url} {
         # Convert to lowercase for case-insensitive matching
         set url_lower [string tolower $url]
 
-        # Block non-HTTP(S) schemes
+        # Block non-HTTP(S) schemes (should already have protocol from normalize_url)
         if {![string match "http://*" $url_lower] && ![string match "https://*" $url_lower]} {
             error "only http:// and https:// URLs are allowed"
         }
@@ -233,6 +242,9 @@ namespace eval httpx {
         variable time_limit
         variable max_redirects
 
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
+
         # Validate URL for security (SSRF prevention)
         validate_url $url
 
@@ -259,6 +271,9 @@ namespace eval httpx {
         variable time_limit
         variable transfer_limit
         variable max_redirects
+
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
 
         # Validate URL for security (SSRF prevention)
         validate_url $url
@@ -291,6 +306,9 @@ namespace eval httpx {
     proc http_head {url} {
         variable time_limit
         variable max_redirects
+
+        # Normalize URL (add http:// if missing)
+        set url [normalize_url $url]
 
         # Validate URL for security (SSRF prevention)
         validate_url $url
