@@ -76,7 +76,18 @@ impl SafeTclInterp {
         // Force-load the clock package BEFORE making interpreter safe
         // TCL loads clock.tcl lazily via [source [file join $tcl_library clock.tcl]]
         // which fails after we block source/file. Loading it now ensures it's available.
-        if let Err(e) = interpreter.eval("clock seconds") {
+        // We need to trigger ALL clock subcommands that do lazy loading:
+        // - clock seconds: basic time
+        // - clock format: loads formatting code
+        // - clock scan: loads parsing code
+        // - clock clicks: usually built-in
+        let clock_init = r#"
+            clock seconds
+            clock format [clock seconds]
+            clock scan "now"
+            clock clicks
+        "#;
+        if let Err(e) = interpreter.eval(clock_init) {
             debug!("Clock command initialization failed: {:?}", e);
         }
 
