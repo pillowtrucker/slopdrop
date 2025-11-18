@@ -364,7 +364,7 @@ fn test_context_variables_available() {
     assert!(result.contains("user@host.com"));
 }
 
-// Note: chanlist is implemented in Rust and requires full IRC context to test
+// chanlist command is tested in tcl_service_tests.rs where the full service pipeline is available
 
 // =============================================================================
 // String Manipulation for IRC Tests

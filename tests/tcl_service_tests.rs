@@ -1,6 +1,6 @@
 use slopdrop::config::{SecurityConfig, TclConfig};
 use slopdrop::tcl_service::{EvalContext, TclService};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
@@ -20,6 +20,12 @@ fn generate_multiline_output(prefix: &str, count: usize) -> String {
 
 /// Helper function to create a test TclService
 fn create_test_service(state_path: PathBuf) -> TclService {
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+    create_test_service_with_members(state_path, channel_members)
+}
+
+/// Helper function to create a test TclService with custom channel members
+fn create_test_service_with_members(state_path: PathBuf, channel_members: Arc<RwLock<HashMap<String, HashSet<String>>>>) -> TclService {
     let security_config = SecurityConfig {
         eval_timeout_ms: 5000,
         privileged_users: vec!["admin!*@*".to_string(), "alice!*@*.example.com".to_string()],
@@ -34,8 +40,6 @@ fn create_test_service(state_path: PathBuf) -> TclService {
         ssh_key: None,
         max_output_lines: 5,  // Small for testing pagination
     };
-
-    let channel_members = Arc::new(RwLock::new(HashMap::new()));
 
     TclService::new(security_config, tcl_config, channel_members).unwrap()
 }
@@ -462,6 +466,57 @@ async fn test_concurrent_users() {
 
     assert_eq!(response1.output[0], "20");
     assert_eq!(response2.output[0], "40");
+
+    service.shutdown();
+}
+
+#[tokio::test]
+async fn test_chanlist_command() {
+    let (_temp, state_path) = create_temp_state();
+
+    // Create channel members
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+    {
+        let mut members = channel_members.write().unwrap();
+        members.insert("#test".to_string(), HashSet::from([
+            "user1".to_string(),
+            "user2".to_string(),
+            "user3".to_string(),
+        ]));
+        members.insert("#other".to_string(), HashSet::from([
+            "alice".to_string(),
+            "bob".to_string(),
+        ]));
+    }
+
+    let mut service = create_test_service_with_members(state_path, channel_members);
+
+    let ctx = EvalContext::new("testuser".to_string(), "testhost".to_string())
+        .with_channel("#test".to_string());
+
+    // Test chanlist for #test
+    let response = service.eval("chanlist #test", ctx.clone()).await.unwrap();
+    assert!(!response.is_error);
+    assert_eq!(response.output.len(), 1);
+    let output = &response.output[0];
+    assert!(output.contains("user1"), "Should contain user1: {}", output);
+    assert!(output.contains("user2"), "Should contain user2: {}", output);
+    assert!(output.contains("user3"), "Should contain user3: {}", output);
+
+    // Test chanlist for #other
+    let response = service.eval("chanlist #other", ctx.clone()).await.unwrap();
+    assert!(!response.is_error);
+    let output = &response.output[0];
+    assert!(output.contains("alice"), "Should contain alice: {}", output);
+    assert!(output.contains("bob"), "Should contain bob: {}", output);
+
+    // Test chanlist for non-existent channel
+    let response = service.eval("chanlist #nonexistent", ctx).await.unwrap();
+    assert!(!response.is_error);
+    // Should return empty list (no output) or empty string
+    if !response.output.is_empty() {
+        assert!(response.output[0].is_empty() || response.output[0].contains("No members"));
+    }
 
     service.shutdown();
 }
