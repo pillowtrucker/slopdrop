@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use git2::{Repository, Signature, IndexAddOption, Cred, RemoteCallbacks, PushOptions};
+use git2::{Repository, Signature, IndexAddOption, Cred, RemoteCallbacks, PushOptions, FetchOptions, build::RepoBuilder};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -157,7 +157,31 @@ impl StatePersistence {
     fn clone_from_remote(&self, url: &str) -> Result<()> {
         info!("Cloning state repository from: {}", url);
 
-        Repository::clone(url, &self.state_path)
+        // Set up credentials callback for SSH
+        let mut callbacks = RemoteCallbacks::new();
+        let ssh_key = self.ssh_key.clone();
+
+        callbacks.credentials(move |_url, username_from_url, _allowed_types| {
+            let username = username_from_url.unwrap_or("git");
+
+            // Try SSH key if configured
+            if let Some(ref key_path) = ssh_key {
+                debug!("Using SSH key for clone: {:?}", key_path);
+                return Cred::ssh_key(username, None, key_path, None);
+            }
+
+            // Fall back to SSH agent
+            debug!("Using SSH agent for clone authentication");
+            Cred::ssh_key_from_agent(username)
+        });
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        let mut builder = RepoBuilder::new();
+        builder.fetch_options(fetch_options);
+
+        builder.clone(url, &self.state_path)
             .map_err(|e| anyhow!("Failed to clone state repository from {}: {}", url, e))?;
 
         info!("Successfully cloned state repository to {:?}", self.state_path);
