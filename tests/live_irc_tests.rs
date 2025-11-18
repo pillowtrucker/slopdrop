@@ -62,7 +62,6 @@ async fn create_test_client(nick: &str) -> Result<Client, Box<dyn std::error::Er
 }
 
 #[tokio::test]
-#[ignore] // Run with: cargo test --ignored
 async fn test_live_irc_basic_connection() {
     let _server = TestIrcServer::start().expect("Failed to start IRC server");
 
@@ -76,7 +75,6 @@ async fn test_live_irc_basic_connection() {
 }
 
 #[tokio::test]
-#[ignore] // Run with: cargo test --ignored
 async fn test_live_irc_tcl_evaluation() {
     let _server = TestIrcServer::start().expect("Failed to start IRC server");
 
@@ -99,7 +97,6 @@ async fn test_live_irc_tcl_evaluation() {
 }
 
 #[test]
-#[ignore] // Run with: cargo test --ignored
 fn test_ergo_binary_exists() {
     let ergo_path = PathBuf::from("./tests/ergo/ergo");
     assert!(ergo_path.exists(), "Ergo binary not found at {:?}", ergo_path);
@@ -115,7 +112,6 @@ fn test_ergo_binary_exists() {
 }
 
 #[test]
-#[ignore] // Run with: cargo test --ignored
 fn test_config_files_exist() {
     assert!(PathBuf::from("./tests/test_config.toml").exists(), "test_config.toml not found");
     assert!(PathBuf::from("./tests/ergo/test-ircd.yaml").exists(), "test-ircd.yaml not found");

@@ -348,6 +348,9 @@ fn test_trigger_dispatch_no_bindings() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
+    // Unbind the default timtom_welcome handler first
+    interp.eval("unbind JOIN * timtom_welcome").unwrap();
+
     // Dispatch with no bindings
     let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
     assert_eq!(result.trim(), "");
