@@ -134,6 +134,56 @@ fn test_timer_check_empty() {
 }
 
 #[test]
+fn test_timer_check_fires() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Schedule a timer with 0ms delay (should fire immediately)
+    let id = interp.eval("timers schedule #test \"Hello world\" 0").unwrap();
+    println!("Scheduled timer: {}", id.trim());
+
+    // Check count
+    let count = interp.eval("timers count").unwrap();
+    println!("Timer count after schedule: {}", count.trim());
+    assert_eq!(count.trim(), "1");
+
+    // Now check - should return the fired timer
+    let result = interp.eval("timers check").unwrap();
+    println!("timers check returned: '{}'", result);
+    println!("Result bytes: {:?}", result.as_bytes());
+
+    // Verify the result contains expected data
+    assert!(result.contains("#test"), "Result should contain channel");
+    assert!(result.contains("Hello world"), "Result should contain message");
+
+    // Check count after - should be 0 (timer fired and not repeating)
+    let count = interp.eval("timers count").unwrap();
+    println!("Timer count after check: {}", count.trim());
+    assert_eq!(count.trim(), "0");
+}
+
+#[test]
+fn test_timer_check_repeat_fires() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Schedule timer with 0ms delay and 3 repeats
+    interp.eval("timers schedule #chan2 \"Repeat msg\" 0 3 1000").unwrap();
+
+    let result = interp.eval("timers check").unwrap();
+    println!("Repeat timer check returned: '{}'", result);
+
+    // Should contain the message
+    assert!(result.contains("#chan2"), "Result should contain channel");
+    assert!(result.contains("Repeat msg"), "Result should contain message");
+
+    // Should still have timer for remaining repeats (2 left)
+    let count = interp.eval("timers count").unwrap();
+    println!("Timer count after repeat check: {}", count.trim());
+    assert_eq!(count.trim(), "1");
+}
+
+#[test]
 fn test_timer_with_repeat() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
@@ -275,8 +325,14 @@ fn test_trigger_dispatch_join() {
 
     // Dispatch
     let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
-    assert!(result.contains("#test"));
-    assert!(result.contains("Hello testuser!"));
+    println!("Trigger dispatch returned: '{}'", result);
+    assert!(result.contains("#test"), "Result should contain channel");
+    assert!(result.contains("Hello testuser!"), "Result should contain message");
+
+    // Verify the format matches what parse_timer_list expects
+    // Should be: {{#test} {Hello testuser!}}
+    assert!(result.contains("{#test}"), "Channel should be braced");
+    assert!(result.contains("{Hello testuser!}"), "Message should be braced");
 }
 
 #[test]

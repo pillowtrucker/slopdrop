@@ -229,22 +229,30 @@ impl TclPlugin {
         result
     }
 
-    /// Parse a single timer element: "channel message"
+    /// Parse a single timer element: "{channel} {message}" or "channel message"
     fn parse_timer_element(&self, element: &str) -> Option<(String, String)> {
         let trimmed = element.trim();
 
         // Check if message is braced
         if let Some(space_idx) = trimmed.find(' ') {
-            let channel = trimmed[..space_idx].to_string();
+            let channel_part = trimmed[..space_idx].to_string();
             let rest = trimmed[space_idx + 1..].trim();
 
-            // Handle braced message
-            if rest.starts_with('{') && rest.ends_with('}') {
-                let message = rest[1..rest.len() - 1].to_string();
-                return Some((channel, message));
+            // Handle braced channel (TCL list format)
+            let channel = if channel_part.starts_with('{') && channel_part.ends_with('}') {
+                channel_part[1..channel_part.len() - 1].to_string()
             } else {
-                return Some((channel, rest.to_string()));
-            }
+                channel_part
+            };
+
+            // Handle braced message
+            let message = if rest.starts_with('{') && rest.ends_with('}') {
+                rest[1..rest.len() - 1].to_string()
+            } else {
+                rest.to_string()
+            };
+
+            return Some((channel, message));
         }
 
         None
@@ -587,5 +595,119 @@ impl TclPlugin {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to create a minimal TclPlugin for testing parse functions
+    fn create_test_plugin() -> TclPlugin {
+        use crate::config::{SecurityConfig, TclConfig};
+        use std::collections::HashMap;
+        use std::sync::{Arc, RwLock};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("state");
+
+        let security_config = SecurityConfig {
+            eval_timeout_ms: 5000,
+            memory_limit_mb: 0,
+            max_recursion_depth: 1000,
+            privileged_users: vec![],
+            blacklisted_users: vec![],
+        };
+
+        let tcl_config = TclConfig {
+            state_path,
+            state_repo: None,
+            ssh_key: None,
+            max_output_lines: 10,
+        };
+
+        let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
+
+        TclPlugin::new(security_config, tcl_config, channel_members).unwrap()
+    }
+
+    #[test]
+    fn test_parse_timer_element_braced() {
+        let plugin = create_test_plugin();
+
+        // Test format: {channel} {message}
+        let result = plugin.parse_timer_element("{#test} {Hello world}");
+        assert_eq!(result, Some(("#test".to_string(), "Hello world".to_string())));
+    }
+
+    #[test]
+    fn test_parse_timer_element_unbraced() {
+        let plugin = create_test_plugin();
+
+        // Test format: channel message
+        let result = plugin.parse_timer_element("#test Hello");
+        assert_eq!(result, Some(("#test".to_string(), "Hello".to_string())));
+    }
+
+    #[test]
+    fn test_parse_timer_element_braced_message_only() {
+        let plugin = create_test_plugin();
+
+        // Test format: channel {message with spaces}
+        let result = plugin.parse_timer_element("#test {Hello world}");
+        assert_eq!(result, Some(("#test".to_string(), "Hello world".to_string())));
+    }
+
+    #[test]
+    fn test_parse_timer_list_single() {
+        let plugin = create_test_plugin();
+
+        // Test single timer in list
+        let result = plugin.parse_timer_list("{{#test} {Hello world}}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("#test".to_string(), "Hello world".to_string()));
+    }
+
+    #[test]
+    fn test_parse_timer_list_multiple() {
+        let plugin = create_test_plugin();
+
+        // Test multiple timers in list
+        let result = plugin.parse_timer_list("{{#test} {Hello}} {{#chan2} {World}}");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("#test".to_string(), "Hello".to_string()));
+        assert_eq!(result[1], ("#chan2".to_string(), "World".to_string()));
+    }
+
+    #[test]
+    fn test_parse_timer_list_empty() {
+        let plugin = create_test_plugin();
+
+        let result = plugin.parse_timer_list("");
+        assert_eq!(result.len(), 0);
+
+        let result = plugin.parse_timer_list("{}");
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_timer_list_stare_message() {
+        let plugin = create_test_plugin();
+
+        // Test the actual stare message format
+        let result = plugin.parse_timer_list("{{#bottest} {TIMTOM IS STARING AT WRATH}}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("#bottest".to_string(), "TIMTOM IS STARING AT WRATH".to_string()));
+    }
+
+    #[test]
+    fn test_parse_trigger_response() {
+        let plugin = create_test_plugin();
+
+        // Test trigger dispatch response format (same as timer format)
+        let result = plugin.parse_timer_list("{{#test} {Welcome testuser!}}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("#test".to_string(), "Welcome testuser!".to_string()));
     }
 }
