@@ -82,11 +82,24 @@ impl InterpreterState {
 
     /// Find what changed between two states
     pub fn diff(&self, other: &Self) -> StateChanges {
+        // Internal context variables that should not be tracked as state changes
+        // These are set by eval_with_context for each command
+        let internal_vars: HashSet<String> = ["nick", "channel", "mask"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
         StateChanges {
             new_procs: other.procs.difference(&self.procs).cloned().collect(),
             deleted_procs: self.procs.difference(&other.procs).cloned().collect(),
-            new_vars: other.vars.difference(&self.vars).cloned().collect(),
-            deleted_vars: self.vars.difference(&other.vars).cloned().collect(),
+            new_vars: other.vars.difference(&self.vars)
+                .filter(|v| !internal_vars.contains(*v))
+                .cloned()
+                .collect(),
+            deleted_vars: self.vars.difference(&other.vars)
+                .filter(|v| !internal_vars.contains(*v))
+                .cloned()
+                .collect(),
         }
     }
 }
