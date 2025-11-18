@@ -65,6 +65,31 @@ impl TclPlugin {
                         Some(PluginCommand::LogMessage { channel, nick, mask, text }) => {
                             self.tcl_thread.log_message(channel, nick, mask, text);
                         }
+                        Some(PluginCommand::UserJoin { channel, nick, mask }) => {
+                            if let Err(e) = self.handle_event("JOIN", &[&nick, &mask, &channel], &response_tx).await {
+                                warn!("Error handling JOIN event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserPart { channel, nick, mask }) => {
+                            if let Err(e) = self.handle_event("PART", &[&nick, &mask, &channel], &response_tx).await {
+                                warn!("Error handling PART event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserQuit { nick, mask, message }) => {
+                            if let Err(e) = self.handle_event("QUIT", &[&nick, &mask, &message], &response_tx).await {
+                                warn!("Error handling QUIT event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserKick { channel, nick, kicker, reason }) => {
+                            if let Err(e) = self.handle_event("KICK", &[&nick, &kicker, &channel, &reason], &response_tx).await {
+                                warn!("Error handling KICK event: {}", e);
+                            }
+                        }
+                        Some(PluginCommand::UserNick { old_nick, new_nick, mask }) => {
+                            if let Err(e) = self.handle_event("NICK", &[&old_nick, &new_nick, &mask], &response_tx).await {
+                                warn!("Error handling NICK event: {}", e);
+                            }
+                        }
                         Some(PluginCommand::Shutdown) => {
                             info!("Shutting down TCL plugin");
                             break;
@@ -83,6 +108,42 @@ impl TclPlugin {
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Handle an IRC event and dispatch to registered triggers
+    async fn handle_event(
+        &mut self,
+        event: &str,
+        args: &[&str],
+        response_tx: &mpsc::Sender<PluginCommand>,
+    ) -> Result<()> {
+        // Build TCL command to dispatch event
+        let tcl_args: Vec<String> = args.iter().map(|s| format!("{{{}}}", s)).collect();
+        let dispatch_cmd = format!("triggers dispatch {} {}", event, tcl_args.join(" "));
+
+        debug!("Dispatching event: {}", dispatch_cmd);
+
+        // Evaluate the dispatch command
+        let result = self.tcl_thread.eval_simple(dispatch_cmd).await?;
+
+        if result.trim().is_empty() || result.trim() == "{}" {
+            return Ok(());
+        }
+
+        // Parse the TCL list of {channel message} pairs and send responses
+        let responses = self.parse_timer_list(&result);
+
+        for (channel, message) in responses {
+            debug!("Trigger response for {}: {}", channel, message);
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel,
+                    text: message,
+                })
+                .await?;
         }
 
         Ok(())

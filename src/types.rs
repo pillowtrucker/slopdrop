@@ -89,6 +89,42 @@ pub enum PluginCommand {
         text: String,
     },
 
+    /// User joined a channel
+    UserJoin {
+        channel: String,
+        nick: String,
+        mask: String,
+    },
+
+    /// User left a channel
+    UserPart {
+        channel: String,
+        nick: String,
+        mask: String,
+    },
+
+    /// User quit IRC
+    UserQuit {
+        nick: String,
+        mask: String,
+        message: String,
+    },
+
+    /// User was kicked from a channel
+    UserKick {
+        channel: String,
+        nick: String,
+        kicker: String,
+        reason: String,
+    },
+
+    /// User changed nickname
+    UserNick {
+        old_nick: String,
+        new_nick: String,
+        mask: String,
+    },
+
     /// Shutdown the plugin
     /// NOTE: Currently unused - bot shutdown is handled differently.
     /// Kept for potential graceful shutdown implementation.

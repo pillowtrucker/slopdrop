@@ -1442,3 +1442,38 @@ if {![catch {cache keys timtom}]} {
 } else {
     # Initialize with empty values
 }
+
+# =========================================================================
+# Event Triggers
+# =========================================================================
+
+# Welcome message when users join
+proc timtom_welcome {nick mask channel} {
+    # Don't welcome bots (optional: add bot nicks here)
+    set bots [list "ChanServ" "NickServ" "MemoServ"]
+    if {$nick in $bots} {
+        return ""
+    }
+
+    # Generate random welcome message
+    set greetings [list \
+        "WELCOME TO $channel, $nick! Kick off your shoes, relax, and enjoy your stay." \
+        "Hello $nick! Welcome to $channel! TIMTOM is here to serve you." \
+        "Greetings $nick! You have entered $channel. May your stay be filled with wonder." \
+        "Welcome $nick! $channel welcomes you with open arms and unlimited soup." \
+        "Hey $nick! Glad you could join us in $channel! Type 'tcl timtom help' to see what I can do." \
+        "Salutations, $nick! You have arrived at $channel. The internet cannot hurt you now." \
+        "Welcome to the party, $nick! $channel is better with you here." \
+        "$nick has graced $channel with their presence! Welcome, friend!" \
+    ]
+
+    # Only welcome sometimes (1 in 3 chance)
+    if {rand() < 0.33} {
+        return [lindex $greetings [expr {int(rand() * [llength $greetings])}]]
+    }
+
+    return ""
+}
+
+# Register the welcome trigger for all channels
+bind JOIN * timtom_welcome
