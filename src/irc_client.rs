@@ -55,10 +55,12 @@ impl IrcClient {
         mut response_rx: mpsc::Receiver<PluginCommand>,
     ) -> Result<()> {
         let mut stream = self.client.stream()?;
+        info!("IRC event loop started, waiting for messages...");
 
         loop {
             tokio::select! {
                 Some(message) = stream.next() => {
+                    debug!("Received IRC message: {:?}", message);
                     if let Err(e) = self.handle_irc_message(message?, &command_tx).await {
                         error!("Error handling IRC message: {}", e);
                     }
@@ -70,7 +72,10 @@ impl IrcClient {
                     }
                 }
 
-                else => break,
+                else => {
+                    info!("IRC event loop ending - stream or channel closed");
+                    break;
+                }
             }
         }
 
