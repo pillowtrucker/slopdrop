@@ -209,6 +209,7 @@ impl TclService {
                 files_changed: 0,  // Not available from git history
                 insertions: 0,
                 deletions: 0,
+                changes_summary: String::new(),  // Not available from git history
             })
             .collect())
     }
