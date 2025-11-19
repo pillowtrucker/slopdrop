@@ -31,6 +31,7 @@
         buildInputs = with pkgs; [
           tcl-8_6
           tclPackages.tclcurl
+          tcllib
           openssl
           pkg-config
           git
@@ -49,7 +50,7 @@
         buildEnvVars = {
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig";
           TCL_LIBRARY = "${pkgs.tcl-8_6}/lib/tcl8.6";
-          TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib";
+          TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21";
           OPENSSL_DIR = "${pkgs.openssl.dev}";
           OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
           OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
@@ -91,7 +92,7 @@
             postInstall = ''
               wrapProgram $out/bin/slopdrop \
                 --set TCL_LIBRARY "${pkgs.tcl-8_6}/lib/tcl8.6" \
-                --set TCLLIBPATH "${pkgs.tclPackages.tclcurl}/lib" \
+                --set TCLLIBPATH "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.openssh ]}
             '';
 
