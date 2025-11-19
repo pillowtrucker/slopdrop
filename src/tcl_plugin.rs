@@ -282,7 +282,7 @@ impl TclPlugin {
         }
 
         // Handle admin blacklist commands
-        if code.trim().starts_with("blacklist ") {
+        if code.trim() == "blacklist" || code.trim().starts_with("blacklist ") {
             return self.handle_blacklist_command(&message, is_admin, code.trim(), response_tx).await;
         }
 
