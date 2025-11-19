@@ -12,6 +12,7 @@
 #   --ssh-key PATH  Path to SSH private key for git push (optional)
 #   --known-hosts PATH  Path to known_hosts file (optional)
 #   --memory SIZE   Container memory limit (default: 512m)
+#   --reset-state REF   Reset state to git ref before starting (commit/tag/branch)
 
 set -e
 
@@ -26,6 +27,7 @@ EXTRA_ARGS=""
 SSH_KEY=""
 KNOWN_HOSTS=""
 MEMORY_LIMIT="512m"
+RESET_STATE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             MEMORY_LIMIT="$2"
             shift 2
             ;;
+        --reset-state)
+            RESET_STATE="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -86,6 +92,29 @@ fi
 
 # Create state directory if it doesn't exist
 mkdir -p "$STATE_PATH"
+
+# Reset state to specified git ref if requested
+if [[ -n "$RESET_STATE" ]]; then
+    if [[ ! -d "$STATE_PATH/.git" ]]; then
+        echo "Error: State directory is not a git repository: $STATE_PATH"
+        echo "Cannot reset to ref: $RESET_STATE"
+        exit 1
+    fi
+    echo "Resetting state to: $RESET_STATE"
+    (
+        cd "$STATE_PATH"
+        git fetch --all 2>/dev/null || true
+        if ! git rev-parse --verify "$RESET_STATE" >/dev/null 2>&1; then
+            echo "Error: Invalid git ref: $RESET_STATE"
+            echo "Available refs:"
+            git log --oneline -10
+            exit 1
+        fi
+        git reset --hard "$RESET_STATE"
+        git clean -fd
+        echo "State reset to: $(git log --oneline -1)"
+    )
+fi
 
 # Build SSH mount arguments
 SSH_MOUNTS=""
