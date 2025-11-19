@@ -220,30 +220,40 @@ impl SafeTclInterp {
             debug!("Setting up lazy-loading for english_words.txt");
             let path_str = english_words_path.to_string_lossy().replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
 
-            // Create a proc that loads the words on first access and caches them
+            // Create lazy-loading for english_words using a trace
+            // This allows existing code that uses $english_words directly to work
             let lazy_load_proc = format!(r#"
-                # Lazy-load english words - loads from file on first call
+                # Trace handler for lazy-loading english_words on first access
+                proc _load_english_words_trace {{name1 name2 op}} {{
+                    # Remove the trace to prevent infinite loop
+                    trace remove variable ::english_words read _load_english_words_trace
+
+                    # Load the words from file
+                    set f [open "{}" r]
+                    set ::english_words [split [read $f] "\n"]
+                    close $f
+                    # Remove empty lines
+                    set ::english_words [lsearch -all -inline -not -exact $::english_words ""]
+                }}
+
+                # Set up the trace - will fire when english_words is first read
+                trace add variable ::english_words read _load_english_words_trace
+
+                # Helper proc to get english words (also triggers lazy load)
                 proc get_english_words {{}} {{
-                    if {{![info exists ::_english_words_cache]}} {{
-                        set f [open "{}" r]
-                        set ::_english_words_cache [split [read $f] "\n"]
-                        close $f
-                        # Remove empty lines
-                        set ::_english_words_cache [lsearch -all -inline -not -exact $::_english_words_cache ""]
-                    }}
-                    return $::_english_words_cache
+                    return $::english_words
                 }}
 
                 # Helper to get a random english word
                 proc random_word {{}} {{
-                    set words [get_english_words]
+                    set words $::english_words
                     set idx [expr {{int(rand() * [llength $words])}}]
                     lindex $words $idx
                 }}
 
                 # Helper to get word count
                 proc word_count {{}} {{
-                    llength [get_english_words]
+                    llength $::english_words
                 }}
             "#, path_str);
 
