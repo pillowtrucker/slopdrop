@@ -41,6 +41,8 @@
         nativeBuildInputs = with pkgs; [
           pkg-config
           rustToolchain
+          llvmPackages.libclang
+          clang
         ];
 
         # Environment variables needed for building
@@ -51,6 +53,7 @@
           OPENSSL_DIR = "${pkgs.openssl.dev}";
           OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
           OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         };
 
       in
@@ -77,6 +80,7 @@
             OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
             OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
             OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
+            LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
 
             # Build with all frontends
             buildFeatures = [ "all-frontends" ];
@@ -121,6 +125,7 @@
           OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
           OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
           OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
+          LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
 
           # For git2 crate
           LIBGIT2_SYS_USE_PKG_CONFIG = "1";
