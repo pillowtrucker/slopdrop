@@ -5,7 +5,7 @@ use crate::types::ChannelMembers;
 use anyhow::Result;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -211,8 +211,13 @@ impl TclThreadHandle {
         }
 
         // Wait for response with timeout
+        debug!("Waiting for TCL response with timeout of {}ms", self.timeout.as_millis());
+        let start = Instant::now();
         match tokio::time::timeout(self.timeout, response_rx).await {
-            Ok(Ok(result)) => Ok(result),
+            Ok(Ok(result)) => {
+                debug!("TCL response received after {}ms", start.elapsed().as_millis());
+                Ok(result)
+            }
             Ok(Err(e)) => {
                 // Response channel closed unexpectedly - thread crashed
                 error!("TCL thread died unexpectedly: {}", e);
