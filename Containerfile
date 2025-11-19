@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tcllib \
     git \
     ca-certificates \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -52,8 +53,9 @@ RUN groupadd -r slopdrop -g 1000 && \
     useradd -r -g slopdrop -u 1000 -d /app -s /sbin/nologin slopdrop
 
 # Create application directories
-RUN mkdir -p /app/state /app/tcl /app/config && \
-    chown -R slopdrop:slopdrop /app
+RUN mkdir -p /app/state /app/tcl /app/config /app/.ssh && \
+    chown -R slopdrop:slopdrop /app && \
+    chmod 700 /app/.ssh
 
 WORKDIR /app
 

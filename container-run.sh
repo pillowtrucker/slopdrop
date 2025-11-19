@@ -9,6 +9,8 @@
 #   --name NAME     Container name (default: slopdrop)
 #   --config PATH   Path to config file (default: ./config.toml)
 #   --state PATH    Path to state directory (default: ./state)
+#   --ssh-key PATH  Path to SSH private key for git push (optional)
+#   --known-hosts PATH  Path to known_hosts file (optional)
 
 set -e
 
@@ -20,6 +22,8 @@ STATE_PATH="./state"
 DETACH="-d"
 WEB_PORT=""
 EXTRA_ARGS=""
+SSH_KEY=""
+KNOWN_HOSTS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +53,14 @@ while [[ $# -gt 0 ]]; do
             STATE_PATH="$2"
             shift 2
             ;;
+        --ssh-key)
+            SSH_KEY="$2"
+            shift 2
+            ;;
+        --known-hosts)
+            KNOWN_HOSTS="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -69,6 +81,26 @@ fi
 # Create state directory if it doesn't exist
 mkdir -p "$STATE_PATH"
 
+# Build SSH mount arguments
+SSH_MOUNTS=""
+if [[ -n "$SSH_KEY" ]]; then
+    if [[ ! -f "$SSH_KEY" ]]; then
+        echo "Error: SSH key not found: $SSH_KEY"
+        exit 1
+    fi
+    SSH_MOUNTS="$SSH_MOUNTS -v $(realpath "$SSH_KEY"):/app/.ssh/id_rsa:ro,Z"
+    echo "Note: SSH key will be mounted at /app/.ssh/id_rsa"
+    echo "      Make sure your config.toml has: ssh_key = \"/app/.ssh/id_rsa\""
+fi
+
+if [[ -n "$KNOWN_HOSTS" ]]; then
+    if [[ ! -f "$KNOWN_HOSTS" ]]; then
+        echo "Error: known_hosts file not found: $KNOWN_HOSTS"
+        exit 1
+    fi
+    SSH_MOUNTS="$SSH_MOUNTS -v $(realpath "$KNOWN_HOSTS"):/app/.ssh/known_hosts:ro,Z"
+fi
+
 # Stop and remove existing container with same name
 if podman container exists "$CONTAINER_NAME" 2>/dev/null; then
     echo "Stopping existing container: $CONTAINER_NAME"
@@ -80,12 +112,16 @@ echo "Starting Slopdrop container..."
 echo "  Container: $CONTAINER_NAME"
 echo "  Config: $CONFIG_PATH"
 echo "  State: $STATE_PATH"
+if [[ -n "$SSH_KEY" ]]; then
+    echo "  SSH Key: $SSH_KEY -> /app/.ssh/id_rsa"
+fi
 
 # Run the container with security options
 podman run $DETACH \
     --name "$CONTAINER_NAME" \
     -v "$(realpath "$CONFIG_PATH")":/app/config/config.toml:ro,Z \
     -v "$(realpath "$STATE_PATH")":/app/state:Z \
+    $SSH_MOUNTS \
     $WEB_PORT \
     --cap-drop=ALL \
     --security-opt=no-new-privileges:true \
