@@ -213,51 +213,40 @@ impl SafeTclInterp {
             interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load restore_missing_vars.tcl: {:?}", e))?;
         }
 
-        // 3. Set up lazy-loading for english_words.txt
-        // Instead of loading all words at startup, create a proc that loads on first use
+        // 3. Load english_words.txt as a TCL variable
+        // Note: trace-based lazy loading doesn't work in safe interpreters, so we load eagerly
         let english_words_path = state_path.join("english_words.txt");
         if english_words_path.exists() {
-            debug!("Setting up lazy-loading for english_words.txt");
-            let path_str = english_words_path.to_string_lossy().replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
+            debug!("Loading english_words.txt");
+            let content = std::fs::read_to_string(&english_words_path)?;
+            let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+            // Create a TCL list - escape special chars and join with spaces
+            let escaped_words: Vec<String> = lines.iter()
+                .map(|w| w.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}"))
+                .collect();
+            let tcl_list = format!("set english_words [list {}]", escaped_words.join(" "));
+            interp.eval(tcl_list.as_str()).map_err(|e| anyhow!("Failed to load english_words: {:?}", e))?;
 
-            // Create lazy-loading for english_words using a trace
-            // This allows existing code that uses $english_words directly to work
-            let lazy_load_proc = format!(r#"
-                # Trace handler for lazy-loading english_words on first access
-                proc _load_english_words_trace {{name1 name2 op}} {{
-                    # Remove the trace to prevent infinite loop
-                    trace remove variable ::english_words read _load_english_words_trace
-
-                    # Load the words from file
-                    set f [open "{}" r]
-                    set ::english_words [split [read $f] "\n"]
-                    close $f
-                    # Remove empty lines
-                    set ::english_words [lsearch -all -inline -not -exact $::english_words ""]
-                }}
-
-                # Set up the trace - will fire when english_words is first read
-                trace add variable ::english_words read _load_english_words_trace
-
-                # Helper proc to get english words (also triggers lazy load)
-                proc get_english_words {{}} {{
+            // Add helper procs for convenience
+            let helper_procs = r#"
+                # Helper proc to get english words
+                proc get_english_words {} {
                     return $::english_words
-                }}
+                }
 
                 # Helper to get a random english word
-                proc random_word {{}} {{
+                proc random_word {} {
                     set words $::english_words
-                    set idx [expr {{int(rand() * [llength $words])}}]
+                    set idx [expr {int(rand() * [llength $words])}]
                     lindex $words $idx
-                }}
+                }
 
                 # Helper to get word count
-                proc word_count {{}} {{
+                proc word_count {} {
                     llength $::english_words
-                }}
-            "#, path_str);
-
-            interp.eval(lazy_load_proc.as_str()).map_err(|e| anyhow!("Failed to set up english_words lazy loading: {:?}", e))?;
+                }
+            "#;
+            interp.eval(helper_procs).map_err(|e| anyhow!("Failed to set up english_words helper procs: {:?}", e))?;
         }
 
         // 4. Load procs from procs/_index
