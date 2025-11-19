@@ -2,7 +2,7 @@
   description = "Slopdrop - Multi-frontend TCL Evaluation Bot for IRC";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -134,6 +134,7 @@
           LIBGIT2_SYS_USE_PKG_CONFIG = "1";
 
           shellHook = ''
+            export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
             echo "Slopdrop development shell"
             echo "Rust version: $(rustc --version)"
             echo "TCL version: $(echo 'puts [info patchlevel]' | tclsh)"
