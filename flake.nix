@@ -37,6 +37,9 @@
           pkg-config
           git
           cacert
+          llvmPackages.stdenv
+          llvmPackages.stdenv.cc
+          llvmPackages.stdenv.cc.cc.lib
         ];
 
         # Native build inputs
@@ -44,22 +47,14 @@
           pkg-config
           rustToolchain
           llvmPackages.libclang
-          clang
+          llvmPackages.stdenv.cc
         ];
 
         # Environment variables needed for building
         buildEnvVars = {
-          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig";
           TCL_LIBRARY = "${pkgs.tcl-8_6}/lib/tcl8.6";
           TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21";
-          OPENSSL_DIR = "${pkgs.openssl.dev}";
-          OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
-          OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include -isystem ${pkgs.glibc.dev}/include -isystem ${pkgs.linux-headers}/include";
-          # For cc-rs and other C compilation
-          C_INCLUDE_PATH = "${pkgs.glibc.dev}/include:${pkgs.zlib.dev}/include:${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include";
-          CPATH = "${pkgs.glibc.dev}/include:${pkgs.zlib.dev}/include:${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include";
         };
 
       in
@@ -84,13 +79,7 @@
             env = {
               TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
               TCLLIBPATH = buildEnvVars.TCLLIBPATH;
-              OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
-              OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
-              OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
               LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
-              BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
-              C_INCLUDE_PATH = buildEnvVars.C_INCLUDE_PATH;
-              CPATH = buildEnvVars.CPATH;
             };
 
             # Build with all frontends
@@ -130,19 +119,9 @@
           ]);
 
           # Environment variables
-          PKG_CONFIG_PATH = buildEnvVars.PKG_CONFIG_PATH;
           TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
           TCLLIBPATH = buildEnvVars.TCLLIBPATH;
-          OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
-          OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
-          OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
           LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
-          BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
-          C_INCLUDE_PATH = buildEnvVars.C_INCLUDE_PATH;
-          CPATH = buildEnvVars.CPATH;
-
-          # For git2 crate
-          LIBGIT2_SYS_USE_PKG_CONFIG = "1";
 
           shellHook = ''
             export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
