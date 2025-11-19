@@ -58,7 +58,11 @@
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig";
           TCL_LIBRARY = "${pkgs.tcl-8_6}/lib/tcl8.6";
           TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21";
+          OPENSSL_DIR = "${pkgs.openssl.dev}";
+          OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          CPATH = "${pkgs.glibc.dev}/include:${pkgs.zlib.dev}/include";
         };
 
       in
@@ -84,7 +88,11 @@
               PKG_CONFIG_PATH = buildEnvVars.PKG_CONFIG_PATH;
               TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
               TCLLIBPATH = buildEnvVars.TCLLIBPATH;
+              OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
+              OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
+              OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
               LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+              CPATH = buildEnvVars.CPATH;
             };
 
             # Build with all frontends
@@ -127,7 +135,11 @@
           PKG_CONFIG_PATH = buildEnvVars.PKG_CONFIG_PATH;
           TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
           TCLLIBPATH = buildEnvVars.TCLLIBPATH;
+          OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
+          OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
+          OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
           LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+          CPATH = buildEnvVars.CPATH;
 
           shellHook = ''
             export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
