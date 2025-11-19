@@ -254,13 +254,6 @@ impl SafeTclInterp {
                 if parts.len() >= 2 {
                     let var_name = parts[0];
                     let file_hash = parts[1];
-
-                    // Skip english_words - we use a small embedded default instead of the huge dictionary
-                    if var_name == "english_words" {
-                        debug!("Skipping english_words from state (using embedded default)");
-                        continue;
-                    }
-
                     let var_file = state_path.join("vars").join(file_hash);
 
                     if var_file.exists() {
