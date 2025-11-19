@@ -5,6 +5,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
 use std::time::Duration;
+use tokio::net::lookup_host;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -351,6 +352,7 @@ impl IrcClient {
 
 /// Run IRC client with automatic reconnection on failure
 /// Uses exponential backoff: 1s, 2s, 4s, 8s, ... up to 5 minutes max
+/// Cycles through DNS-resolved IPs on each reconnection attempt
 pub async fn run_with_reconnect(
     config: ServerConfig,
     channel_members: ChannelMembers,
@@ -361,11 +363,44 @@ pub async fn run_with_reconnect(
     const MAX_DELAY: u64 = 300; // 5 minutes
 
     let mut delay_secs = INITIAL_DELAY;
+    let mut server_index = 0;
 
     loop {
-        info!("Connecting to IRC server {}:{}", config.hostname, config.port);
+        // Resolve DNS to get all IPs for the hostname
+        let lookup_addr = format!("{}:{}", config.hostname, config.port);
+        let resolved_ips: Vec<_> = match lookup_host(&lookup_addr).await {
+            Ok(addrs) => addrs.collect(),
+            Err(e) => {
+                error!("DNS lookup failed for {}: {}", config.hostname, e);
+                info!("Reconnecting in {} seconds...", delay_secs);
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                delay_secs = (delay_secs * 2).min(MAX_DELAY);
+                continue;
+            }
+        };
 
-        match IrcClient::new(config.clone(), channel_members.clone()).await {
+        if resolved_ips.is_empty() {
+            error!("No IPs resolved for {}", config.hostname);
+            info!("Reconnecting in {} seconds...", delay_secs);
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            delay_secs = (delay_secs * 2).min(MAX_DELAY);
+            continue;
+        }
+
+        // Cycle through resolved IPs
+        let addr = &resolved_ips[server_index % resolved_ips.len()];
+        server_index += 1;
+
+        info!("Connecting to IRC server {} ({}) [{}/{}]",
+              config.hostname, addr.ip(),
+              (server_index - 1) % resolved_ips.len() + 1,
+              resolved_ips.len());
+
+        // Create a modified config with the specific IP
+        let mut connect_config = config.clone();
+        connect_config.hostname = addr.ip().to_string();
+
+        match IrcClient::new(connect_config, channel_members.clone()).await {
             Ok(irc_client) => {
                 // Reset delay on successful connection
                 delay_secs = INITIAL_DELAY;
