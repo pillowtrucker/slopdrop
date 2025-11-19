@@ -419,9 +419,15 @@ impl TclPlugin {
             commit_info.changes_summary
         );
 
+        // Track if we've notified the sender (to avoid duplicates)
+        let mut sender_notified = false;
+
         // Send PM to each admin (optionally including the sender)
         for admin_nick in admin_nicks {
             let is_sender = admin_nick == original_message.author.nick;
+            if is_sender {
+                sender_notified = true;
+            }
             if !is_sender || self.security_config.notify_self {
                 debug!("Sending commit notification to {}", admin_nick);
                 response_tx
@@ -431,6 +437,18 @@ impl TclPlugin {
                     })
                     .await?;
             }
+        }
+
+        // If notify_self is enabled and sender wasn't in the extracted nicks
+        // (e.g., they matched via wildcard pattern), notify them anyway
+        if self.security_config.notify_self && !sender_notified {
+            debug!("Sending commit notification to sender {}", original_message.author.nick);
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel: original_message.author.nick.clone(),
+                    text: notification,
+                })
+                .await?;
         }
 
         Ok(())
