@@ -35,6 +35,10 @@ pub struct SecurityConfig {
     /// Default: 1000
     #[serde(default = "default_recursion_limit")]
     pub max_recursion_depth: u32,
+    /// Send commit notifications to the admin who made the change
+    /// Default: false (only notify other admins)
+    #[serde(default)]
+    pub notify_self: bool,
 }
 
 fn default_memory_limit() -> u64 {

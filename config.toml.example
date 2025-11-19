@@ -89,6 +89,10 @@ eval_timeout_ms = 30000
 #   "*!*@evil.example.com"  - block anyone from evil.example.com
 # blacklisted_users = []
 
+# Send commit notifications to yourself when you make changes
+# Default: false (only notify other admins)
+# notify_self = true
+
 # ============================================================================
 # TCL INTERPRETER CONFIGURATION
 # ============================================================================

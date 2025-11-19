@@ -422,9 +422,10 @@ impl TclPlugin {
             commit_info.message.lines().next().unwrap_or("")
         );
 
-        // Send PM to each admin (except the sender)
+        // Send PM to each admin (optionally including the sender)
         for admin_nick in admin_nicks {
-            if admin_nick != original_message.author.nick {
+            let is_sender = admin_nick == original_message.author.nick;
+            if !is_sender || self.security_config.notify_self {
                 debug!("Sending commit notification to {}", admin_nick);
                 response_tx
                     .send(PluginCommand::SendToIrc {
