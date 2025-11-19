@@ -213,42 +213,12 @@ impl SafeTclInterp {
             interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load restore_missing_vars.tcl: {:?}", e))?;
         }
 
-        // 3. Set up lazy-loading for english_words.txt
-        // Instead of loading all words at startup, create a proc that loads on first use
-        let english_words_path = state_path.join("english_words.txt");
-        if english_words_path.exists() {
-            debug!("Setting up lazy-loading for english_words.txt");
-            let path_str = english_words_path.to_string_lossy().replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
-
-            // Create a proc that loads the words on first access and caches them
-            let lazy_load_proc = format!(r#"
-                # Lazy-load english words - loads from file on first call
-                proc get_english_words {{}} {{
-                    if {{![info exists ::_english_words_cache]}} {{
-                        set f [open "{}" r]
-                        set ::_english_words_cache [split [read $f] "\n"]
-                        close $f
-                        # Remove empty lines
-                        set ::_english_words_cache [lsearch -all -inline -not -exact $::_english_words_cache ""]
-                    }}
-                    return $::_english_words_cache
-                }}
-
-                # Helper to get a random english word
-                proc random_word {{}} {{
-                    set words [get_english_words]
-                    set idx [expr {{int(rand() * [llength $words])}}]
-                    lindex $words $idx
-                }}
-
-                # Helper to get word count
-                proc word_count {{}} {{
-                    llength [get_english_words]
-                }}
-            "#, path_str);
-
-            interp.eval(lazy_load_proc.as_str()).map_err(|e| anyhow!("Failed to set up english_words lazy loading: {:?}", e))?;
-        }
+        // 3. Set up english_words as a small default list
+        // Note: Loading the full 370K+ word dictionary causes timeouts
+        // Using a smaller embedded list instead
+        debug!("Setting up english_words with default word list");
+        let default_words = "set english_words {the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us}";
+        interp.eval(default_words).map_err(|e| anyhow!("Failed to set up english_words: {:?}", e))?;
 
         // 4. Load procs from procs/_index
         let procs_index = state_path.join("procs/_index");
