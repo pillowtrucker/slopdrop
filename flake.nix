@@ -37,9 +37,12 @@
           pkg-config
           git
           cacert
+          llvmPackages.llvm
           llvmPackages.stdenv
           llvmPackages.stdenv.cc
           llvmPackages.stdenv.cc.cc.lib
+          llvmPackages.libclang
+          llvmPackages.libclang.lib
         ];
 
         # Native build inputs
