@@ -214,39 +214,14 @@ impl SafeTclInterp {
         }
 
         // 3. Load english_words.txt as a TCL variable
-        // Note: trace-based lazy loading doesn't work in safe interpreters, so we load eagerly
-        let english_words_path = state_path.join("english_words.txt");
-        if english_words_path.exists() {
+        let english_words = state_path.join("english_words.txt");
+        if english_words.exists() {
             debug!("Loading english_words.txt");
-            let content = std::fs::read_to_string(&english_words_path)?;
-            let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
-            // Create a TCL list - escape special chars and join with spaces
-            let escaped_words: Vec<String> = lines.iter()
-                .map(|w| w.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}"))
-                .collect();
-            let tcl_list = format!("set english_words [list {}]", escaped_words.join(" "));
+            let content = std::fs::read_to_string(&english_words)?;
+            let lines: Vec<&str> = content.lines().collect();
+            // Create a TCL list
+            let tcl_list = format!("set english_words [list {}]", lines.join(" "));
             interp.eval(tcl_list.as_str()).map_err(|e| anyhow!("Failed to load english_words: {:?}", e))?;
-
-            // Add helper procs for convenience
-            let helper_procs = r#"
-                # Helper proc to get english words
-                proc get_english_words {} {
-                    return $::english_words
-                }
-
-                # Helper to get a random english word
-                proc random_word {} {
-                    set words $::english_words
-                    set idx [expr {int(rand() * [llength $words])}]
-                    lindex $words $idx
-                }
-
-                # Helper to get word count
-                proc word_count {} {
-                    llength $::english_words
-                }
-            "#;
-            interp.eval(helper_procs).map_err(|e| anyhow!("Failed to set up english_words helper procs: {:?}", e))?;
         }
 
         // 4. Load procs from procs/_index

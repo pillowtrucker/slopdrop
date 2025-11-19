@@ -91,7 +91,6 @@ impl InterpreterState {
             "slopdrop_channel_members", // Channel member lists synced before each eval
             "slopdrop_log_lines",       // Message log array
             "nick_channel",             // HTTP rate limiting context
-            "_english_words_cache",     // Lazy-loaded english words cache
         ]
             .iter()
             .map(|s| s.to_string())
