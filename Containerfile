@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Build Environment
 # =============================================================================
-FROM docker.io/library/rust:1.75-bookworm AS builder
+FROM docker.io/library/rust:1.82-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,9 +33,9 @@ COPY tcl ./tcl
 RUN cargo build --release --features all-frontends
 
 # =============================================================================
-# Stage 2: Runtime Environment
+# Stage 2: Runtime Environment (Ubuntu 24.04 - matches dev environment)
 # =============================================================================
-FROM docker.io/library/debian:bookworm-slim AS runtime
+FROM docker.io/library/ubuntu:24.04 AS runtime
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
