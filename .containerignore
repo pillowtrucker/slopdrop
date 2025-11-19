@@ -1,0 +1,35 @@
+# Ignore build artifacts
+target/
+*.rlib
+*.rmeta
+
+# Ignore git directory (we don't need history in build)
+.git/
+
+# Ignore test files
+tests/
+examples/
+
+# Ignore documentation
+*.md
+LICENSE
+
+# Ignore IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Ignore local configuration (user should mount their own)
+config.toml
+state/
+
+# Ignore CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Ignore container build scripts (not needed inside container)
+container-build.sh
+container-run.sh
