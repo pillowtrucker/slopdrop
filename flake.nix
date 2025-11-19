@@ -49,7 +49,7 @@
 
         # Environment variables needed for building
         buildEnvVars = {
-          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig";
+          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig";
           TCL_LIBRARY = "${pkgs.tcl-8_6}/lib/tcl8.6";
           TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21";
           OPENSSL_DIR = "${pkgs.openssl.dev}";
@@ -57,6 +57,8 @@
           OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include -isystem ${pkgs.glibc.dev}/include";
+          # For cc-rs and other C compilation
+          C_INCLUDE_PATH = "${pkgs.glibc.dev}/include:${pkgs.zlib.dev}/include:${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include";
         };
 
       in
@@ -86,6 +88,7 @@
               OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
               LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
               BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
+              C_INCLUDE_PATH = buildEnvVars.C_INCLUDE_PATH;
             };
 
             # Build with all frontends
@@ -133,6 +136,7 @@
           OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
           LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
           BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
+          C_INCLUDE_PATH = buildEnvVars.C_INCLUDE_PATH;
 
           # For git2 crate
           LIBGIT2_SYS_USE_PKG_CONFIG = "1";
