@@ -81,6 +81,7 @@
 
             # Set environment variables for build
             env = {
+              PKG_CONFIG_PATH = buildEnvVars.PKG_CONFIG_PATH;
               TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
               TCLLIBPATH = buildEnvVars.TCLLIBPATH;
               LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
@@ -123,6 +124,7 @@
           ]);
 
           # Environment variables
+          PKG_CONFIG_PATH = buildEnvVars.PKG_CONFIG_PATH;
           TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
           TCLLIBPATH = buildEnvVars.TCLLIBPATH;
           LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
