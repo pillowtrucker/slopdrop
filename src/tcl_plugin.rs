@@ -1,9 +1,10 @@
 use crate::config::{SecurityConfig, TclConfig};
+use crate::hostmask;
 use crate::tcl_thread::TclThreadHandle;
 use crate::types::{ChannelMembers, Message, PluginCommand};
 use crate::validator;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -22,6 +23,8 @@ pub struct TclPlugin {
     security_config: SecurityConfig,
     /// Cache for paginated output: (channel, nick) -> remaining output
     output_cache: HashMap<(String, String), OutputCache>,
+    /// Nicks of currently online admins (updated on join/part/quit)
+    admin_nicks: HashSet<String>,
 }
 
 impl TclPlugin {
@@ -38,6 +41,7 @@ impl TclPlugin {
             tcl_config,
             security_config,
             output_cache: HashMap::new(),
+            admin_nicks: HashSet::new(),
         })
     }
 
@@ -66,31 +70,56 @@ impl TclPlugin {
                             self.tcl_thread.log_message(channel, nick, mask, text);
                         }
                         Some(PluginCommand::UserJoin { channel, nick, mask }) => {
+                            // Track admin status on join
+                            self.update_admin_status(&nick, &mask, true);
                             if let Err(e) = self.handle_event("JOIN", &[&nick, &mask, &channel], &response_tx).await {
                                 warn!("Error handling JOIN event: {}", e);
                             }
                         }
                         Some(PluginCommand::UserPart { channel, nick, mask }) => {
+                            // Remove from admin list on part
+                            self.admin_nicks.remove(&nick);
                             if let Err(e) = self.handle_event("PART", &[&nick, &mask, &channel], &response_tx).await {
                                 warn!("Error handling PART event: {}", e);
                             }
                         }
                         Some(PluginCommand::UserQuit { nick, mask, message }) => {
+                            // Remove from admin list on quit
+                            self.admin_nicks.remove(&nick);
                             if let Err(e) = self.handle_event("QUIT", &[&nick, &mask, &message], &response_tx).await {
                                 warn!("Error handling QUIT event: {}", e);
                             }
                         }
                         Some(PluginCommand::UserKick { channel, nick, kicker, reason }) => {
+                            // Remove kicked user from admin list
+                            self.admin_nicks.remove(&nick);
                             if let Err(e) = self.handle_event("KICK", &[&nick, &kicker, &channel, &reason], &response_tx).await {
                                 warn!("Error handling KICK event: {}", e);
                             }
                         }
                         Some(PluginCommand::UserNick { old_nick, new_nick, mask }) => {
+                            // Update admin tracking for nick change
+                            if self.admin_nicks.remove(&old_nick) {
+                                self.admin_nicks.insert(new_nick.clone());
+                            } else {
+                                // Check if new hostmask is admin
+                                self.update_admin_status(&new_nick, &mask, true);
+                            }
                             if let Err(e) = self.handle_event("NICK", &[&old_nick, &new_nick, &mask], &response_tx).await {
                                 warn!("Error handling NICK event: {}", e);
                             }
                         }
+                        Some(PluginCommand::UserHostChange { nick, old_mask: _, new_mask }) => {
+                            // Re-check admin status with new hostmask
+                            self.admin_nicks.remove(&nick);
+                            self.update_admin_status(&nick, &new_mask, true);
+                            debug!("Updated admin status for {} after host change", nick);
+                        }
                         Some(PluginCommand::UserText { channel, nick, mask, text }) => {
+                            // Update admin status on every message in case host changed
+                            if !self.admin_nicks.contains(&nick) {
+                                self.update_admin_status(&nick, &mask, true);
+                            }
                             if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &response_tx).await {
                                 warn!("Error handling TEXT event: {}", e);
                             }
@@ -282,7 +311,7 @@ impl TclPlugin {
         }
 
         // Handle admin blacklist commands
-        if code.trim().starts_with("blacklist ") {
+        if code.trim() == "blacklist" || code.trim().starts_with("blacklist ") {
             return self.handle_blacklist_command(&message, is_admin, code.trim(), response_tx).await;
         }
 
@@ -399,32 +428,18 @@ impl TclPlugin {
         original_message: &Message,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
-        // Extract admin nicks from hostmask patterns
-        // Simple extraction: take nick part before '!'
-        let mut admin_nicks = Vec::new();
-        for pattern in &self.security_config.privileged_users {
-            if let Some(nick_part) = pattern.split('!').next() {
-                // Skip wildcard-only patterns
-                if nick_part != "*" && !nick_part.is_empty() {
-                    admin_nicks.push(nick_part.to_string());
-                }
-            }
-        }
-
         // Build notification message
         let notification = format!(
-            "[Git] {} committed by {} | {} files changed (+{} -{}) | {}",
+            "[Git] {} by {} | {}",
             &commit_info.commit_id[..8],
             commit_info.author,
-            commit_info.files_changed,
-            commit_info.insertions,
-            commit_info.deletions,
-            commit_info.message.lines().next().unwrap_or("")
+            commit_info.changes_summary
         );
 
-        // Send PM to each admin (except the sender)
-        for admin_nick in admin_nicks {
-            if admin_nick != original_message.author.nick {
+        // Send PM to each online admin (tracked via join/part/quit events)
+        for admin_nick in &self.admin_nicks {
+            let is_sender = admin_nick == &original_message.author.nick;
+            if !is_sender || self.security_config.notify_self {
                 debug!("Sending commit notification to {}", admin_nick);
                 response_tx
                     .send(PluginCommand::SendToIrc {
@@ -436,6 +451,26 @@ impl TclPlugin {
         }
 
         Ok(())
+    }
+
+    /// Check if a user is an admin and update the admin_nicks set
+    fn update_admin_status(&mut self, nick: &str, mask: &str, add: bool) {
+        // Build full hostmask: nick!ident@host
+        let hostmask = format!("{}!{}", nick, mask);
+
+        // Check if hostmask matches any privileged pattern
+        let is_admin = self.security_config.privileged_users.iter().any(|pattern| {
+            hostmask::matches_hostmask(&hostmask, pattern)
+        });
+
+        if is_admin {
+            if add {
+                self.admin_nicks.insert(nick.to_string());
+                debug!("Added {} to admin nicks (matched privileged pattern)", nick);
+            }
+        } else if !add {
+            self.admin_nicks.remove(nick);
+        }
     }
 
     /// Clean up cache entries older than 5 minutes

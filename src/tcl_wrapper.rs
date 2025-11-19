@@ -205,18 +205,52 @@ impl SafeTclInterp {
             interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load stolen-treasure.tcl: {:?}", e))?;
         }
 
-        // 2. Load english_words.txt as a TCL variable
-        let english_words = state_path.join("english_words.txt");
-        if english_words.exists() {
-            debug!("Loading english_words.txt");
-            let content = std::fs::read_to_string(&english_words)?;
-            let lines: Vec<&str> = content.lines().collect();
-            // Create a TCL list
-            let tcl_list = format!("set english_words [list {}]", lines.join(" "));
-            interp.eval(tcl_list.as_str()).map_err(|e| anyhow!("Failed to load english_words: {:?}", e))?;
+        // 2. Load restore_missing_vars.tcl (variable restoration script)
+        let restore_vars = state_path.join("restore_missing_vars.tcl");
+        if restore_vars.exists() {
+            debug!("Loading restore_missing_vars.tcl");
+            let content = std::fs::read_to_string(&restore_vars)?;
+            interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load restore_missing_vars.tcl: {:?}", e))?;
         }
 
-        // 3. Load procs from procs/_index
+        // 3. Set up lazy-loading for english_words.txt
+        // Instead of loading all words at startup, create a proc that loads on first use
+        let english_words_path = state_path.join("english_words.txt");
+        if english_words_path.exists() {
+            debug!("Setting up lazy-loading for english_words.txt");
+            let path_str = english_words_path.to_string_lossy().replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
+
+            // Create a proc that loads the words on first access and caches them
+            let lazy_load_proc = format!(r#"
+                # Lazy-load english words - loads from file on first call
+                proc get_english_words {{}} {{
+                    if {{![info exists ::_english_words_cache]}} {{
+                        set f [open "{}" r]
+                        set ::_english_words_cache [split [read $f] "\n"]
+                        close $f
+                        # Remove empty lines
+                        set ::_english_words_cache [lsearch -all -inline -not -exact $::_english_words_cache ""]
+                    }}
+                    return $::_english_words_cache
+                }}
+
+                # Helper to get a random english word
+                proc random_word {{}} {{
+                    set words [get_english_words]
+                    set idx [expr {{int(rand() * [llength $words])}}]
+                    lindex $words $idx
+                }}
+
+                # Helper to get word count
+                proc word_count {{}} {{
+                    llength [get_english_words]
+                }}
+            "#, path_str);
+
+            interp.eval(lazy_load_proc.as_str()).map_err(|e| anyhow!("Failed to set up english_words lazy loading: {:?}", e))?;
+        }
+
+        // 4. Load procs from procs/_index
         let procs_index = state_path.join("procs/_index");
         if procs_index.exists() {
             debug!("Loading procs from state");
@@ -240,7 +274,7 @@ impl SafeTclInterp {
             }
         }
 
-        // 4. Load vars from vars/_index
+        // 5. Load vars from vars/_index
         let vars_index = state_path.join("vars/_index");
         if vars_index.exists() {
             debug!("Loading vars from state");

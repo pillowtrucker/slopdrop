@@ -330,23 +330,77 @@ impl TclThreadWorker {
         })
     }
 
-    /// Register the chanlist command as a placeholder TCL proc
-    /// The actual implementation is intercepted in handle_eval()
+    /// Register the chanlist command that reads from the synced channel members array
     fn register_chanlist_command(
         interp: &tcl::Interpreter,
         _channel_members: ChannelMembers,
     ) -> Result<()> {
-        // Create a placeholder proc - actual implementation is in handle_eval
-        // This ensures "chanlist" exists and can be called from TCL procs
+        // Create a proc that reads from the ::slopdrop_channel_members array
+        // This array is synced before each eval by sync_channel_members()
         interp.eval(r#"
             # chanlist command - returns list of nicks in a channel
-            # This is implemented in Rust and intercepted before evaluation
+            # Reads from ::slopdrop_channel_members which is synced before each eval
             proc chanlist {channel} {
-                error "chanlist should have been intercepted by Rust handler"
+                if {[info exists ::slopdrop_channel_members($channel)]} {
+                    return $::slopdrop_channel_members($channel)
+                } else {
+                    return ""
+                }
             }
         "#).map_err(|e| anyhow::anyhow!("Failed to register chanlist command: {:?}", e))?;
 
         Ok(())
+    }
+
+    /// Sync channel members from Rust to TCL global array
+    fn sync_channel_members(&self) {
+        match self.channel_members.read() {
+            Ok(members) => {
+                for (channel, nicks) in members.iter() {
+                    if !nicks.is_empty() {
+                        let mut sorted: Vec<_> = nicks.iter().cloned().collect();
+                        sorted.sort();
+
+                        // Escape channel name and nicks for TCL
+                        let escaped_channel = channel
+                            .replace('\\', "\\\\")
+                            .replace('{', "\\{")
+                            .replace('}', "\\}");
+
+                        let escaped_nicks: Vec<String> = sorted.iter()
+                            .map(|n| n
+                                .replace('\\', "\\\\")
+                                .replace('{', "\\{")
+                                .replace('}', "\\}"))
+                            .collect();
+
+                        let tcl_code = format!(
+                            "set ::slopdrop_channel_members({}) {{{}}}",
+                            escaped_channel,
+                            escaped_nicks.join(" ")
+                        );
+
+                        if let Err(e) = self.interp.interpreter().eval(tcl_code.as_str()) {
+                            warn!("Failed to sync channel members for {}: {:?}", channel, e);
+                        }
+                    } else {
+                        // Empty channel - unset if exists
+                        let escaped_channel = channel
+                            .replace('\\', "\\\\")
+                            .replace('{', "\\{")
+                            .replace('}', "\\}");
+                        let unset_cmd = format!(
+                            "catch {{unset ::slopdrop_channel_members({})}}",
+                            escaped_channel
+                        );
+                        let _ = self.interp.interpreter().eval(unset_cmd.as_str());
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read channel members: {:?}", e);
+            }
+        }
     }
 
     fn run(self, command_rx: mpsc::Receiver<TclThreadCommand>) {
@@ -460,6 +514,9 @@ impl TclThreadWorker {
 
         // Set stock context for rate limiting
         crate::stock_commands::set_stock_context(request.nick.clone(), eval_count);
+
+        // Sync channel members to TCL array before evaluation
+        self.sync_channel_members();
 
         // Check for special commands
         let code_trimmed = request.code.trim();
