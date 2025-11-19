@@ -59,10 +59,23 @@ impl IrcClient {
 
         loop {
             tokio::select! {
-                Some(message) = stream.next() => {
-                    debug!("Received IRC message: {:?}", message);
-                    if let Err(e) = self.handle_irc_message(message?, &command_tx).await {
-                        error!("Error handling IRC message: {}", e);
+                result = stream.next() => {
+                    match result {
+                        Some(Ok(message)) => {
+                            debug!("Received IRC message: {:?}", message);
+                            if let Err(e) = self.handle_irc_message(message, &command_tx).await {
+                                error!("Error handling IRC message: {}", e);
+                            }
+                        }
+                        Some(Err(e)) => {
+                            error!("IRC connection error: {}", e);
+                            info!("IRC connection lost - will exit");
+                            break;
+                        }
+                        None => {
+                            info!("IRC stream closed by server");
+                            break;
+                        }
                     }
                 }
 
@@ -73,7 +86,7 @@ impl IrcClient {
                 }
 
                 else => {
-                    info!("IRC event loop ending - stream or channel closed");
+                    info!("IRC event loop ending - response channel closed");
                     break;
                 }
             }
