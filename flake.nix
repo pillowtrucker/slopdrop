@@ -56,6 +56,7 @@
           OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
           OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${pkgs.llvmPackages.libclang.lib}/lib/clang/19/include -isystem ${pkgs.glibc.dev}/include";
         };
 
       in
@@ -84,6 +85,7 @@
               OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
               OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
               LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+              BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
             };
 
             # Build with all frontends
@@ -130,6 +132,7 @@
           OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
           OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
           LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+          BINDGEN_EXTRA_CLANG_ARGS = buildEnvVars.BINDGEN_EXTRA_CLANG_ARGS;
 
           # For git2 crate
           LIBGIT2_SYS_USE_PKG_CONFIG = "1";
