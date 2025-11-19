@@ -4,8 +4,10 @@ use crate::types::{ChannelMembers, Message, MessageAuthor, PluginCommand};
 use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
+use std::time::Duration;
+use tokio::net::lookup_host;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct IrcClient {
     client: Client,
@@ -13,16 +15,22 @@ pub struct IrcClient {
     #[allow(dead_code)]
     config: ServerConfig,
     channel_members: ChannelMembers,
+    /// Channels to join after registration
+    channels_to_join: Vec<String>,
 }
 
 impl IrcClient {
     pub async fn new(config: ServerConfig, channel_members: ChannelMembers) -> Result<Self> {
+        // Store channels to join after registration
+        let channels_to_join = config.channels.clone();
+
         let irc_config = Config {
             nickname: Some(config.nickname.clone()),
             server: Some(config.hostname.clone()),
             port: Some(config.port),
             use_tls: Some(config.use_tls),
-            channels: config.channels.clone(),
+            // Don't auto-join channels - we'll join after registration
+            channels: vec![],
             // Accept self-signed certificates when using TLS
             // This is necessary for connecting to IRC servers with self-signed certs
             dangerously_accept_invalid_certs: Some(true),
@@ -38,6 +46,7 @@ impl IrcClient {
             client,
             config,
             channel_members,
+            channels_to_join,
         })
     }
 
@@ -45,15 +54,30 @@ impl IrcClient {
     pub async fn run(
         mut self,
         command_tx: mpsc::Sender<PluginCommand>,
-        mut response_rx: mpsc::Receiver<PluginCommand>,
+        response_rx: &mut mpsc::Receiver<PluginCommand>,
     ) -> Result<()> {
         let mut stream = self.client.stream()?;
+        info!("IRC event loop started, waiting for messages...");
 
         loop {
             tokio::select! {
-                Some(message) = stream.next() => {
-                    if let Err(e) = self.handle_irc_message(message?, &command_tx).await {
-                        error!("Error handling IRC message: {}", e);
+                result = stream.next() => {
+                    match result {
+                        Some(Ok(message)) => {
+                            debug!("Received IRC message: {:?}", message);
+                            if let Err(e) = self.handle_irc_message(message, &command_tx).await {
+                                error!("Error handling IRC message: {}", e);
+                            }
+                        }
+                        Some(Err(e)) => {
+                            error!("IRC connection error: {}", e);
+                            info!("IRC connection lost - will exit");
+                            break;
+                        }
+                        None => {
+                            info!("IRC stream closed by server");
+                            break;
+                        }
                     }
                 }
 
@@ -63,7 +87,10 @@ impl IrcClient {
                     }
                 }
 
-                else => break,
+                else => {
+                    info!("IRC event loop ending - response channel closed");
+                    break;
+                }
             }
         }
 
@@ -71,7 +98,7 @@ impl IrcClient {
     }
 
     async fn handle_irc_message(
-        &self,
+        &mut self,
         message: irc::proto::Message,
         command_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
@@ -250,6 +277,16 @@ impl IrcClient {
                 // This marks the end of NAMES list, we can log it
                 debug!("End of NAMES list");
             }
+            Command::Response(Response::RPL_WELCOME, _) => {
+                // 001 reply: Registration complete, now join channels
+                info!("Registration complete, joining channels");
+                for channel in &self.channels_to_join {
+                    info!("Joining channel: {}", channel);
+                    if let Err(e) = self.client.send_join(channel) {
+                        error!("Failed to join {}: {}", channel, e);
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -310,5 +347,80 @@ impl IrcClient {
                 channel_set.insert(new_nick.to_string());
             }
         }
+    }
+}
+
+/// Run IRC client with automatic reconnection on failure
+/// Uses exponential backoff: 1s, 2s, 4s, 8s, ... up to 5 minutes max
+/// Cycles through DNS-resolved IPs on each reconnection attempt
+pub async fn run_with_reconnect(
+    config: ServerConfig,
+    channel_members: ChannelMembers,
+    command_tx: mpsc::Sender<PluginCommand>,
+    mut response_rx: mpsc::Receiver<PluginCommand>,
+) -> Result<()> {
+    const INITIAL_DELAY: u64 = 1;
+    const MAX_DELAY: u64 = 300; // 5 minutes
+
+    let mut delay_secs = INITIAL_DELAY;
+    let mut server_index = 0;
+
+    loop {
+        // Resolve DNS to get all IPs for the hostname
+        let lookup_addr = format!("{}:{}", config.hostname, config.port);
+        let resolved_ips: Vec<_> = match lookup_host(&lookup_addr).await {
+            Ok(addrs) => addrs.collect(),
+            Err(e) => {
+                error!("DNS lookup failed for {}: {}", config.hostname, e);
+                info!("Reconnecting in {} seconds...", delay_secs);
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                delay_secs = (delay_secs * 2).min(MAX_DELAY);
+                continue;
+            }
+        };
+
+        if resolved_ips.is_empty() {
+            error!("No IPs resolved for {}", config.hostname);
+            info!("Reconnecting in {} seconds...", delay_secs);
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            delay_secs = (delay_secs * 2).min(MAX_DELAY);
+            continue;
+        }
+
+        // Cycle through resolved IPs
+        let addr = &resolved_ips[server_index % resolved_ips.len()];
+        server_index += 1;
+
+        info!("Connecting to IRC server {} ({}) [{}/{}]",
+              config.hostname, addr.ip(),
+              (server_index - 1) % resolved_ips.len() + 1,
+              resolved_ips.len());
+
+        // Create a modified config with the specific IP
+        let mut connect_config = config.clone();
+        connect_config.hostname = addr.ip().to_string();
+
+        match IrcClient::new(connect_config, channel_members.clone()).await {
+            Ok(irc_client) => {
+                // Reset delay on successful connection
+                delay_secs = INITIAL_DELAY;
+
+                // Run the client - this blocks until disconnection
+                if let Err(e) = irc_client.run(command_tx.clone(), &mut response_rx).await {
+                    error!("IRC client error: {}", e);
+                }
+
+                info!("IRC connection lost, will reconnect");
+            }
+            Err(e) => {
+                error!("Failed to connect to IRC: {}", e);
+            }
+        }
+
+        info!("Reconnecting in {} seconds...", delay_secs);
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+
+        // Exponential backoff
+        delay_secs = (delay_secs * 2).min(MAX_DELAY);
     }
 }
