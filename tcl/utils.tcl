@@ -161,6 +161,16 @@ proc names {} {
     chanlist $::channel
 }
 
+proc name {} {
+    # Return a random nick from current channel
+    set nicks [chanlist $::channel]
+    if {[llength $nicks] == 0} {
+        return ""
+    }
+    set idx [expr {int(rand() * [llength $nicks])}]
+    lindex $nicks $idx
+}
+
 proc hostmask {{who ""}} {
     # Return hostmask - for now just return the current mask
     # Full implementation would need getchanhost which requires IRC state
