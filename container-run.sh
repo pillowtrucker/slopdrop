@@ -110,9 +110,26 @@ if [[ -n "$RESET_STATE" ]]; then
             git log --oneline -10
             exit 1
         fi
-        git reset --hard "$RESET_STATE"
+
+        # Create backup tag of current HEAD before resetting
+        BACKUP_TAG="backup-$(date +%Y%m%d-%H%M%S)"
+        git tag "$BACKUP_TAG"
+        echo "Created backup tag: $BACKUP_TAG"
+
+        # Checkout target state into working directory (preserves history)
+        git checkout "$RESET_STATE" -- .
+
+        # Clean untracked files that may have been in old state
         git clean -fd
-        echo "State reset to: $(git log --oneline -1)"
+
+        # Commit as new history entry (allows future pushes)
+        git add -A
+        if ! git diff --cached --quiet; then
+            git commit -m "Reset state to $RESET_STATE (backup: $BACKUP_TAG)"
+            echo "State reset to: $(git log --oneline -1)"
+        else
+            echo "State already at $RESET_STATE, no changes needed"
+        fi
     )
 fi
 
