@@ -11,6 +11,7 @@
 #   --state PATH    Path to state directory (default: ./state)
 #   --ssh-key PATH  Path to SSH private key for git push (optional)
 #   --known-hosts PATH  Path to known_hosts file (optional)
+#   --memory SIZE   Container memory limit (default: 512m)
 
 set -e
 
@@ -24,6 +25,7 @@ WEB_PORT=""
 EXTRA_ARGS=""
 SSH_KEY=""
 KNOWN_HOSTS=""
+MEMORY_LIMIT="512m"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -59,6 +61,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --known-hosts)
             KNOWN_HOSTS="$2"
+            shift 2
+            ;;
+        --memory)
+            MEMORY_LIMIT="$2"
             shift 2
             ;;
         *)
@@ -112,6 +118,7 @@ echo "Starting Slopdrop container..."
 echo "  Container: $CONTAINER_NAME"
 echo "  Config: $CONFIG_PATH"
 echo "  State: $STATE_PATH"
+echo "  Memory: $MEMORY_LIMIT"
 if [[ -n "$SSH_KEY" ]]; then
     echo "  SSH Key: $SSH_KEY -> /app/.ssh/id_rsa"
 fi
@@ -127,8 +134,8 @@ podman run $DETACH \
     --security-opt=no-new-privileges:true \
     --read-only \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-    --memory=512m \
-    --memory-swap=512m \
+    --memory="$MEMORY_LIMIT" \
+    --memory-swap="$MEMORY_LIMIT" \
     --cpus=1 \
     --pids-limit=100 \
     --network=slirp4netns \
