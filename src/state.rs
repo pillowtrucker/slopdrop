@@ -573,16 +573,18 @@ impl StatePersistence {
             .unwrap_or(false);
 
         let content = if is_array {
-            // Get array contents
-            let array_cmd = format!("array get {{{}}}", var_name);
+            // Get array contents as a properly quoted list
+            // Use list to wrap the array get result so it's a valid single TCL element
+            let array_cmd = format!("list [array get {{{}}}]", var_name);
             let array_data = interp
                 .eval(array_cmd.as_str())
                 .map_err(|e| anyhow!("Failed to get array {}: {:?}", var_name, e))?
                 .get_string();
             format!("array {}", array_data)
         } else {
-            // Get scalar value
-            let value_cmd = format!("set {{{}}}", var_name);
+            // Get scalar value wrapped in list for proper quoting
+            // This preserves list structure when the value contains braces or spaces
+            let value_cmd = format!("list [set {{{}}}]", var_name);
             let value = interp
                 .eval(value_cmd.as_str())
                 .map_err(|e| anyhow!("Failed to get var {}: {:?}", var_name, e))?
