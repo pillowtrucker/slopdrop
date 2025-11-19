@@ -243,18 +243,15 @@ async fn main() -> Result<()> {
             })
         };
 
-        // Create and run IRC client
+        // Create and run IRC client with automatic reconnection
         let irc_task = tokio::spawn(async move {
-            match irc_client::IrcClient::new(config.server.clone(), channel_members).await {
-                Ok(irc_client) => {
-                    info!("Joining channels: {:?}", config.server.channels);
-                    if let Err(e) = irc_client.run(tcl_command_tx, irc_response_rx).await {
-                        error!("IRC client error: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to create IRC client: {}", e);
-                }
+            if let Err(e) = irc_client::run_with_reconnect(
+                config.server.clone(),
+                channel_members,
+                tcl_command_tx,
+                irc_response_rx,
+            ).await {
+                error!("IRC client error: {}", e);
             }
         });
 

@@ -4,8 +4,9 @@ use crate::types::{ChannelMembers, Message, MessageAuthor, PluginCommand};
 use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
+use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct IrcClient {
     client: Client,
@@ -52,7 +53,7 @@ impl IrcClient {
     pub async fn run(
         mut self,
         command_tx: mpsc::Sender<PluginCommand>,
-        mut response_rx: mpsc::Receiver<PluginCommand>,
+        response_rx: &mut mpsc::Receiver<PluginCommand>,
     ) -> Result<()> {
         let mut stream = self.client.stream()?;
         info!("IRC event loop started, waiting for messages...");
@@ -345,5 +346,46 @@ impl IrcClient {
                 channel_set.insert(new_nick.to_string());
             }
         }
+    }
+}
+
+/// Run IRC client with automatic reconnection on failure
+/// Uses exponential backoff: 1s, 2s, 4s, 8s, ... up to 5 minutes max
+pub async fn run_with_reconnect(
+    config: ServerConfig,
+    channel_members: ChannelMembers,
+    command_tx: mpsc::Sender<PluginCommand>,
+    mut response_rx: mpsc::Receiver<PluginCommand>,
+) -> Result<()> {
+    const INITIAL_DELAY: u64 = 1;
+    const MAX_DELAY: u64 = 300; // 5 minutes
+
+    let mut delay_secs = INITIAL_DELAY;
+
+    loop {
+        info!("Connecting to IRC server {}:{}", config.hostname, config.port);
+
+        match IrcClient::new(config.clone(), channel_members.clone()).await {
+            Ok(irc_client) => {
+                // Reset delay on successful connection
+                delay_secs = INITIAL_DELAY;
+
+                // Run the client - this blocks until disconnection
+                if let Err(e) = irc_client.run(command_tx.clone(), &mut response_rx).await {
+                    error!("IRC client error: {}", e);
+                }
+
+                info!("IRC connection lost, will reconnect");
+            }
+            Err(e) => {
+                error!("Failed to connect to IRC: {}", e);
+            }
+        }
+
+        info!("Reconnecting in {} seconds...", delay_secs);
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+
+        // Exponential backoff
+        delay_secs = (delay_secs * 2).min(MAX_DELAY);
     }
 }
