@@ -75,12 +75,14 @@
             inherit buildInputs nativeBuildInputs;
 
             # Set environment variables for build
-            TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
-            TCLLIBPATH = buildEnvVars.TCLLIBPATH;
-            OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
-            OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
-            OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
-            LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+            env = {
+              TCL_LIBRARY = buildEnvVars.TCL_LIBRARY;
+              TCLLIBPATH = buildEnvVars.TCLLIBPATH;
+              OPENSSL_DIR = buildEnvVars.OPENSSL_DIR;
+              OPENSSL_LIB_DIR = buildEnvVars.OPENSSL_LIB_DIR;
+              OPENSSL_INCLUDE_DIR = buildEnvVars.OPENSSL_INCLUDE_DIR;
+              LIBCLANG_PATH = buildEnvVars.LIBCLANG_PATH;
+            };
 
             # Build with all frontends
             buildFeatures = [ "all-frontends" ];
