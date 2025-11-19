@@ -13,16 +13,22 @@ pub struct IrcClient {
     #[allow(dead_code)]
     config: ServerConfig,
     channel_members: ChannelMembers,
+    /// Channels to join after registration
+    channels_to_join: Vec<String>,
 }
 
 impl IrcClient {
     pub async fn new(config: ServerConfig, channel_members: ChannelMembers) -> Result<Self> {
+        // Store channels to join after registration
+        let channels_to_join = config.channels.clone();
+
         let irc_config = Config {
             nickname: Some(config.nickname.clone()),
             server: Some(config.hostname.clone()),
             port: Some(config.port),
             use_tls: Some(config.use_tls),
-            channels: config.channels.clone(),
+            // Don't auto-join channels - we'll join after registration
+            channels: vec![],
             // Accept self-signed certificates when using TLS
             // This is necessary for connecting to IRC servers with self-signed certs
             dangerously_accept_invalid_certs: Some(true),
@@ -38,6 +44,7 @@ impl IrcClient {
             client,
             config,
             channel_members,
+            channels_to_join,
         })
     }
 
@@ -71,7 +78,7 @@ impl IrcClient {
     }
 
     async fn handle_irc_message(
-        &self,
+        &mut self,
         message: irc::proto::Message,
         command_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
@@ -249,6 +256,16 @@ impl IrcClient {
                 // 366 reply: :<server> 366 <nick> <channel> :End of /NAMES list.
                 // This marks the end of NAMES list, we can log it
                 debug!("End of NAMES list");
+            }
+            Command::Response(Response::RPL_WELCOME, _) => {
+                // 001 reply: Registration complete, now join channels
+                info!("Registration complete, joining channels");
+                for channel in &self.channels_to_join {
+                    info!("Joining channel: {}", channel);
+                    if let Err(e) = self.client.send_join(channel) {
+                        error!("Failed to join {}: {}", channel, e);
+                    }
+                }
             }
             _ => {}
         }
