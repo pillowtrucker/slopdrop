@@ -413,13 +413,10 @@ impl TclPlugin {
 
         // Build notification message
         let notification = format!(
-            "[Git] {} committed by {} | {} files changed (+{} -{}) | {}",
+            "[Git] {} by {} | {}",
             &commit_info.commit_id[..8],
             commit_info.author,
-            commit_info.files_changed,
-            commit_info.insertions,
-            commit_info.deletions,
-            commit_info.message.lines().next().unwrap_or("")
+            commit_info.changes_summary
         );
 
         // Send PM to each admin (optionally including the sender)

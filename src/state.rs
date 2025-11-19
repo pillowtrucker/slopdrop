@@ -16,6 +16,8 @@ pub struct CommitInfo {
     pub files_changed: usize,
     pub insertions: usize,
     pub deletions: usize,
+    /// Summary of which procs/vars were created/updated/removed
+    pub changes_summary: String,
 }
 
 /// IRC user information for git commits
@@ -118,6 +120,30 @@ impl StateChanges {
             || !self.deleted_procs.is_empty()
             || !self.new_vars.is_empty()
             || !self.deleted_vars.is_empty()
+    }
+
+    /// Generate a human-readable summary of changes
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+
+        if !self.new_procs.is_empty() {
+            parts.push(format!("+proc: {}", self.new_procs.join(", ")));
+        }
+        if !self.deleted_procs.is_empty() {
+            parts.push(format!("-proc: {}", self.deleted_procs.join(", ")));
+        }
+        if !self.new_vars.is_empty() {
+            parts.push(format!("+var: {}", self.new_vars.join(", ")));
+        }
+        if !self.deleted_vars.is_empty() {
+            parts.push(format!("-var: {}", self.deleted_vars.join(", ")));
+        }
+
+        if parts.is_empty() {
+            "no changes".to_string()
+        } else {
+            parts.join(" | ")
+        }
     }
 }
 
@@ -457,6 +483,7 @@ impl StatePersistence {
             files_changed: stats.files_changed(),
             insertions: stats.insertions(),
             deletions: stats.deletions(),
+            changes_summary: changes.summary(),
         };
 
         info!(
