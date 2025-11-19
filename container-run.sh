@@ -184,6 +184,9 @@ podman run $DETACH \
     --memory-swap="$MEMORY_LIMIT" \
     --cpus=1 \
     --pids-limit=100 \
+    --ulimit nofile=1024:1024 \
+    --ulimit nproc=64:64 \
+    --ulimit core=0:0 \
     --network=slirp4netns \
     "$IMAGE_NAME" \
     /app/config/config.toml $EXTRA_ARGS

@@ -48,9 +48,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create non-root user for security
+# Create non-root user for security (before removing user management tools)
 RUN groupadd -r slopdrop -g 1000 && \
     useradd -r -g slopdrop -u 1000 -d /app -s /sbin/nologin slopdrop
+
+# Security hardening: remove setuid/setgid binaries and unnecessary tools
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true && \
+    rm -f /usr/bin/chage /usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd \
+          /usr/bin/newgrp /usr/bin/passwd /usr/sbin/chpasswd \
+          /usr/sbin/groupadd /usr/sbin/groupdel /usr/sbin/groupmod \
+          /usr/sbin/useradd /usr/sbin/userdel /usr/sbin/usermod \
+          /bin/mount /bin/umount /bin/su 2>/dev/null || true
 
 # Create application directories
 RUN mkdir -p /app/state /app/tcl /app/config /app/.ssh && \
