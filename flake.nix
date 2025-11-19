@@ -55,6 +55,7 @@
 
         # Environment variables needed for building
         buildEnvVars = {
+          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.tcl-8_6}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig";
           TCL_LIBRARY = "${pkgs.tcl-8_6}/lib/tcl8.6";
           TCLLIBPATH = "${pkgs.tclPackages.tclcurl}/lib ${pkgs.tcllib}/lib/tcllib1.21";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
