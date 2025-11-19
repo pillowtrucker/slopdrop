@@ -125,6 +125,13 @@ pub enum PluginCommand {
         mask: String,
     },
 
+    /// User's host changed (e.g., after auth with services)
+    UserHostChange {
+        nick: String,
+        old_mask: String,
+        new_mask: String,
+    },
+
     /// User sent a message to a channel
     UserText {
         channel: String,

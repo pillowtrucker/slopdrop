@@ -109,7 +109,17 @@ impl TclPlugin {
                                 warn!("Error handling NICK event: {}", e);
                             }
                         }
+                        Some(PluginCommand::UserHostChange { nick, old_mask: _, new_mask }) => {
+                            // Re-check admin status with new hostmask
+                            self.admin_nicks.remove(&nick);
+                            self.update_admin_status(&nick, &new_mask, true);
+                            debug!("Updated admin status for {} after host change", nick);
+                        }
                         Some(PluginCommand::UserText { channel, nick, mask, text }) => {
+                            // Update admin status on every message in case host changed
+                            if !self.admin_nicks.contains(&nick) {
+                                self.update_admin_status(&nick, &mask, true);
+                            }
                             if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &response_tx).await {
                                 warn!("Error handling TEXT event: {}", e);
                             }
