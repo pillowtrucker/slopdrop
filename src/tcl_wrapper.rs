@@ -217,49 +217,7 @@ impl SafeTclInterp {
         // Note: Loading the full 370K+ word dictionary causes timeouts
         // Using a smaller embedded list instead
         debug!("Setting up english_words with default word list");
-        let default_words = r#"
-            set english_words [list \
-                the be to of and a in that have I it for not on with he as you do at \
-                this but his by from they we say her she or an will my one all would there their what \
-                so up out if about who get which go me when make can like time no just him know take \
-                people into year your good some could them see other than then now look only come its over think \
-                also back after use two how our work first well way even new want because any these give day most us \
-                is are was were been being am does did doing has had having may might must shall should would \
-                able about above across after again against all almost alone along already also although always \
-                among another any anybody anyone anything anywhere are around as ask at away back bad be \
-                became because become been before began begin behind being believe below beside besides best better \
-                between beyond big both bring brought build built but buy by call came can cannot car care \
-                carry case catch cause certain change child children city close come consider contain continue \
-                could country course cut day develop did different do does done door down draw during each early \
-                earth east easy eat economic effect either else end enough even ever every everyone everything \
-                example eye face fact fall family far fast father feel few find first five follow food foot \
-                for force foreign form found four free friend from front full further game gave general get girl \
-                give go god going good got government great green ground group grow had half hand happen hard has \
-                have he head hear heart help her here herself high him himself his history hold home hope hot \
-                hour house how however human hundred idea if important in include increase indeed information \
-                interest into is issue it its itself job just keep kind king knew know land large last late \
-                later laugh law lay lead learn least leave left less let letter life light like line list \
-                little live local long look lose lot love low made main major make man many march may maybe \
-                mean meet member might mind minute miss moment money month more morning most mother move much \
-                music must my myself name nation national nature near necessary need never new next night no \
-                none nor north not note nothing now number of off offer office often oh old on once one only \
-                open or order other others our out over own page paper part party pass past pay people perhaps \
-                person picture place plan plant play please point police political poor popular position possible \
-                power present president press price private probably problem produce program provide public put \
-                question quite rather read ready real really reason receive recent record red remember report \
-                represent require research result return right river road room run said same save saw say school \
-                sea second section see seem sell send sense serve service set several shall she ship short should \
-                show side simple simply since sit situation six size small so social society some something \
-                sometimes son soon sort sound south space speak special spend stand start state stay still stop \
-                story street strong student study such suddenly suggest summer support sure system table take \
-                talk teacher tell term test than thank that the their them themselves then there therefore these \
-                they thing think third this those though thought thousand three through throughout thus time to \
-                today together told too took top total toward town trade tree true try turn two type under \
-                understand united university until up upon us use used usually value various very view voice \
-                wait walk wall want war was watch water way we week well went were west western what whatever \
-                when where whether which while white who whole whose why wide wife will window wish with within \
-                without woman women wonder wood word work world would write wrong year yes yet you young your]
-        "#;
+        let default_words = "set english_words {the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us}";
         interp.eval(default_words).map_err(|e| anyhow!("Failed to set up english_words: {:?}", e))?;
 
         // 4. Load procs from procs/_index
