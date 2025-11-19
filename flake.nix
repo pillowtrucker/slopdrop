@@ -49,8 +49,14 @@
         nativeBuildInputs = with pkgs; [
           pkg-config
           rustToolchain
-          llvmPackages.libclang
+llvmPackages.llvm
+          llvmPackages.stdenv
           llvmPackages.stdenv.cc
+          llvmPackages.stdenv.cc.cc.lib
+          llvmPackages.libclang
+          llvmPackages.libclang.lib
+
+
         ];
 
         # Environment variables needed for building
@@ -129,6 +135,14 @@
             cargo-edit
             clippy
             rustfmt
+llvmPackages.llvm
+          llvmPackages.stdenv
+          llvmPackages.stdenv.cc
+          llvmPackages.stdenv.cc.cc.lib
+          llvmPackages.libclang
+          llvmPackages.libclang.lib
+
+
           ]);
 
           # Environment variables
