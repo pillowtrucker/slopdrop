@@ -33,6 +33,7 @@
           tclPackages.tclcurl
           tcllib
           openssl
+          zlib
           pkg-config
           git
           cacert
