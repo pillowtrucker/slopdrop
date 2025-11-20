@@ -388,16 +388,21 @@ impl TclPlugin {
     ) -> Result<()> {
         debug!("send_response called with {} bytes", output.len());
 
-        // Truncate output to prevent memory exhaustion from huge strings
-        // Max 1MB of output (prevents commands like 'crash' from hanging the bot)
-        const MAX_OUTPUT_BYTES: usize = 1_000_000;
-        let output = if output.len() > MAX_OUTPUT_BYTES {
-            debug!("Truncating output from {} to {} bytes", output.len(), MAX_OUTPUT_BYTES);
-            let truncated = &output[..MAX_OUTPUT_BYTES];
-            format!("{}\n... (output truncated at {} bytes)", truncated, MAX_OUTPUT_BYTES)
-        } else {
-            output
-        };
+        // Reject output that's too large - don't even try to send it
+        // Commands like 'crash' generate 2GB of output which would create thousands
+        // of IRC messages and fill the channel
+        const MAX_OUTPUT_BYTES: usize = 100_000; // 100KB max
+        if output.len() > MAX_OUTPUT_BYTES {
+            warn!("Output too large ({} bytes), sending error instead", output.len());
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel: original_message.author.channel.clone(),
+                    text: format!("error: output too large ({} bytes, max {} bytes)",
+                                 output.len(), MAX_OUTPUT_BYTES),
+                })
+                .await?;
+            return Ok(());
+        }
 
         debug!("About to split {} bytes into lines", output.len());
 
