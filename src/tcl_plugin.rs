@@ -54,7 +54,9 @@ impl TclPlugin {
         info!("TCL plugin started");
 
         // Timer polling interval (1 second)
+        // Use Skip to avoid burst of checks after long-running commands
         let mut timer_interval = interval(Duration::from_secs(1));
+        timer_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
