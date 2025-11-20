@@ -7,7 +7,7 @@ use irc::client::prelude::*;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct IrcClient {
     client: Client,
@@ -17,15 +17,22 @@ pub struct IrcClient {
     channel_members: ChannelMembers,
     /// Channels to join after registration
     channels_to_join: Vec<String>,
+    /// Desired nickname (what we want to use)
+    desired_nickname: String,
+    /// Current nickname attempt number (for generating alternatives)
+    nick_attempt: u32,
+    /// Whether we successfully registered and joined channels
+    registered: bool,
 }
 
 impl IrcClient {
     pub async fn new(config: ServerConfig, channel_members: ChannelMembers) -> Result<Self> {
         // Store channels to join after registration
         let channels_to_join = config.channels.clone();
+        let desired_nickname = config.nickname.clone();
 
         let irc_config = Config {
-            nickname: Some(config.nickname.clone()),
+            nickname: Some(desired_nickname.clone()),
             server: Some(config.hostname.clone()),
             port: Some(config.port),
             use_tls: Some(config.use_tls),
@@ -47,7 +54,30 @@ impl IrcClient {
             config,
             channel_members,
             channels_to_join,
+            desired_nickname,
+            nick_attempt: 0,
+            registered: false,
         })
+    }
+
+    /// Generate an alternative nickname when the desired one is in use
+    /// Strategies: append _ for first few attempts, then add numbers
+    fn generate_alternative_nick(&self) -> String {
+        match self.nick_attempt {
+            0 => self.desired_nickname.clone(),
+            1..=3 => format!("{}{}", self.desired_nickname, "_".repeat(self.nick_attempt as usize)),
+            n => format!("{}_{}", self.desired_nickname, n - 3),
+        }
+    }
+
+    /// Attempt to reclaim the desired nickname
+    fn try_reclaim_nick(&mut self) -> Result<()> {
+        let current = self.client.current_nickname();
+        if current != self.desired_nickname && self.registered {
+            info!("Attempting to reclaim desired nickname: {}", self.desired_nickname);
+            self.client.send(Command::NICK(self.desired_nickname.clone()))?;
+        }
+        Ok(())
     }
 
     /// Main event loop for the IRC client
@@ -58,6 +88,10 @@ impl IrcClient {
     ) -> Result<()> {
         let mut stream = self.client.stream()?;
         info!("IRC event loop started, waiting for messages...");
+
+        // Timer for periodic nickname reclaim attempts (every 5 minutes)
+        let mut nick_reclaim_interval = tokio::time::interval(Duration::from_secs(300));
+        nick_reclaim_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -84,6 +118,13 @@ impl IrcClient {
                 Some(command) = response_rx.recv() => {
                     if let Err(e) = self.handle_plugin_command(command).await {
                         error!("Error handling plugin command: {}", e);
+                    }
+                }
+
+                _ = nick_reclaim_interval.tick() => {
+                    // Periodically try to reclaim our desired nickname
+                    if let Err(e) = self.try_reclaim_nick() {
+                        debug!("Failed to reclaim nickname: {}", e);
                     }
                 }
 
@@ -240,6 +281,17 @@ impl IrcClient {
             Command::NICK(ref new_nick) => {
                 if let Some(Prefix::Nickname(ref old_nick, ref user, ref host)) = message.prefix {
                     debug!("{} changed nick to {}", old_nick, new_nick);
+
+                    // Check if this is our own nick change
+                    if old_nick == self.client.current_nickname() {
+                        if new_nick == &self.desired_nickname {
+                            info!("Successfully reclaimed desired nickname: {}", self.desired_nickname);
+                            self.nick_attempt = 0;
+                        } else {
+                            debug!("Our nickname changed to: {}", new_nick);
+                        }
+                    }
+
                     self.rename_member(old_nick, new_nick);
 
                     // Send event to plugin for trigger handling
@@ -279,11 +331,40 @@ impl IrcClient {
             }
             Command::Response(Response::RPL_WELCOME, _) => {
                 // 001 reply: Registration complete, now join channels
-                info!("Registration complete, joining channels");
+                self.registered = true;
+                let current_nick = self.client.current_nickname();
+
+                if current_nick != self.desired_nickname {
+                    warn!("Registered with alternative nickname: {} (desired: {})",
+                          current_nick, self.desired_nickname);
+                    warn!("Will attempt to reclaim {} periodically", self.desired_nickname);
+                } else {
+                    info!("Registration complete with desired nickname: {}", current_nick);
+                }
+
+                info!("Joining channels");
                 for channel in &self.channels_to_join {
                     info!("Joining channel: {}", channel);
                     if let Err(e) = self.client.send_join(channel) {
                         error!("Failed to join {}: {}", channel, e);
+                    }
+                }
+            }
+            Command::Response(Response::ERR_NICKNAMEINUSE, _) => {
+                // 433 reply: Nickname is already in use
+                self.nick_attempt += 1;
+                let alt_nick = self.generate_alternative_nick();
+
+                if self.registered {
+                    // Already registered, just log that reclaim failed
+                    debug!("Nickname {} still in use, cannot reclaim yet", self.desired_nickname);
+                } else {
+                    // During registration, try an alternative
+                    warn!("Nickname {} is in use, trying alternative: {}",
+                          self.desired_nickname, alt_nick);
+
+                    if let Err(e) = self.client.send(Command::NICK(alt_nick)) {
+                        error!("Failed to send NICK command: {}", e);
                     }
                 }
             }
