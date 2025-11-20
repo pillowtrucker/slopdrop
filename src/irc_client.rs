@@ -7,7 +7,7 @@ use irc::client::prelude::*;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 pub struct IrcClient {
     client: Client,

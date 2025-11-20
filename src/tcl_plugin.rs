@@ -351,14 +351,33 @@ impl TclPlugin {
             message.author.channel.clone(),
         ).await?;
 
+        debug!("TCL eval completed, output length: {} bytes", result.output.len());
+
         // Send PM notifications to admins if state was committed
         if let Some(ref commit_info) = result.commit_info {
+            debug!("Sending commit notifications");
             self.send_commit_notifications(commit_info, &message, response_tx).await?;
         }
 
-        self.send_response(&message, result.output, response_tx).await?;
-
-        Ok(())
+        debug!("Starting response send with timeout");
+        // Send response with same timeout as TCL evaluation to prevent hanging on huge output
+        let timeout = Duration::from_millis(self.security_config.eval_timeout_ms);
+        match tokio::time::timeout(
+            timeout,
+            self.send_response(&message, result.output, response_tx)
+        ).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                warn!("Response sending timed out after {}ms, likely huge output", self.security_config.eval_timeout_ms);
+                // Try to send error message
+                let _ = response_tx.send(PluginCommand::SendToIrc {
+                    channel: message.author.channel.clone(),
+                    text: "error: output too large, response timed out".to_string(),
+                }).await;
+                Ok(())
+            }
+        }
     }
 
     async fn send_response(
@@ -367,8 +386,30 @@ impl TclPlugin {
         output: String,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        debug!("send_response called with {} bytes", output.len());
+
+        // Reject output that's too large - don't even try to send it
+        // Commands like 'crash' generate 2GB of output which would create thousands
+        // of IRC messages and fill the channel
+        const MAX_OUTPUT_BYTES: usize = 100_000; // 100KB max
+        if output.len() > MAX_OUTPUT_BYTES {
+            warn!("Output too large ({} bytes), sending error instead", output.len());
+            response_tx
+                .send(PluginCommand::SendToIrc {
+                    channel: original_message.author.channel.clone(),
+                    text: format!("error: output too large ({} bytes, max {} bytes)",
+                                 output.len(), MAX_OUTPUT_BYTES),
+                })
+                .await?;
+            return Ok(());
+        }
+
+        debug!("About to split {} bytes into lines", output.len());
+
         // Split output into lines
         let all_lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+        debug!("Split into {} lines", all_lines.len());
+
         let max_lines = self.tcl_config.max_output_lines;
 
         let (output, cache_remaining) = if all_lines.len() > max_lines {
@@ -653,6 +694,7 @@ mod tests {
             max_recursion_depth: 1000,
             privileged_users: vec![],
             blacklisted_users: vec![],
+            notify_self: false,
         };
 
         let tcl_config = TclConfig {
