@@ -4,8 +4,7 @@
 /// and triggers reloads when files are modified.
 
 use anyhow::Result;
-use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs;
@@ -67,10 +66,9 @@ impl FileWatcher {
     /// Start watching for file changes
     ///
     /// This returns a channel receiver that will receive FileChangeEvent when files change.
-    /// The watcher uses a 2-second debounce to avoid triggering on every write during editing
-    /// and to filter out spurious initial events on startup.
     ///
-    /// Uses content-hash based change detection to avoid spurious reloads from metadata-only changes.
+    /// Filters events by type to only process actual modifications (not reads),
+    /// then uses content-hash based change detection to avoid spurious reloads from metadata-only changes.
     pub fn start_watching(&self) -> Result<Receiver<FileChangeEvent>> {
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -81,61 +79,89 @@ impl FileWatcher {
         let file_hashes: Arc<Mutex<HashMap<PathBuf, String>>> = Arc::new(Mutex::new(HashMap::new()));
         let file_hashes_clone = file_hashes.clone();
 
-        // Create debounced file watcher with 2-second debounce
-        let mut debouncer = new_debouncer(
-            Duration::from_secs(2),
-            move |res: Result<Vec<DebouncedEvent>, _>| {
-                match res {
-                    Ok(events) => {
-                        for event in events {
-                            let path = &event.path;
-                            debug!("File system event detected: {:?}", path);
+        // Track last event time for simple debouncing (avoid rapid-fire events during saves)
+        let last_event_time: Arc<Mutex<HashMap<PathBuf, std::time::Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+        let last_event_time_clone = last_event_time.clone();
 
-                            // Determine change type
-                            let change_type = if path.starts_with(&tcl_dir) && path.extension().and_then(|s| s.to_str()) == Some("tcl") {
-                                Some(ChangeType::TclModule)
-                            } else if path == &config_path {
-                                Some(ChangeType::Config)
-                            } else {
-                                None
+        // Create file watcher
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            match res {
+                Ok(event) => {
+                    // Filter by event kind - only process actual modifications, not reads
+                    let is_modification = matches!(
+                        event.kind,
+                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                    );
+
+                    if !is_modification {
+                        // Ignore access (read) events and other non-modification events
+                        return;
+                    }
+
+                    for path in &event.paths {
+                        debug!("File modification event: {:?} ({:?})", path, event.kind);
+
+                        // Determine change type
+                        let change_type = if path.starts_with(&tcl_dir) && path.extension().and_then(|s| s.to_str()) == Some("tcl") {
+                            Some(ChangeType::TclModule)
+                        } else if path == &config_path {
+                            Some(ChangeType::Config)
+                        } else {
+                            None
+                        };
+
+                        if let Some(change_type) = change_type {
+                            // Simple debouncing - ignore events within 2 seconds of last event for same file
+                            let now = std::time::Instant::now();
+                            let should_process = {
+                                let mut times = last_event_time_clone.lock().unwrap();
+                                match times.get(path) {
+                                    Some(last_time) if now.duration_since(*last_time) < Duration::from_secs(2) => {
+                                        debug!("Debouncing event for {:?} (too soon after last event)", path);
+                                        false
+                                    }
+                                    _ => {
+                                        times.insert(path.clone(), now);
+                                        true
+                                    }
+                                }
                             };
 
-                            if let Some(change_type) = change_type {
-                                // Use content hash to detect actual changes vs spurious events
-                                // This filters out read-only access, metadata changes, etc.
-                                if let Some(new_hash) = compute_file_hash(path) {
-                                    let mut hashes = file_hashes_clone.lock().unwrap();
-                                    let hash_changed = match hashes.get(path) {
-                                        Some(old_hash) => old_hash != &new_hash,
-                                        None => true, // First time seeing this file
-                                    };
+                            if !should_process {
+                                continue;
+                            }
 
-                                    if hash_changed {
-                                        info!("File content changed: {:?} ({:?})", path, change_type);
-                                        hashes.insert(path.clone(), new_hash);
-                                        let _ = tx.send(FileChangeEvent {
-                                            path: path.clone(),
-                                            change_type,
-                                        });
-                                    } else {
-                                        debug!("Spurious event ignored (content unchanged): {:?}", path);
-                                    }
+                            // Use content hash to detect actual changes vs metadata-only modifications
+                            if let Some(new_hash) = compute_file_hash(path) {
+                                let mut hashes = file_hashes_clone.lock().unwrap();
+                                let hash_changed = match hashes.get(path) {
+                                    Some(old_hash) => old_hash != &new_hash,
+                                    None => true, // First time seeing this file
+                                };
+
+                                if hash_changed {
+                                    info!("File content changed: {:?} ({:?})", path, change_type);
+                                    hashes.insert(path.clone(), new_hash);
+                                    let _ = tx.send(FileChangeEvent {
+                                        path: path.clone(),
+                                        change_type,
+                                    });
+                                } else {
+                                    debug!("Metadata-only change ignored (content unchanged): {:?}", path);
                                 }
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("File watcher error: {:?}", e);
-                    }
                 }
-            },
-        )?;
+                Err(e) => {
+                    error!("File watcher error: {:?}", e);
+                }
+            }
+        })?;
 
         // Watch the TCL directory if it exists
         if self.tcl_dir.exists() {
-            debouncer
-                .watcher()
-                .watch(&self.tcl_dir, RecursiveMode::NonRecursive)?;
+            watcher.watch(&self.tcl_dir, RecursiveMode::NonRecursive)?;
             info!("Watching TCL directory: {:?}", self.tcl_dir);
         } else {
             warn!("TCL directory does not exist: {:?}", self.tcl_dir);
@@ -145,18 +171,16 @@ impl FileWatcher {
         if self.config_path.exists() {
             if let Some(parent) = self.config_path.parent() {
                 // Watch the parent directory since we can't watch a single file directly
-                debouncer
-                    .watcher()
-                    .watch(parent, RecursiveMode::NonRecursive)?;
+                watcher.watch(parent, RecursiveMode::NonRecursive)?;
                 info!("Watching config file: {:?}", self.config_path);
             }
         } else {
             warn!("Config file does not exist: {:?}", self.config_path);
         }
 
-        // Keep the debouncer alive by leaking it (it will live for the lifetime of the program)
+        // Keep the watcher alive by leaking it (it will live for the lifetime of the program)
         // This is intentional - we want the file watcher to stay active until shutdown
-        Box::leak(Box::new(debouncer));
+        Box::leak(Box::new(watcher));
 
         Ok(rx)
     }

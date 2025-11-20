@@ -24,7 +24,6 @@ regex = "1"
 yahoo_finance_api = "4.1"
 lazy_static = "1.4"
 notify = "8.2"
-notify-debouncer-mini = "0.7"
 
 # Frontend support
 async-trait = "0.1"
