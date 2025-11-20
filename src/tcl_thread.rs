@@ -465,7 +465,7 @@ impl TclThreadWorker {
         // Wrap channel name in braces to handle special chars like # in #bottest
         let tcl_code = format!(r#"
             set entry [list {} {{{}}} {{{}}} {{{}}}]
-            if {{![info exists ::slopdrop_log_lines({{{}}})}} {{
+            if {{![info exists ::slopdrop_log_lines({{{}}})]}} {{
                 set ::slopdrop_log_lines({{{}}}) [list]
             }}
             lappend ::slopdrop_log_lines({{{}}}) $entry
