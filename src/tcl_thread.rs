@@ -458,7 +458,8 @@ impl TclThreadWorker {
         let escaped_channel = channel
             .replace('\\', "\\\\")
             .replace('{', "\\{")
-            .replace('}', "\\}");
+            .replace('}', "\\}")
+            .replace('#', "\\#");
 
         // Add to log array with size limit (default 1000 lines per channel)
         // Wrap channel name in braces to handle special chars like # in #bottest
