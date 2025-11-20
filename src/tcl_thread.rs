@@ -69,6 +69,7 @@ pub enum TclThreadCommand {
         mask: String,
         text: String,
     },
+    Reload,
     Shutdown,
 }
 
@@ -285,6 +286,12 @@ impl TclThreadHandle {
         });
     }
 
+    /// Reload TCL modules from disk
+    pub fn reload(&self) {
+        info!("Sending reload command to TCL thread");
+        let _ = self.command_tx.send(TclThreadCommand::Reload);
+    }
+
     /// Shutdown the TCL thread
     pub fn shutdown(&mut self) {
         info!("Shutting down TCL thread");
@@ -419,11 +426,22 @@ impl TclThreadWorker {
                 TclThreadCommand::LogMessage { channel, nick, mask, text } => {
                     self.handle_log_message(channel, nick, mask, text);
                 }
+                TclThreadCommand::Reload => {
+                    self.handle_reload();
+                }
                 TclThreadCommand::Shutdown => {
                     info!("TCL thread worker shutting down");
                     break;
                 }
             }
+        }
+    }
+
+    fn handle_reload(&self) {
+        info!("Reloading TCL modules");
+        match self.interp.reload_modules() {
+            Ok(()) => info!("TCL modules reloaded successfully"),
+            Err(e) => error!("Failed to reload TCL modules: {}", e),
         }
     }
 

@@ -3,6 +3,7 @@
 //! Supports running multiple frontends (IRC, CLI, TUI, Web) simultaneously
 
 mod config;
+mod file_watcher;
 mod hostmask;
 mod http_commands;
 mod http_tcl_commands;
@@ -218,6 +219,26 @@ async fn main() -> Result<()> {
         // 10000 slots prevents blocking while IRC rate limiting (100ms/msg) drains the queue
         let (irc_response_tx, irc_response_rx) = mpsc::channel(10000);
 
+        // Set up file watcher for hot-reloading
+        let file_change_rx = {
+            let tcl_dir = std::env::current_dir()
+                .unwrap_or_default()
+                .join("tcl");
+            let config_path_buf = std::path::PathBuf::from(&config_path);
+
+            let watcher = file_watcher::FileWatcher::new(tcl_dir, config_path_buf);
+            match watcher.start_watching() {
+                Ok(rx) => {
+                    info!("File watcher started for hot-reloading");
+                    Some(rx)
+                }
+                Err(e) => {
+                    warn!("Failed to start file watcher: {}. Hot-reloading disabled.", e);
+                    None
+                }
+            }
+        };
+
         // Spawn TCL plugin task
         let tcl_handle = {
             let security_config = config.security.clone();
@@ -238,7 +259,7 @@ async fn main() -> Result<()> {
 
                 let rt = tokio::runtime::Handle::current();
                 rt.block_on(async {
-                    if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx).await {
+                    if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx, file_change_rx).await {
                         error!("TCL plugin error: {}", e);
                     }
                 });

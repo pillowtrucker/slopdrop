@@ -1,4 +1,5 @@
 use crate::config::{SecurityConfig, TclConfig};
+use crate::file_watcher::{ChangeType, FileChangeEvent};
 use crate::hostmask;
 use crate::tcl_thread::TclThreadHandle;
 use crate::types::{ChannelMembers, Message, PluginCommand};
@@ -50,6 +51,7 @@ impl TclPlugin {
         &mut self,
         mut command_rx: mpsc::Receiver<PluginCommand>,
         response_tx: mpsc::Sender<PluginCommand>,
+        file_change_rx: Option<std::sync::mpsc::Receiver<FileChangeEvent>>,
     ) -> Result<()> {
         info!("TCL plugin started");
 
@@ -57,6 +59,23 @@ impl TclPlugin {
         let mut timer_interval = interval(Duration::from_secs(1));
 
         loop {
+            // Check for file changes (non-blocking)
+            if let Some(ref rx) = file_change_rx {
+                if let Ok(event) = rx.try_recv() {
+                    info!("File change detected: {:?} ({:?})", event.path, event.change_type);
+                    match event.change_type {
+                        ChangeType::TclModule => {
+                            info!("Reloading TCL modules due to file change");
+                            self.tcl_thread.reload();
+                        }
+                        ChangeType::Config => {
+                            info!("Config file changed - restart required to apply changes");
+                            // Note: Config changes require full restart, not just module reload
+                        }
+                    }
+                }
+            }
+
             tokio::select! {
                 // Handle incoming commands
                 command = command_rx.recv() => {

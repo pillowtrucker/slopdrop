@@ -61,14 +61,14 @@ impl SafeTclInterp {
 
         // Inject HTTP commands BEFORE making interpreter safe
         // (package require needs unrestricted access to TCL package system)
-        if let Err(e) = interpreter.eval(crate::http_tcl_commands::http_commands()) {
+        if let Err(e) = interpreter.eval(crate::http_tcl_commands::http_commands().as_str()) {
             debug!("HTTP commands not available (http package missing): {:?}", e);
             debug!("Bot will work but HTTP commands will not be available");
         }
 
         // Inject SHA1 command BEFORE making interpreter safe
         // (package require sha1 needs unrestricted access to TCL package system)
-        if let Err(e) = interpreter.eval(crate::smeggdrop_commands::sha1_command()) {
+        if let Err(e) = interpreter.eval(crate::smeggdrop_commands::sha1_command().as_str()) {
             debug!("SHA1 command not available (tcllib sha1 package missing): {:?}", e);
             debug!("Bot will work but SHA1 command will not be available");
         }
@@ -105,19 +105,19 @@ impl SafeTclInterp {
 
         // Inject other smeggdrop commands (cache, utils, encoding)
         // These don't require package loading so they can be loaded after making safe
-        interpreter.eval(crate::smeggdrop_commands::cache_commands())
+        interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject cache commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::utility_commands())
+        interpreter.eval(crate::smeggdrop_commands::utility_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject utility commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::encoding_commands())
+        interpreter.eval(crate::smeggdrop_commands::encoding_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject encoding commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::magick_commands())
+        interpreter.eval(crate::smeggdrop_commands::magick_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject magick commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::timer_commands())
+        interpreter.eval(crate::smeggdrop_commands::timer_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject timer commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::trigger_commands())
+        interpreter.eval(crate::smeggdrop_commands::trigger_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject trigger commands: {:?}", e))?;
-        interpreter.eval(crate::smeggdrop_commands::timtom_commands())
+        interpreter.eval(crate::smeggdrop_commands::timtom_commands().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject timtom commands: {:?}", e))?;
 
         // Stock commands are handled natively in Rust (see stock_commands.rs and tcl_thread.rs)
@@ -359,6 +359,47 @@ impl SafeTclInterp {
     #[allow(dead_code)]
     pub fn save_state(&self, _state_path: &Path) -> Result<()> {
         debug!("State saving handled by StatePersistence in tcl_thread.rs");
+        Ok(())
+    }
+
+    /// Reload all TCL modules from disk
+    ///
+    /// This reloads all the TCL module files (http, cache, utils, etc.) from the tcl/ directory.
+    /// This is useful for hot-reloading changes without restarting the bot.
+    ///
+    /// Note: This does NOT reload user-defined procs/vars from state - those are persistent.
+    /// This only reloads the built-in TCL modules.
+    pub fn reload_modules(&self) -> Result<()> {
+        debug!("Reloading TCL modules from disk");
+
+        // Reload HTTP commands (must be done before safety was applied, but interpreter is already safe)
+        // We can still eval new code in a safe interpreter
+        if let Err(e) = self.interpreter.eval(crate::http_tcl_commands::http_commands().as_str()) {
+            debug!("Failed to reload HTTP commands: {:?}", e);
+        }
+
+        // Reload SHA1 command
+        if let Err(e) = self.interpreter.eval(crate::smeggdrop_commands::sha1_command().as_str()) {
+            debug!("Failed to reload SHA1 command: {:?}", e);
+        }
+
+        // Reload other smeggdrop commands
+        self.interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload cache commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::utility_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload utility commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::encoding_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload encoding commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::magick_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload magick commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::timer_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload timer commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::trigger_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload trigger commands: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::timtom_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload timtom commands: {:?}", e))?;
+
+        debug!("TCL modules reloaded successfully");
         Ok(())
     }
 }

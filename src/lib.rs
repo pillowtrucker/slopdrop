@@ -1,6 +1,7 @@
 // Library interface for integration tests
 
 pub mod config;
+pub mod file_watcher;
 pub mod hostmask;
 pub mod http_commands;
 pub mod http_tcl_commands;
