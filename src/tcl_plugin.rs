@@ -351,11 +351,15 @@ impl TclPlugin {
             message.author.channel.clone(),
         ).await?;
 
+        debug!("TCL eval completed, output length: {} bytes", result.output.len());
+
         // Send PM notifications to admins if state was committed
         if let Some(ref commit_info) = result.commit_info {
+            debug!("Sending commit notifications");
             self.send_commit_notifications(commit_info, &message, response_tx).await?;
         }
 
+        debug!("Starting response send with timeout");
         // Send response with same timeout as TCL evaluation to prevent hanging on huge output
         let timeout = Duration::from_millis(self.security_config.eval_timeout_ms);
         match tokio::time::timeout(
@@ -382,18 +386,25 @@ impl TclPlugin {
         output: String,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        debug!("send_response called with {} bytes", output.len());
+
         // Truncate output to prevent memory exhaustion from huge strings
         // Max 1MB of output (prevents commands like 'crash' from hanging the bot)
         const MAX_OUTPUT_BYTES: usize = 1_000_000;
         let output = if output.len() > MAX_OUTPUT_BYTES {
+            debug!("Truncating output from {} to {} bytes", output.len(), MAX_OUTPUT_BYTES);
             let truncated = &output[..MAX_OUTPUT_BYTES];
             format!("{}\n... (output truncated at {} bytes)", truncated, MAX_OUTPUT_BYTES)
         } else {
             output
         };
 
+        debug!("About to split {} bytes into lines", output.len());
+
         // Split output into lines
         let all_lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+        debug!("Split into {} lines", all_lines.len());
+
         let max_lines = self.tcl_config.max_output_lines;
 
         let (output, cache_remaining) = if all_lines.len() > max_lines {
