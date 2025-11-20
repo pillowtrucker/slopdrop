@@ -462,20 +462,22 @@ impl TclThreadWorker {
 
         // Add to log array with size limit (default 1000 lines per channel)
         // Channel name is wrapped in braces {#bottest} which handles # correctly
+        // Use a TCL variable to avoid issues with # in array subscripts
+        // This ensures the key matches what $::channel will be during eval
         let tcl_code = format!(r#"
+            set _chan {{{}}}
             set entry [list {} {{{}}} {{{}}} {{{}}}]
-            if {{![info exists ::slopdrop_log_lines({{{}}})]}} {{
-                set ::slopdrop_log_lines({{{}}}) [list]
+            if {{![info exists ::slopdrop_log_lines($_chan)]}} {{
+                set ::slopdrop_log_lines($_chan) [list]
             }}
-            lappend ::slopdrop_log_lines({{{}}}) $entry
+            lappend ::slopdrop_log_lines($_chan) $entry
             # Keep only last 1000 entries
-            if {{[llength $::slopdrop_log_lines({{{}}})] > 1000}} {{
-                set ::slopdrop_log_lines({{{}}}) [lrange $::slopdrop_log_lines({{{}}}) end-999 end]
+            if {{[llength $::slopdrop_log_lines($_chan)] > 1000}} {{
+                set ::slopdrop_log_lines($_chan) [lrange $::slopdrop_log_lines($_chan) end-999 end]
             }}
         "#,
-            timestamp, escaped_nick, escaped_mask, escaped_text,
-            escaped_channel, escaped_channel, escaped_channel,
-            escaped_channel, escaped_channel, escaped_channel
+            escaped_channel,
+            timestamp, escaped_nick, escaped_mask, escaped_text
         );
 
         debug!("Logging message to channel '{}': TCL code:\n{}", channel, tcl_code);
