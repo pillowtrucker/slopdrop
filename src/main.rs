@@ -218,7 +218,9 @@ async fn main() -> Result<()> {
 
         // Create communication channels
         let (tcl_command_tx, tcl_command_rx) = mpsc::channel(100);
-        let (irc_response_tx, irc_response_rx) = mpsc::channel(100);
+        // Large buffer for responses to handle commands with huge output (e.g., crash)
+        // 10000 slots prevents blocking while IRC rate limiting (100ms/msg) drains the queue
+        let (irc_response_tx, irc_response_rx) = mpsc::channel(10000);
 
         // Spawn TCL plugin task
         let tcl_handle = {
