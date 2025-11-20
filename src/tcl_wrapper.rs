@@ -259,20 +259,18 @@ impl SafeTclInterp {
                     if var_file.exists() {
                         let var_content = std::fs::read_to_string(&var_file)?;
                         // var_content is either: "scalar {value}" or "array {key value key value}"
-                        // Values are wrapped in list format, so we use lindex to extract them
+                        // Values are TCL-quoted (with braces) directly from the historical format
                         if var_content.starts_with("scalar ") {
                             let value = var_content.strip_prefix("scalar ").unwrap_or("");
-                            // Value is already properly quoted as a single list element
-                            // Use lindex to extract the actual value, preserving list structure
-                            let set_cmd = format!("set {{{}}} [lindex {} 0]", var_name, value);
+                            // Value is TCL-quoted, use it directly
+                            let set_cmd = format!("set {{{}}} {}", var_name, value);
                             if let Err(e) = interp.eval(set_cmd.as_str()) {
                                 debug!("Warning: Failed to load var {}: {:?}", var_name, e);
                             }
                         } else if var_content.starts_with("array ") {
                             let array_data = var_content.strip_prefix("array ").unwrap_or("");
-                            // Array data is also wrapped in list format
-                            // Use lindex to extract, then array set
-                            let array_cmd = format!("array set {{{}}} [lindex {} 0]", var_name, array_data);
+                            // Array data is TCL-quoted, use it directly
+                            let array_cmd = format!("array set {{{}}} {}", var_name, array_data);
                             if let Err(e) = interp.eval(array_cmd.as_str()) {
                                 debug!("Warning: Failed to load array {}: {:?}", var_name, e);
                             }

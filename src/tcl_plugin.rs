@@ -694,6 +694,7 @@ mod tests {
             max_recursion_depth: 1000,
             privileged_users: vec![],
             blacklisted_users: vec![],
+            notify_self: false,
         };
 
         let tcl_config = TclConfig {
