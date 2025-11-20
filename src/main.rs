@@ -247,12 +247,14 @@ async fn main() -> Result<()> {
         let tcl_handle = {
             let security_config = config.security.clone();
             let tcl_config = config.tcl.clone();
+            let server_config = config.server.clone();
             let config_path_clone = std::path::PathBuf::from(&config_path);
             let channel_members_clone = channel_members.clone();
             tokio::task::spawn_blocking(move || {
                 let mut tcl_plugin = match tcl_plugin::TclPlugin::new(
                     security_config,
                     tcl_config,
+                    server_config,
                     config_path_clone,
                     channel_members_clone,
                 ) {

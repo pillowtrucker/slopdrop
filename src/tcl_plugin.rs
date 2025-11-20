@@ -1,4 +1,4 @@
-use crate::config::{SecurityConfig, TclConfig};
+use crate::config::{Config, SecurityConfig, TclConfig};
 use crate::file_watcher::{ChangeType, FileChangeEvent};
 use crate::hostmask;
 use crate::tcl_thread::TclThreadHandle;
@@ -22,6 +22,7 @@ pub struct TclPlugin {
     tcl_thread: TclThreadHandle,
     tcl_config: TclConfig,
     security_config: SecurityConfig,
+    server_config: crate::config::ServerConfig,
     /// Path to configuration file for hot-reloading
     config_path: std::path::PathBuf,
     /// Cache for paginated output: (channel, nick) -> remaining output
@@ -34,6 +35,7 @@ impl TclPlugin {
     pub fn new(
         security_config: SecurityConfig,
         tcl_config: TclConfig,
+        server_config: crate::config::ServerConfig,
         config_path: std::path::PathBuf,
         channel_members: ChannelMembers,
     ) -> Result<Self> {
@@ -44,6 +46,7 @@ impl TclPlugin {
             tcl_thread,
             tcl_config,
             security_config,
+            server_config,
             config_path,
             output_cache: HashMap::new(),
             admin_nicks: HashSet::new(),
@@ -183,25 +186,107 @@ impl TclPlugin {
     /// Reload configuration from disk
     fn reload_config(&mut self) -> Result<()> {
         // Load new config from file
-        let new_config = crate::config::Config::from_file(
+        let new_config = Config::from_file(
             self.config_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid config path"))?
         )?;
 
         info!("Configuration reloaded successfully");
-        info!("  Timeout: {}ms -> {}ms",
-            self.security_config.eval_timeout_ms,
-            new_config.security.eval_timeout_ms);
-        info!("  Max recursion: {} -> {}",
-            self.security_config.max_recursion_depth,
-            new_config.security.max_recursion_depth);
-        info!("  Privileged users: {} -> {}",
-            self.security_config.privileged_users.len(),
-            new_config.security.privileged_users.len());
-        info!("  Max output lines: {} -> {}",
-            self.tcl_config.max_output_lines,
-            new_config.tcl.max_output_lines);
+
+        // Server config changes (require IRC reconnection)
+        if self.server_config.hostname != new_config.server.hostname {
+            warn!("  ⚠ Server hostname: {} -> {} (requires restart/reconnect)",
+                self.server_config.hostname,
+                new_config.server.hostname);
+        }
+
+        if self.server_config.port != new_config.server.port {
+            warn!("  ⚠ Server port: {} -> {} (requires restart/reconnect)",
+                self.server_config.port,
+                new_config.server.port);
+        }
+
+        if self.server_config.use_tls != new_config.server.use_tls {
+            warn!("  ⚠ Use TLS: {} -> {} (requires restart/reconnect)",
+                self.server_config.use_tls,
+                new_config.server.use_tls);
+        }
+
+        if self.server_config.nickname != new_config.server.nickname {
+            warn!("  ⚠ Nickname: {} -> {} (requires restart/reconnect)",
+                self.server_config.nickname,
+                new_config.server.nickname);
+        }
+
+        if self.server_config.channels != new_config.server.channels {
+            warn!("  ⚠ Channels: {:?} -> {:?} (requires restart/reconnect)",
+                self.server_config.channels,
+                new_config.server.channels);
+        }
+
+        // Security config changes
+        if self.security_config.eval_timeout_ms != new_config.security.eval_timeout_ms {
+            info!("  ✓ Timeout: {}ms -> {}ms",
+                self.security_config.eval_timeout_ms,
+                new_config.security.eval_timeout_ms);
+        }
+
+        if self.security_config.privileged_users != new_config.security.privileged_users {
+            info!("  ✓ Privileged users: {} -> {} patterns",
+                self.security_config.privileged_users.len(),
+                new_config.security.privileged_users.len());
+        }
+
+        if self.security_config.blacklisted_users != new_config.security.blacklisted_users {
+            info!("  ✓ Blacklisted users: {} -> {} patterns",
+                self.security_config.blacklisted_users.len(),
+                new_config.security.blacklisted_users.len());
+        }
+
+        if self.security_config.notify_self != new_config.security.notify_self {
+            info!("  ✓ Notify self: {} -> {}",
+                self.security_config.notify_self,
+                new_config.security.notify_self);
+        }
+
+        if self.security_config.max_recursion_depth != new_config.security.max_recursion_depth {
+            warn!("  ⚠ Max recursion: {} -> {} (requires restart)",
+                self.security_config.max_recursion_depth,
+                new_config.security.max_recursion_depth);
+        }
+
+        if self.security_config.memory_limit_mb != new_config.security.memory_limit_mb {
+            warn!("  ⚠ Memory limit: {}MB -> {}MB (requires restart)",
+                self.security_config.memory_limit_mb,
+                new_config.security.memory_limit_mb);
+        }
+
+        // TCL config changes
+        if self.tcl_config.max_output_lines != new_config.tcl.max_output_lines {
+            info!("  ✓ Max output lines: {} -> {}",
+                self.tcl_config.max_output_lines,
+                new_config.tcl.max_output_lines);
+        }
+
+        if self.tcl_config.state_path != new_config.tcl.state_path {
+            warn!("  ⚠ State path: {:?} -> {:?} (requires restart)",
+                self.tcl_config.state_path,
+                new_config.tcl.state_path);
+        }
+
+        if self.tcl_config.state_repo != new_config.tcl.state_repo {
+            warn!("  ⚠ State repo: {:?} -> {:?} (requires restart)",
+                self.tcl_config.state_repo,
+                new_config.tcl.state_repo);
+        }
+
+        if self.tcl_config.ssh_key != new_config.tcl.ssh_key {
+            warn!("  ⚠ SSH key: {:?} -> {:?} (requires restart)",
+                self.tcl_config.ssh_key,
+                new_config.tcl.ssh_key);
+        }
 
         // Update our configs
+        self.server_config = new_config.server;
         self.security_config = new_config.security.clone();
         self.tcl_config = new_config.tcl.clone();
 
@@ -744,7 +829,7 @@ mod tests {
 
     // Helper to create a minimal TclPlugin for testing parse functions
     fn create_test_plugin() -> TclPlugin {
-        use crate::config::{SecurityConfig, TclConfig};
+        use crate::config::{SecurityConfig, ServerConfig, TclConfig};
         use std::collections::HashMap;
         use std::sync::{Arc, RwLock};
         use tempfile::TempDir;
@@ -769,9 +854,17 @@ mod tests {
             max_output_lines: 10,
         };
 
+        let server_config = ServerConfig {
+            hostname: "irc.example.com".to_string(),
+            port: 6667,
+            use_tls: false,
+            nickname: "testbot".to_string(),
+            channels: vec!["#test".to_string()],
+        };
+
         let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
 
-        TclPlugin::new(security_config, tcl_config, config_path, channel_members).unwrap()
+        TclPlugin::new(security_config, tcl_config, server_config, config_path, channel_members).unwrap()
     }
 
     #[test]
