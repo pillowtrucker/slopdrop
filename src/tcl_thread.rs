@@ -461,15 +461,16 @@ impl TclThreadWorker {
             .replace('}', "\\}");
 
         // Add to log array with size limit (default 1000 lines per channel)
+        // Wrap channel name in braces to handle special chars like # in #bottest
         let tcl_code = format!(r#"
             set entry [list {} {{{}}} {{{}}} {{{}}}]
-            if {{![info exists ::slopdrop_log_lines({})}} {{
-                set ::slopdrop_log_lines({}) [list]
+            if {{![info exists ::slopdrop_log_lines({{{}}})}} {{
+                set ::slopdrop_log_lines({{{}}}) [list]
             }}
-            lappend ::slopdrop_log_lines({}) $entry
+            lappend ::slopdrop_log_lines({{{}}}) $entry
             # Keep only last 1000 entries
-            if {{[llength $::slopdrop_log_lines({})] > 1000}} {{
-                set ::slopdrop_log_lines({}) [lrange $::slopdrop_log_lines({}) end-999 end]
+            if {{[llength $::slopdrop_log_lines({{{}}})] > 1000}} {{
+                set ::slopdrop_log_lines({{{}}}) [lrange $::slopdrop_log_lines({{{}}}) end-999 end]
             }}
         "#,
             timestamp, escaped_nick, escaped_mask, escaped_text,
