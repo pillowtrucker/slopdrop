@@ -356,9 +356,23 @@ impl TclPlugin {
             self.send_commit_notifications(commit_info, &message, response_tx).await?;
         }
 
-        self.send_response(&message, result.output, response_tx).await?;
-
-        Ok(())
+        // Send response with timeout to prevent hanging on huge output
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            self.send_response(&message, result.output, response_tx)
+        ).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                warn!("Response sending timed out after 30s, likely huge output");
+                // Try to send error message
+                let _ = response_tx.send(PluginCommand::SendToIrc {
+                    channel: message.author.channel.clone(),
+                    text: "error: output too large, response timed out".to_string(),
+                }).await;
+                Ok(())
+            }
+        }
     }
 
     async fn send_response(
@@ -367,6 +381,16 @@ impl TclPlugin {
         output: String,
         response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        // Truncate output to prevent memory exhaustion from huge strings
+        // Max 1MB of output (prevents commands like 'crash' from hanging the bot)
+        const MAX_OUTPUT_BYTES: usize = 1_000_000;
+        let output = if output.len() > MAX_OUTPUT_BYTES {
+            let truncated = &output[..MAX_OUTPUT_BYTES];
+            format!("{}\n... (output truncated at {} bytes)", truncated, MAX_OUTPUT_BYTES)
+        } else {
+            output
+        };
+
         // Split output into lines
         let all_lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
         let max_lines = self.tcl_config.max_output_lines;
