@@ -1,8 +1,10 @@
 # Encoding command - wrapper around TCL's ::encoding
 # Blocks system encoding modification for security
 
-# First, rename the original encoding command to preserve it
-rename encoding _tcl_encoding_original
+# First, rename the original encoding command to preserve it (only if not already done)
+if {[llength [info commands _tcl_encoding_original]] == 0} {
+    rename encoding _tcl_encoding_original
+}
 
 proc encoding args {
     # Block system encoding modification

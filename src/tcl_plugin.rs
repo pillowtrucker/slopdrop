@@ -59,20 +59,27 @@ impl TclPlugin {
         let mut timer_interval = interval(Duration::from_secs(1));
 
         loop {
-            // Check for file changes (non-blocking)
+            // Check for file changes (non-blocking) and batch them
             if let Some(ref rx) = file_change_rx {
-                if let Ok(event) = rx.try_recv() {
-                    info!("File change detected: {:?} ({:?})", event.path, event.change_type);
+                let mut has_tcl_changes = false;
+                let mut has_config_changes = false;
+
+                // Drain all pending events to batch reloads
+                while let Ok(event) = rx.try_recv() {
+                    debug!("File change detected: {:?} ({:?})", event.path, event.change_type);
                     match event.change_type {
-                        ChangeType::TclModule => {
-                            info!("Reloading TCL modules due to file change");
-                            self.tcl_thread.reload();
-                        }
-                        ChangeType::Config => {
-                            info!("Config file changed - restart required to apply changes");
-                            // Note: Config changes require full restart, not just module reload
-                        }
+                        ChangeType::TclModule => has_tcl_changes = true,
+                        ChangeType::Config => has_config_changes = true,
                     }
+                }
+
+                // Process batched changes - only reload once even if multiple files changed
+                if has_tcl_changes {
+                    info!("Reloading TCL modules due to file changes");
+                    self.tcl_thread.reload();
+                }
+                if has_config_changes {
+                    info!("Config file changed - restart required to apply changes");
                 }
             }
 

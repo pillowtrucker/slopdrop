@@ -46,16 +46,17 @@ impl FileWatcher {
     /// Start watching for file changes
     ///
     /// This returns a channel receiver that will receive FileChangeEvent when files change.
-    /// The watcher uses a 1-second debounce to avoid triggering on every write during editing.
+    /// The watcher uses a 2-second debounce to avoid triggering on every write during editing
+    /// and to filter out spurious initial events on startup.
     pub fn start_watching(&self) -> Result<Receiver<FileChangeEvent>> {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let tcl_dir = self.tcl_dir.clone();
         let config_path = self.config_path.clone();
 
-        // Create debounced file watcher with 1-second debounce
+        // Create debounced file watcher with 2-second debounce
         let mut debouncer = new_debouncer(
-            Duration::from_secs(1),
+            Duration::from_secs(2),
             move |res: Result<Vec<DebouncedEvent>, _>| {
                 match res {
                     Ok(events) => {
