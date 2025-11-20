@@ -478,8 +478,12 @@ impl TclThreadWorker {
             escaped_channel, escaped_channel, escaped_channel
         );
 
+        debug!("Logging message to channel '{}': TCL code:\n{}", channel, tcl_code);
+
         if let Err(e) = self.interp.interpreter().eval(tcl_code.as_str()) {
-            debug!("Failed to log message: {:?}", e);
+            warn!("Failed to log message: {:?}", e);
+        } else {
+            debug!("Successfully logged message");
         }
     }
 
