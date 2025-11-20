@@ -57,6 +57,11 @@ fn compute_file_hash(path: &Path) -> Option<String> {
 impl FileWatcher {
     /// Create a new file watcher
     pub fn new(tcl_dir: PathBuf, config_path: PathBuf) -> Self {
+        // Canonicalize paths to handle relative vs absolute path comparisons
+        // File watcher events come with absolute paths, so we need to normalize
+        let tcl_dir = tcl_dir.canonicalize().unwrap_or(tcl_dir);
+        let config_path = config_path.canonicalize().unwrap_or(config_path);
+
         Self {
             tcl_dir,
             config_path,
