@@ -458,11 +458,10 @@ impl TclThreadWorker {
         let escaped_channel = channel
             .replace('\\', "\\\\")
             .replace('{', "\\{")
-            .replace('}', "\\}")
-            .replace('#', "\\#");
+            .replace('}', "\\}");
 
         // Add to log array with size limit (default 1000 lines per channel)
-        // Wrap channel name in braces to handle special chars like # in #bottest
+        // Channel name is wrapped in braces {#bottest} which handles # correctly
         let tcl_code = format!(r#"
             set entry [list {} {{{}}} {{{}}} {{{}}}]
             if {{![info exists ::slopdrop_log_lines({{{}}})]}} {{
