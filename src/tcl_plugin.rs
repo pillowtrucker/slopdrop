@@ -22,6 +22,8 @@ pub struct TclPlugin {
     tcl_thread: TclThreadHandle,
     tcl_config: TclConfig,
     security_config: SecurityConfig,
+    /// Path to configuration file for hot-reloading
+    config_path: std::path::PathBuf,
     /// Cache for paginated output: (channel, nick) -> remaining output
     output_cache: HashMap<(String, String), OutputCache>,
     /// Nicks of currently online admins (updated on join/part/quit)
@@ -32,6 +34,7 @@ impl TclPlugin {
     pub fn new(
         security_config: SecurityConfig,
         tcl_config: TclConfig,
+        config_path: std::path::PathBuf,
         channel_members: ChannelMembers,
     ) -> Result<Self> {
         let tcl_thread =
@@ -41,6 +44,7 @@ impl TclPlugin {
             tcl_thread,
             tcl_config,
             security_config,
+            config_path,
             output_cache: HashMap::new(),
             admin_nicks: HashSet::new(),
         })
@@ -79,7 +83,10 @@ impl TclPlugin {
                     self.tcl_thread.reload();
                 }
                 if has_config_changes {
-                    info!("Config file changed - restart required to apply changes");
+                    info!("Reloading configuration from disk");
+                    if let Err(e) = self.reload_config() {
+                        error!("Failed to reload configuration: {}", e);
+                    }
                 }
             }
 
@@ -169,6 +176,37 @@ impl TclPlugin {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Reload configuration from disk
+    fn reload_config(&mut self) -> Result<()> {
+        // Load new config from file
+        let new_config = crate::config::Config::from_file(
+            self.config_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid config path"))?
+        )?;
+
+        info!("Configuration reloaded successfully");
+        info!("  Timeout: {}ms -> {}ms",
+            self.security_config.eval_timeout_ms,
+            new_config.security.eval_timeout_ms);
+        info!("  Max recursion: {} -> {}",
+            self.security_config.max_recursion_depth,
+            new_config.security.max_recursion_depth);
+        info!("  Privileged users: {} -> {}",
+            self.security_config.privileged_users.len(),
+            new_config.security.privileged_users.len());
+        info!("  Max output lines: {} -> {}",
+            self.tcl_config.max_output_lines,
+            new_config.tcl.max_output_lines);
+
+        // Update our configs
+        self.security_config = new_config.security.clone();
+        self.tcl_config = new_config.tcl.clone();
+
+        // Update the TCL thread's configuration
+        self.tcl_thread.update_config(new_config.tcl, new_config.security)?;
 
         Ok(())
     }
@@ -713,6 +751,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let state_path = temp_dir.path().join("state");
+        let config_path = temp_dir.path().join("config.toml");
 
         let security_config = SecurityConfig {
             eval_timeout_ms: 5000,
@@ -732,7 +771,7 @@ mod tests {
 
         let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
 
-        TclPlugin::new(security_config, tcl_config, channel_members).unwrap()
+        TclPlugin::new(security_config, tcl_config, config_path, channel_members).unwrap()
     }
 
     #[test]

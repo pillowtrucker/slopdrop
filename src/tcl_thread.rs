@@ -70,6 +70,10 @@ pub enum TclThreadCommand {
         text: String,
     },
     Reload,
+    UpdateConfig {
+        tcl_config: TclConfig,
+        security_config: crate::config::SecurityConfig,
+    },
     Shutdown,
 }
 
@@ -292,6 +296,30 @@ impl TclThreadHandle {
         let _ = self.command_tx.send(TclThreadCommand::Reload);
     }
 
+    /// Update runtime configuration
+    pub fn update_config(
+        &mut self,
+        tcl_config: TclConfig,
+        security_config: crate::config::SecurityConfig,
+    ) -> Result<()> {
+        info!("Sending config update command to TCL thread");
+
+        // Update handle's stored configs
+        self.timeout = Duration::from_millis(security_config.eval_timeout_ms);
+        self.tcl_config = tcl_config.clone();
+        self.security_config = security_config.clone();
+
+        // Send config update to thread
+        self.command_tx
+            .send(TclThreadCommand::UpdateConfig {
+                tcl_config,
+                security_config,
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to send config update: {}", e))?;
+
+        Ok(())
+    }
+
     /// Shutdown the TCL thread
     pub fn shutdown(&mut self) {
         info!("Shutting down TCL thread");
@@ -313,7 +341,8 @@ impl Drop for TclThreadHandle {
 struct TclThreadWorker {
     interp: SafeTclInterp,
     tcl_config: TclConfig,
-    privileged_users: Vec<String>,
+    security_config: crate::config::SecurityConfig,
+    timeout: Duration,
     channel_members: ChannelMembers,
 }
 
@@ -334,10 +363,13 @@ impl TclThreadWorker {
         // Register chanlist command
         Self::register_chanlist_command(interp.interpreter(), channel_members.clone())?;
 
+        let timeout = Duration::from_millis(security_config.eval_timeout_ms);
+
         Ok(Self {
             interp,
             tcl_config,
-            privileged_users: security_config.privileged_users,
+            security_config,
+            timeout,
             channel_members,
         })
     }
@@ -415,7 +447,7 @@ impl TclThreadWorker {
         }
     }
 
-    fn run(self, command_rx: mpsc::Receiver<TclThreadCommand>) {
+    fn run(mut self, command_rx: mpsc::Receiver<TclThreadCommand>) {
         info!("TCL thread worker started");
 
         for command in command_rx {
@@ -428,6 +460,9 @@ impl TclThreadWorker {
                 }
                 TclThreadCommand::Reload => {
                     self.handle_reload();
+                }
+                TclThreadCommand::UpdateConfig { tcl_config, security_config } => {
+                    self.handle_config_update(tcl_config, security_config);
                 }
                 TclThreadCommand::Shutdown => {
                     info!("TCL thread worker shutting down");
@@ -443,6 +478,27 @@ impl TclThreadWorker {
             Ok(()) => info!("TCL modules reloaded successfully"),
             Err(e) => error!("Failed to reload TCL modules: {}", e),
         }
+    }
+
+    fn handle_config_update(
+        &mut self,
+        _tcl_config: TclConfig,
+        security_config: crate::config::SecurityConfig,
+    ) {
+        info!("Updating runtime configuration");
+
+        // Update timeout for evaluations
+        self.timeout = Duration::from_millis(security_config.eval_timeout_ms);
+        info!("  Eval timeout updated to {}ms", security_config.eval_timeout_ms);
+
+        // Update security config (used for blacklist checks, etc.)
+        self.security_config = security_config.clone();
+
+        // Note: max_recursion_depth requires recreating the interpreter
+        // For now, we only update runtime-changeable settings
+        // The interpreter's recursion limit cannot be changed after creation
+
+        info!("Configuration updated successfully (some settings require restart)");
     }
 
     fn handle_log_message(&self, channel: String, nick: String, mask: String, text: String) {
@@ -517,7 +573,7 @@ impl TclThreadWorker {
             let hostmask = format!("{}!{}", request.nick, request.host);
 
             // Check if hostmask matches any privileged pattern
-            let is_privileged = self.privileged_users.iter().any(|pattern| {
+            let is_privileged = self.security_config.privileged_users.iter().any(|pattern| {
                 crate::hostmask::matches_hostmask(&hostmask, pattern)
             });
 
