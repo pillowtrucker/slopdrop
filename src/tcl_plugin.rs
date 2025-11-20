@@ -356,15 +356,16 @@ impl TclPlugin {
             self.send_commit_notifications(commit_info, &message, response_tx).await?;
         }
 
-        // Send response with timeout to prevent hanging on huge output
+        // Send response with same timeout as TCL evaluation to prevent hanging on huge output
+        let timeout = Duration::from_millis(self.security_config.eval_timeout_ms);
         match tokio::time::timeout(
-            Duration::from_secs(30),
+            timeout,
             self.send_response(&message, result.output, response_tx)
         ).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => {
-                warn!("Response sending timed out after 30s, likely huge output");
+                warn!("Response sending timed out after {}ms, likely huge output", self.security_config.eval_timeout_ms);
                 // Try to send error message
                 let _ = response_tx.send(PluginCommand::SendToIrc {
                     channel: message.author.channel.clone(),
