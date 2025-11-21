@@ -106,9 +106,17 @@ rename proc ::slopdrop::_original_proc
     if {[lsearch -exact $slopdrop_traced_vars $varname] == -1} {
         # Add write trace
         puts stderr "ADD_TRACE: Adding trace to variable '$varname' (::$varname)"
-        trace add variable ::$varname write ::slopdrop::var_write_trace
-        lappend slopdrop_traced_vars $varname
-        puts stderr "ADD_TRACE: Successfully added trace, traced_vars count=[llength $slopdrop_traced_vars]"
+        if {[catch {trace add variable ::$varname write ::slopdrop::var_write_trace} err]} {
+            puts stderr "ADD_TRACE: ERROR adding trace: $err"
+        } else {
+            lappend slopdrop_traced_vars $varname
+            puts stderr "ADD_TRACE: Successfully added trace, traced_vars count=[llength $slopdrop_traced_vars]"
+            # Verify the trace was added
+            set traces [trace info variable ::$varname]
+            puts stderr "ADD_TRACE: Trace info for ::$varname: $traces"
+        }
+    } else {
+        puts stderr "ADD_TRACE: Variable '$varname' already traced (in traced list)"
     }
 }
 
