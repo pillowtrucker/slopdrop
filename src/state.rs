@@ -153,6 +153,7 @@ impl InterpreterState {
             "slopdrop_log_lines",       // Message log array
             "nick_channel",             // HTTP rate limiting context
             "slopdrop_modified_procs",  // Proc tracking list (proc_tracking.tcl)
+            "v", "p", "validated",      // Temp variables created by state capture itself
         ]
             .iter()
             .map(|s| s.to_string())
