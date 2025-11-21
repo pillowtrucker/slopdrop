@@ -119,7 +119,8 @@ impl TestBot {
                 }
             };
 
-            let rt = tokio::runtime::Handle::current();
+            // Create a dedicated runtime for the TCL plugin
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx, None).await {
                     eprintln!("TCL plugin error: {}", e);
@@ -191,34 +192,26 @@ async fn create_test_client_with_channel(nick: &str, channel: &str) -> Result<(C
 }
 
 /// Helper to wait for a specific response from the bot
+/// Collects up to 3 responses and returns the first non-TIMTOM message
+/// (TIMTOM greets 70% of the time, so we need to handle both cases)
 async fn wait_for_response_from(
     stream: &mut irc::client::ClientStream,
     timeout_secs: u64,
     channel: &str,
     bot_nick: &str,
 ) -> Option<String> {
-    let timeout = sleep(Duration::from_secs(timeout_secs));
-    tokio::pin!(timeout);
+    // Collect up to 3 responses in case TIMTOM greets
+    let responses = wait_for_responses_from(stream, 3, timeout_secs, channel, bot_nick).await;
 
-    loop {
-        tokio::select! {
-            Some(Ok(message)) = stream.next() => {
-                if let IrcCommand::PRIVMSG(target, msg) = message.command {
-                    if target == channel {
-                        // Check if it's from the bot
-                        if let Some(irc::proto::Prefix::Nickname(ref nick, _, _)) = message.prefix {
-                            if nick == bot_nick {
-                                return Some(msg);
-                            }
-                        }
-                    }
-                }
-            }
-            _ = &mut timeout => {
-                return None;
-            }
+    // Return the first non-TIMTOM response
+    for response in &responses {
+        if !response.contains("Welcome to") && !response.contains("TIMTOM is here to serve you") {
+            return Some(response.clone());
         }
     }
+
+    // If all were TIMTOM greetings, return the last one
+    responses.last().cloned()
 }
 
 /// Helper to wait for multiple responses
