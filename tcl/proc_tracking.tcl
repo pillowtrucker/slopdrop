@@ -87,9 +87,16 @@ rename proc ::slopdrop::_original_proc
 # Trace callback for variable writes
 ::slopdrop::_original_proc ::slopdrop::var_write_trace {varname index op} {
     global slopdrop_modified_vars
+
+    # Debug: log when trace fires
+    puts stderr "TRACE FIRED: var=$varname index=$index op=$op"
+
     # Add to modified list if not already there
     if {[lsearch -exact $slopdrop_modified_vars $varname] == -1} {
         lappend slopdrop_modified_vars $varname
+        puts stderr "TRACE: Added $varname to modified list, count=[llength $slopdrop_modified_vars]"
+    } else {
+        puts stderr "TRACE: $varname already in modified list"
     }
 }
 
@@ -129,10 +136,16 @@ rename proc ::slopdrop::_original_proc
 ::slopdrop::_original_proc ::slopdrop::get_modified_vars {} {
     global slopdrop_modified_vars
 
+    # Debug logging
+    puts stderr "GET_MODIFIED_VARS called, list has [llength $slopdrop_modified_vars] items: $slopdrop_modified_vars"
+
     # Don't filter - just return the list as-is
     # The trace only fires for valid variables, so we can trust the list
     set result $slopdrop_modified_vars
     set slopdrop_modified_vars [list]
+
+    puts stderr "GET_MODIFIED_VARS returning [llength $result] items, cleared list"
+
     return $result
 }
 
