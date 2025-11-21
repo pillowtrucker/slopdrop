@@ -90,15 +90,9 @@ rename trace ::slopdrop::_original_trace
 ::slopdrop::_original_proc ::slopdrop::var_write_trace {varname index op} {
     global slopdrop_modified_vars
 
-    # Debug: log when trace fires
-    puts stderr "TRACE FIRED: var=$varname index=$index op=$op"
-
     # Add to modified list if not already there
     if {[lsearch -exact $slopdrop_modified_vars $varname] == -1} {
         lappend slopdrop_modified_vars $varname
-        puts stderr "TRACE: Added $varname to modified list, count=[llength $slopdrop_modified_vars]"
-    } else {
-        puts stderr "TRACE: $varname already in modified list"
     }
 }
 
@@ -106,19 +100,10 @@ rename trace ::slopdrop::_original_trace
 ::slopdrop::_original_proc ::slopdrop::add_var_trace {varname} {
     global slopdrop_traced_vars
     if {[lsearch -exact $slopdrop_traced_vars $varname] == -1} {
-        # Add write trace
-        puts stderr "ADD_TRACE: Adding trace to variable '$varname' (::$varname)"
-        if {[catch {::slopdrop::_original_trace add variable ::$varname write ::slopdrop::var_write_trace} err]} {
-            puts stderr "ADD_TRACE: ERROR adding trace: $err"
-        } else {
+        # Add write trace (silently ignore errors)
+        if {![catch {::slopdrop::_original_trace add variable ::$varname write ::slopdrop::var_write_trace}]} {
             lappend slopdrop_traced_vars $varname
-            puts stderr "ADD_TRACE: Successfully added trace, traced_vars count=[llength $slopdrop_traced_vars]"
-            # Verify the trace was added
-            set traces [::slopdrop::_original_trace info variable ::$varname]
-            puts stderr "ADD_TRACE: Trace info for ::$varname: $traces"
         }
-    } else {
-        puts stderr "ADD_TRACE: Variable '$varname' already traced (in traced list)"
     }
 }
 
@@ -135,34 +120,22 @@ rename trace ::slopdrop::_original_trace
 
 # Periodically update traces for new vars (called after each eval)
 ::slopdrop::_original_proc ::slopdrop::update_var_traces {} {
-    set count 0
-    set skipped 0
     foreach varname [info globals] {
         # Skip internal tracking vars
         if {[string match "slopdrop_*" $varname]} {
-            incr skipped
             continue
         }
         ::slopdrop::add_var_trace $varname
-        incr count
     }
-    puts stderr "UPDATE_VAR_TRACES: Processed $count vars, skipped $skipped"
 }
 
 # Get and clear the modified vars list
 ::slopdrop::_original_proc ::slopdrop::get_modified_vars {} {
     global slopdrop_modified_vars
 
-    # Debug logging
-    puts stderr "GET_MODIFIED_VARS called, list has [llength $slopdrop_modified_vars] items: $slopdrop_modified_vars"
-
-    # Don't filter - just return the list as-is
-    # The trace only fires for valid variables, so we can trust the list
+    # Return the list and clear it
     set result $slopdrop_modified_vars
     set slopdrop_modified_vars [list]
-
-    puts stderr "GET_MODIFIED_VARS returning [llength $result] items, cleared list"
-
     return $result
 }
 
