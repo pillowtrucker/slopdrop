@@ -147,6 +147,13 @@ impl SafeTclInterp {
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);
             Self::load_state(&interpreter, state_path)?;
+
+            // Clear the modified procs/vars list after loading state
+            // State loading triggers the proc wrapper, but these are initialization procs
+            // not actual modifications, so we clear the tracking lists
+            debug!("Clearing modified tracking after state load");
+            let _ = interpreter.eval("set ::slopdrop_modified_procs [list]");
+            let _ = interpreter.eval("set ::slopdrop_modified_vars [list]");
         }
 
         Ok(Self {
