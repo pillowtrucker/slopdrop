@@ -624,10 +624,6 @@ impl TclThreadWorker {
             return;
         }
 
-        // Update var traces BEFORE eval so we can track modifications
-        // This ensures traces are installed on all existing vars before they get modified
-        let _ = self.interp.interpreter().eval("::slopdrop::update_var_traces");
-
         // Capture state before evaluation
         let state_before = InterpreterState::capture(self.interp.interpreter());
 
@@ -655,6 +651,11 @@ impl TclThreadWorker {
                 commit_info: None,
             },
         };
+
+        // Update var traces AFTER eval to catch any new variables that were created
+        // This is more efficient than checking all 1000+ vars before every eval
+        // New vars will get traces for the NEXT eval, existing vars already have traces
+        let _ = self.interp.interpreter().eval("::slopdrop::update_var_traces");
 
         // Capture state after and save if changed
         let mut output = output;
