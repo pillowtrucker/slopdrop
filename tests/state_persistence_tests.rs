@@ -490,3 +490,203 @@ fn test_empty_changes_no_commit() {
     // Note: This will still try to commit in current implementation
     // But we're testing that the StateChanges correctly reports no changes
 }
+// =============================================================================
+// Proc Modification Tracking Tests
+// =============================================================================
+
+/// Helper to load proc tracking wrapper
+fn load_proc_tracking(interp: &Interpreter) {
+    let proc_tracking_code = include_str!("../tcl/proc_tracking.tcl");
+    interp.eval(proc_tracking_code).unwrap();
+}
+
+#[test]
+fn test_proc_tracking_wrapper_loads() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Verify the wrapper is loaded
+    let result = interp.eval("info commands ::slopdrop::get_modified_procs").unwrap();
+    assert_eq!(result.get_string(), "::slopdrop::get_modified_procs");
+}
+
+#[test]
+fn test_proc_tracking_detects_new_proc() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Define a new proc
+    interp.eval("proc test_proc {} { return 42 }").unwrap();
+    
+    // Check it was tracked
+    let modified = InterpreterState::get_modified_procs(&interp).unwrap();
+    assert!(modified.contains("test_proc"));
+}
+
+#[test]
+fn test_proc_tracking_detects_modified_proc() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Define a proc
+    interp.eval("proc test_proc {} { return 42 }").unwrap();
+    
+    // Clear tracking
+    InterpreterState::get_modified_procs(&interp).unwrap();
+    
+    // Redefine the proc
+    interp.eval("proc test_proc {} { return 99 }").unwrap();
+    
+    // Check it was tracked again
+    let modified = InterpreterState::get_modified_procs(&interp).unwrap();
+    assert!(modified.contains("test_proc"));
+}
+
+#[test]
+fn test_proc_tracking_clears_after_get() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Define a proc
+    interp.eval("proc test_proc {} { return 42 }").unwrap();
+    
+    // Get modified procs (should clear the list)
+    let modified = InterpreterState::get_modified_procs(&interp).unwrap();
+    assert!(modified.contains("test_proc"));
+    
+    // Get again (should be empty)
+    let modified2 = InterpreterState::get_modified_procs(&interp).unwrap();
+    assert!(modified2.is_empty());
+}
+
+#[test]
+fn test_proc_modification_detected_in_diff() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+    
+    // Define a new proc
+    interp.eval("proc test_proc {} { return 42 }").unwrap();
+    
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+    
+    // Get modified procs
+    let modified_procs = InterpreterState::get_modified_procs(&interp).unwrap();
+    
+    // Diff should detect new proc
+    let changes = state_before.diff(&state_after, &modified_procs);
+    assert!(changes.new_procs.contains(&"test_proc".to_string()));
+}
+
+#[test]
+fn test_proc_modification_saved_to_disk() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    persistence.ensure_initialized().unwrap();
+    
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+    
+    // Define a new proc
+    interp.eval("proc test_proc {x} { return [expr {$x * 2}] }").unwrap();
+    
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+    
+    // Get modified procs
+    let modified_procs = InterpreterState::get_modified_procs(&interp).unwrap();
+    
+    // Get changes
+    let changes = state_before.diff(&state_after, &modified_procs);
+    assert!(changes.has_changes());
+    
+    // Save changes
+    let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
+    persistence.save_changes(&interp, &changes, &user_info, "proc test_proc {x} { return [expr {$x * 2}] }").unwrap();
+    
+    // Verify proc was saved
+    let index_path = state_path.join("procs/_index");
+    assert!(index_path.exists());
+    let index_content = fs::read_to_string(&index_path).unwrap();
+    assert!(index_content.contains("test_proc"));
+}
+
+#[test]
+fn test_unchanged_proc_not_saved() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    persistence.ensure_initialized().unwrap();
+    
+    // Define a proc
+    interp.eval("proc test_proc {} { return 42 }").unwrap();
+    
+    // Capture states
+    let state1 = InterpreterState::capture(&interp).unwrap();
+    let modified1 = InterpreterState::get_modified_procs(&interp).unwrap();
+    let changes1 = InterpreterState::capture(&interp).unwrap().diff(&state1, &modified1);
+    
+    // Save first time
+    let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
+    persistence.save_changes(&interp, &changes1, &user_info, "proc test_proc {} { return 42 }").unwrap();
+    
+    // Capture before/after with no changes
+    let state2 = InterpreterState::capture(&interp).unwrap();
+    let state3 = InterpreterState::capture(&interp).unwrap();
+    let modified2 = InterpreterState::get_modified_procs(&interp).unwrap();
+    
+    // Should have no changes
+    let changes2 = state2.diff(&state3, &modified2);
+    assert!(!changes2.has_changes());
+}
+
+#[test]
+fn test_internal_var_not_tracked() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+    
+    // Set internal tracking var directly
+    interp.eval("set slopdrop_modified_procs {foo bar}").unwrap();
+    
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+    
+    // Diff should not detect this as a change
+    let modified_procs = HashSet::new();
+    let changes = state_before.diff(&state_after, &modified_procs);
+    
+    // slopdrop_modified_procs should not be in new_vars
+    assert!(!changes.new_vars.contains(&"slopdrop_modified_procs".to_string()));
+}
+
+#[test]
+fn test_multiple_procs_modification_tracked() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Define multiple procs
+    interp.eval("proc proc1 {} { return 1 }").unwrap();
+    interp.eval("proc proc2 {} { return 2 }").unwrap();
+    interp.eval("proc proc3 {} { return 3 }").unwrap();
+    
+    // Get modified procs
+    let modified = InterpreterState::get_modified_procs(&interp).unwrap();
+    
+    // All three should be tracked
+    assert!(modified.contains("proc1"));
+    assert!(modified.contains("proc2"));
+    assert!(modified.contains("proc3"));
+    assert_eq!(modified.len(), 3);
+}

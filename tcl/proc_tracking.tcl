@@ -10,7 +10,8 @@ if {![info exists ::slopdrop_modified_procs]} {
 rename proc ::slopdrop::_original_proc
 
 # Create wrapper that tracks proc definitions
-proc proc {name args body} {
+# Must use ::slopdrop::_original_proc since we just renamed proc
+::slopdrop::_original_proc proc {name args body} {
     # Call original proc command
     ::slopdrop::_original_proc $name $args $body
 
@@ -23,9 +24,17 @@ proc proc {name args body} {
 }
 
 # Helper proc to get and clear the modified procs list
-proc ::slopdrop::get_modified_procs {} {
+::slopdrop::_original_proc ::slopdrop::get_modified_procs {} {
     global slopdrop_modified_procs
     set result $slopdrop_modified_procs
     set slopdrop_modified_procs [list]
     return $result
+}
+
+# Helper proc to mark all existing procs as modified
+# Useful for migration/recovery after bot restart
+::slopdrop::_original_proc ::slopdrop::mark_all_procs_modified {} {
+    global slopdrop_modified_procs
+    set slopdrop_modified_procs [info procs]
+    return [llength $slopdrop_modified_procs]
 }
