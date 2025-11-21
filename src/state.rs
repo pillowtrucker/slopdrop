@@ -627,6 +627,7 @@ impl StatePersistence {
 
     fn save_proc(&self, interp: &Interpreter, proc_name: &str) -> Result<()> {
         // Get proc args and body
+        // Note: Invalid proc names are filtered out in TCL via mark_all_procs_modified
         let args_cmd = format!("info args {{{}}}", proc_name);
         let body_cmd = format!("info body {{{}}}", proc_name);
 

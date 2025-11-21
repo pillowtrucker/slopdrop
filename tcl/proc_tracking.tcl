@@ -50,7 +50,19 @@ rename proc ::slopdrop::_original_proc
 # Useful for migration/recovery after bot restart
 ::slopdrop::_original_proc ::slopdrop::mark_all_procs_modified {} {
     global slopdrop_modified_procs
-    set slopdrop_modified_procs [info procs]
+    set slopdrop_modified_procs [list]
+
+    # Get all procs and validate each one
+    foreach procname [info procs] {
+        # Only filter: verify it's actually a valid procedure by testing info args
+        # If info args fails, it's not a real procedure (could be trigger data)
+        if {[catch {info args $procname}]} {
+            continue
+        }
+
+        lappend slopdrop_modified_procs $procname
+    }
+
     return [llength $slopdrop_modified_procs]
 }
 
