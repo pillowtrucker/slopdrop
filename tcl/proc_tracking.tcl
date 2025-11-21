@@ -120,12 +120,24 @@ rename trace ::slopdrop::_original_trace
 
 # Periodically update traces for new vars (called after each eval)
 ::slopdrop::_original_proc ::slopdrop::update_var_traces {} {
+    global slopdrop_traced_vars
+
+    # Only process vars that aren't already traced
     foreach varname [info globals] {
         # Skip internal tracking vars
         if {[string match "slopdrop_*" $varname]} {
             continue
         }
-        ::slopdrop::add_var_trace $varname
+
+        # Skip if already traced (most common case)
+        if {[lsearch -exact $slopdrop_traced_vars $varname] != -1} {
+            continue
+        }
+
+        # New variable - add trace
+        if {![catch {::slopdrop::_original_trace add variable ::$varname write ::slopdrop::var_write_trace}]} {
+            lappend slopdrop_traced_vars $varname
+        }
     }
 }
 
