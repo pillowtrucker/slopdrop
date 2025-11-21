@@ -43,7 +43,7 @@ impl UserInfo {
 /// Represents the state of procs and vars in the interpreter
 #[derive(Debug, Clone)]
 pub struct InterpreterState {
-    pub procs: HashSet<String>,
+    pub procs: HashMap<String, String>, // name -> content hash
     pub vars: HashSet<String>,
 }
 
@@ -56,14 +56,24 @@ impl InterpreterState {
         Ok(Self { procs, vars })
     }
 
-    fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
+    fn get_procs(interp: &Interpreter) -> Result<HashMap<String, String>> {
         match interp.eval("info procs") {
             Ok(obj) => {
                 let procs_str = obj.get_string();
-                Ok(procs_str
+                let proc_names: Vec<String> = procs_str
                     .split_whitespace()
                     .map(|s| s.to_string())
-                    .collect())
+                    .collect();
+
+                let mut procs = HashMap::new();
+                for proc_name in proc_names {
+                    // Get proc content and hash it
+                    if let Ok(content) = Self::get_proc_content(interp, &proc_name) {
+                        let hash = StatePersistence::sha1_hash(&content);
+                        procs.insert(proc_name, hash);
+                    }
+                }
+                Ok(procs)
             }
             Err(e) => Err(anyhow!("Failed to get procs: {:?}", e)),
         }
@@ -96,9 +106,30 @@ impl InterpreterState {
             .map(|s| s.to_string())
             .collect();
 
+        // Detect new and modified procs by comparing hashes
+        let mut new_or_modified_procs = Vec::new();
+        for (proc_name, new_hash) in &other.procs {
+            if let Some(old_hash) = self.procs.get(proc_name) {
+                // Proc exists in both - check if hash changed
+                if old_hash != new_hash {
+                    new_or_modified_procs.push(proc_name.clone());
+                }
+            } else {
+                // New proc
+                new_or_modified_procs.push(proc_name.clone());
+            }
+        }
+
+        // Detect deleted procs
+        let deleted_procs: Vec<String> = self.procs
+            .keys()
+            .filter(|name| !other.procs.contains_key(*name))
+            .cloned()
+            .collect();
+
         StateChanges {
-            new_procs: other.procs.difference(&self.procs).cloned().collect(),
-            deleted_procs: self.procs.difference(&other.procs).cloned().collect(),
+            new_procs: new_or_modified_procs,
+            deleted_procs,
             new_vars: other.vars.difference(&self.vars)
                 .filter(|v| !internal_vars.contains(*v))
                 .cloned()
@@ -108,6 +139,24 @@ impl InterpreterState {
                 .cloned()
                 .collect(),
         }
+    }
+
+    /// Get the current content (args + body) of a procedure
+    fn get_proc_content(interp: &Interpreter, proc_name: &str) -> Result<String> {
+        let args_cmd = format!("info args {{{}}}", proc_name);
+        let body_cmd = format!("info body {{{}}}", proc_name);
+
+        let args = interp
+            .eval(&args_cmd)
+            .map_err(|e| anyhow!("Failed to get args: {:?}", e))?
+            .get_string();
+
+        let body = interp
+            .eval(&body_cmd)
+            .map_err(|e| anyhow!("Failed to get body: {:?}", e))?
+            .get_string();
+
+        Ok(format!("{{{}}} {{{}}}", args, body))
     }
 }
 
