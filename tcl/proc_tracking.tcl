@@ -105,8 +105,10 @@ rename proc ::slopdrop::_original_proc
     global slopdrop_traced_vars
     if {[lsearch -exact $slopdrop_traced_vars $varname] == -1} {
         # Add write trace
+        puts stderr "ADD_TRACE: Adding trace to variable '$varname' (::$varname)"
         trace add variable ::$varname write ::slopdrop::var_write_trace
         lappend slopdrop_traced_vars $varname
+        puts stderr "ADD_TRACE: Successfully added trace, traced_vars count=[llength $slopdrop_traced_vars]"
     }
 }
 
@@ -123,13 +125,18 @@ rename proc ::slopdrop::_original_proc
 
 # Periodically update traces for new vars (called after each eval)
 ::slopdrop::_original_proc ::slopdrop::update_var_traces {} {
+    set count 0
+    set skipped 0
     foreach varname [info globals] {
         # Skip internal tracking vars
         if {[string match "slopdrop_*" $varname]} {
+            incr skipped
             continue
         }
         ::slopdrop::add_var_trace $varname
+        incr count
     }
+    puts stderr "UPDATE_VAR_TRACES: Processed $count vars, skipped $skipped"
 }
 
 # Get and clear the modified vars list
