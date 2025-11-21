@@ -665,7 +665,16 @@ impl TclThreadWorker {
                 let modified_vars = InterpreterState::get_modified_vars(self.interp.interpreter())
                     .unwrap_or_else(|_| HashSet::new());
 
+                debug!("Modified procs: {:?}", modified_procs);
+                debug!("Modified vars: {:?}", modified_vars);
+                debug!("State before vars: {} procs: {}", state_before.vars.len(), state_before.procs.len());
+                debug!("State after vars: {} procs: {}", state_after.vars.len(), state_after.procs.len());
+
                 let changes = state_before.diff(&state_after, &modified_procs, &modified_vars);
+
+                debug!("Changes detected: new_procs={}, new_vars={}, deleted_procs={}, deleted_vars={}",
+                    changes.new_procs.len(), changes.new_vars.len(),
+                    changes.deleted_procs.len(), changes.deleted_vars.len());
 
                 if changes.has_changes() {
                     debug!("State changed: {:?}", changes);

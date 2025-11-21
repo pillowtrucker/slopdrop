@@ -128,6 +128,9 @@ rename proc ::slopdrop::_original_proc
 # Get and clear the modified vars list
 ::slopdrop::_original_proc ::slopdrop::get_modified_vars {} {
     global slopdrop_modified_vars
+
+    # Don't filter - just return the list as-is
+    # The trace only fires for valid variables, so we can trust the list
     set result $slopdrop_modified_vars
     set slopdrop_modified_vars [list]
     return $result

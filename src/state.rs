@@ -105,7 +105,7 @@ impl InterpreterState {
         match interp.eval(r#"
             set validated [list]
             foreach v [info globals] {
-                if {![catch {set $v}]} {
+                if {![catch {set ::$v}]} {
                     lappend validated $v
                 }
             }
