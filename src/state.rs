@@ -57,11 +57,14 @@ impl InterpreterState {
     }
 
     fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("info procs") {
+        // Use TCL to convert the list to a format we can parse safely
+        // This avoids issues with special characters in proc names
+        match interp.eval("join [info procs] \\n") {
             Ok(obj) => {
                 let procs_str = obj.get_string();
                 Ok(procs_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }
@@ -72,11 +75,12 @@ impl InterpreterState {
     /// Get list of procedures that were modified since last check
     /// This uses the TCL proc tracking wrapper to detect which procs were touched
     pub fn get_modified_procs(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("::slopdrop::get_modified_procs") {
+        match interp.eval("join [::slopdrop::get_modified_procs] \\n") {
             Ok(obj) => {
                 let procs_str = obj.get_string();
                 Ok(procs_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }
@@ -88,11 +92,12 @@ impl InterpreterState {
     }
 
     fn get_vars(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("info globals") {
+        match interp.eval("join [info globals] \\n") {
             Ok(obj) => {
                 let vars_str = obj.get_string();
                 Ok(vars_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }
@@ -103,11 +108,12 @@ impl InterpreterState {
     /// Get list of variables that were modified since last check
     /// This uses the TCL trace tracking to detect which vars were touched
     pub fn get_modified_vars(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("::slopdrop::get_modified_vars") {
+        match interp.eval("join [::slopdrop::get_modified_vars] \\n") {
             Ok(obj) => {
                 let vars_str = obj.get_string();
                 Ok(vars_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }

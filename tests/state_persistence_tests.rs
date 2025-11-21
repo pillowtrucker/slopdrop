@@ -1,4 +1,5 @@
 use slopdrop::state::{InterpreterState, StatePersistence, StateChanges, UserInfo};
+use slopdrop::smeggdrop_commands;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -882,4 +883,42 @@ fn test_internal_var_slopdrop_not_tracked() {
     
     // Internal slopdrop vars should not be in new_vars
     assert!(!changes.new_vars.iter().any(|v| v.starts_with("slopdrop_")));
+}
+
+#[test]
+fn test_proc_name_with_special_characters() {
+    let (_temp, _state_path) = create_temp_state();
+    let mut interp = create_test_interp();
+
+    // Load proc tracking module
+    interp.eval(smeggdrop_commands::proc_tracking().as_str()).unwrap();
+
+    // Create procs with special characters like unknown handlers
+    interp.eval(r#"
+        proc {unknown:2:cmd/^(.+)goon$/} {matches cmd args} {
+            return "goon handler"
+        }
+    "#).unwrap();
+
+    interp.eval(r#"
+        proc {unknown:2:cmd/(.+)amid$/} {matches cmd args} {
+            return "amid handler"
+        }
+    "#).unwrap();
+
+    // Capture state - should include the procs without mangling the names
+    let state_after = InterpreterState::capture(&interp).unwrap();
+
+    // The proc names should be captured correctly WITHOUT extra braces
+    assert!(state_after.procs.contains("unknown:2:cmd/^(.+)goon$/"),
+            "Should contain the goon proc with special chars");
+    assert!(state_after.procs.contains("unknown:2:cmd/(.+)amid$/"),
+            "Should contain the amid proc with special chars");
+
+    // Verify we can get both in the modified list
+    let modified = InterpreterState::get_modified_procs(&interp).unwrap();
+    assert!(modified.contains("unknown:2:cmd/^(.+)goon$/"),
+            "Modified list should contain goon proc");
+    assert!(modified.contains("unknown:2:cmd/(.+)amid$/"),
+            "Modified list should contain amid proc");
 }
