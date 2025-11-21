@@ -59,7 +59,16 @@ impl InterpreterState {
     fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
         // Use TCL to convert the list to a format we can parse safely
         // This avoids issues with special characters in proc names
-        match interp.eval("join [info procs] \\n") {
+        // Also validate each proc to filter out invalid entries
+        match interp.eval(r#"
+            set validated [list]
+            foreach p [info procs] {
+                if {![catch {info args $p}]} {
+                    lappend validated $p
+                }
+            }
+            join $validated \n
+        "#) {
             Ok(obj) => {
                 let procs_str = obj.get_string();
                 Ok(procs_str
@@ -92,7 +101,16 @@ impl InterpreterState {
     }
 
     fn get_vars(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("join [info globals] \\n") {
+        // Validate each var to filter out invalid entries
+        match interp.eval(r#"
+            set validated [list]
+            foreach v [info globals] {
+                if {![catch {set $v}]} {
+                    lappend validated $v
+                }
+            }
+            join $validated \n
+        "#) {
             Ok(obj) => {
                 let vars_str = obj.get_string();
                 Ok(vars_str
