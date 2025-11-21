@@ -230,13 +230,13 @@ echo ""
 # ========================================
 echo "=== Section 4: Encoding Commands ==="
 
-send_irc_command "test15" "#test" "tcl encoding::base64 hello" "/tmp/test_base64_encode.log"
+send_irc_command "test15" "#test" "tcl base64 hello" "/tmp/test_base64_encode.log"
 check_response "Base64 encode" "/tmp/test_base64_encode.log" ":testbot.*PRIVMSG #test :aGVsbG8="
 
-send_irc_command "test16" "#test" "tcl encoding::unbase64 aGVsbG8=" "/tmp/test_base64_decode.log"
+send_irc_command "test16" "#test" "tcl unbase64 aGVsbG8=" "/tmp/test_base64_decode.log"
 check_response "Base64 decode" "/tmp/test_base64_decode.log" ":testbot.*PRIVMSG #test :hello"
 
-send_irc_command "test17" "#test" "tcl encoding::url \"hello world\"" "/tmp/test_urlencode.log"
+send_irc_command "test17" "#test" "tcl url_encode \"hello world\"" "/tmp/test_urlencode.log"
 check_response "URL encode" "/tmp/test_urlencode.log" ":testbot.*PRIVMSG #test :hello%20world"
 
 echo ""
