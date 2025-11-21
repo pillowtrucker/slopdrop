@@ -392,10 +392,12 @@ impl StatePersistence {
         // Commit changes to git and return commit info
         match self.git_commit(changes, user_info, eval_code) {
             Ok(commit_info) => {
-                // Auto-push to remote if configured
-                if let Err(e) = self.push_to_remote() {
-                    warn!("Failed to push to remote: {}", e);
-                }
+                // TODO: Auto-push disabled due to blocking TCL thread and causing timeouts
+                // Need to implement async push in background thread
+                // For now, commits are local-only
+                // if let Err(e) = self.push_to_remote() {
+                //     warn!("Failed to push to remote: {}", e);
+                // }
 
                 // Run git gc periodically (every 100 commits) to prevent repo bloat
                 if let Err(e) = self.maybe_run_git_gc() {
