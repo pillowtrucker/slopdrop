@@ -12,14 +12,23 @@ rename proc ::slopdrop::_original_proc
 # Create wrapper that tracks proc definitions
 # Must use ::slopdrop::_original_proc since we just renamed proc
 ::slopdrop::_original_proc proc {name args body} {
-    # Call original proc command
-    ::slopdrop::_original_proc $name $args $body
+    # Get the caller's namespace to create proc in correct scope
+    set caller_ns [uplevel 1 {namespace current}]
 
-    # Track that this proc was modified
-    # Use dict to avoid duplicates efficiently
+    # If caller is in a namespace, prepend it to the proc name if name isn't already qualified
+    if {$caller_ns ne "::" && ![string match "::*" $name]} {
+        set qualified_name "${caller_ns}::${name}"
+    } else {
+        set qualified_name $name
+    }
+
+    # Call original proc command in the caller's namespace using uplevel
+    uplevel 1 [list ::slopdrop::_original_proc $name $args $body]
+
+    # Track the fully qualified proc name
     global slopdrop_modified_procs
-    if {[lsearch -exact $slopdrop_modified_procs $name] == -1} {
-        lappend slopdrop_modified_procs $name
+    if {[lsearch -exact $slopdrop_modified_procs $qualified_name] == -1} {
+        lappend slopdrop_modified_procs $qualified_name
     }
 }
 
