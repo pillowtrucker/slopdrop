@@ -12,8 +12,10 @@ if {![info exists ::slopdrop_traced_vars]} {
     set ::slopdrop_traced_vars [list]
 }
 
-# Rename the built-in proc command
+# Rename built-in commands to protect them from user-defined procs
+# User code might define `proc trace {}` which would override the built-in
 rename proc ::slopdrop::_original_proc
+rename trace ::slopdrop::_original_trace
 
 # Create wrapper that tracks proc definitions
 # Must use ::slopdrop::_original_proc since we just renamed proc
@@ -106,13 +108,13 @@ rename proc ::slopdrop::_original_proc
     if {[lsearch -exact $slopdrop_traced_vars $varname] == -1} {
         # Add write trace
         puts stderr "ADD_TRACE: Adding trace to variable '$varname' (::$varname)"
-        if {[catch {trace add variable ::$varname write ::slopdrop::var_write_trace} err]} {
+        if {[catch {::slopdrop::_original_trace add variable ::$varname write ::slopdrop::var_write_trace} err]} {
             puts stderr "ADD_TRACE: ERROR adding trace: $err"
         } else {
             lappend slopdrop_traced_vars $varname
             puts stderr "ADD_TRACE: Successfully added trace, traced_vars count=[llength $slopdrop_traced_vars]"
             # Verify the trace was added
-            set traces [trace info variable ::$varname]
+            set traces [::slopdrop::_original_trace info variable ::$varname]
             puts stderr "ADD_TRACE: Trace info for ::$varname: $traces"
         }
     } else {
