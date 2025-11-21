@@ -44,7 +44,7 @@ impl UserInfo {
 #[derive(Debug, Clone)]
 pub struct InterpreterState {
     pub procs: HashSet<String>,
-    pub vars: HashSet<String>,
+    pub vars: HashMap<String, String>, // name -> content hash
 }
 
 impl InterpreterState {
@@ -87,16 +87,54 @@ impl InterpreterState {
         }
     }
 
-    fn get_vars(interp: &Interpreter) -> Result<HashSet<String>> {
+    fn get_vars(interp: &Interpreter) -> Result<HashMap<String, String>> {
         match interp.eval("info globals") {
             Ok(obj) => {
                 let vars_str = obj.get_string();
-                Ok(vars_str
+                let var_names: Vec<String> = vars_str
                     .split_whitespace()
                     .map(|s| s.to_string())
-                    .collect())
+                    .collect();
+
+                let mut vars = HashMap::new();
+                for var_name in var_names {
+                    // Get var content and hash it
+                    if let Ok(content) = Self::get_var_content(interp, &var_name) {
+                        let hash = StatePersistence::sha1_hash(&content);
+                        vars.insert(var_name, hash);
+                    }
+                }
+                Ok(vars)
             }
             Err(e) => Err(anyhow!("Failed to get vars: {:?}", e)),
+        }
+    }
+
+    /// Get the current content of a variable (for hashing)
+    fn get_var_content(interp: &Interpreter, var_name: &str) -> Result<String> {
+        // Check if it's an array or scalar
+        let is_array_cmd = format!("array exists {{{}}}", var_name);
+        let is_array = interp
+            .eval(is_array_cmd.as_str())
+            .map(|obj| obj.get_string() == "1")
+            .unwrap_or(false);
+
+        if is_array {
+            // Get array contents
+            let array_cmd = format!("array get {{{}}}", var_name);
+            let array_data = interp
+                .eval(array_cmd.as_str())
+                .map_err(|e| anyhow!("Failed to get array {}: {:?}", var_name, e))?
+                .get_string();
+            Ok(format!("array {{{}}}", array_data))
+        } else {
+            // Get scalar value
+            let value_cmd = format!("set {{{}}}", var_name);
+            let value = interp
+                .eval(value_cmd.as_str())
+                .map_err(|e| anyhow!("Failed to get var {}: {:?}", var_name, e))?
+                .get_string();
+            Ok(format!("scalar {{{}}}", value))
         }
     }
 
@@ -137,17 +175,35 @@ impl InterpreterState {
             .cloned()
             .collect();
 
+        // Detect new and modified vars by comparing hashes
+        let mut new_or_modified_vars = Vec::new();
+        for (var_name, new_hash) in &other.vars {
+            if internal_vars.contains(var_name) {
+                continue; // Skip internal vars
+            }
+            if let Some(old_hash) = self.vars.get(var_name) {
+                // Var exists in both - check if hash changed
+                if old_hash != new_hash {
+                    new_or_modified_vars.push(var_name.clone());
+                }
+            } else {
+                // New var
+                new_or_modified_vars.push(var_name.clone());
+            }
+        }
+
+        // Detect deleted vars
+        let deleted_vars: Vec<String> = self.vars
+            .keys()
+            .filter(|name| !other.vars.contains_key(*name) && !internal_vars.contains(*name))
+            .cloned()
+            .collect();
+
         StateChanges {
             new_procs: new_or_modified_procs,
             deleted_procs,
-            new_vars: other.vars.difference(&self.vars)
-                .filter(|v| !internal_vars.contains(*v))
-                .cloned()
-                .collect(),
-            deleted_vars: self.vars.difference(&other.vars)
-                .filter(|v| !internal_vars.contains(*v))
-                .cloned()
-                .collect(),
+            new_vars: new_or_modified_vars,
+            deleted_vars,
         }
     }
 
