@@ -164,7 +164,7 @@ impl SafeTclInterp {
         let dangerous_commands = vec![
             "interp",
             // "namespace",  // Allowed for cache/utils commands
-            "trace",
+            // "trace",  // Allowed - needed for variable modification tracking
             // "vwait",  // Allowed - needed by http package for event loop
             // "apply",  // Allowed - needed for lambdas and stolen-treasure.tcl
             "yield",

@@ -273,7 +273,7 @@ fn test_state_save_creates_git_commit() {
     interp.eval("proc testproc {} { return 42 }").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.has_changes());
 
@@ -319,7 +319,7 @@ fn test_multiple_users_different_commits() {
     let state0 = InterpreterState::capture(&interp).unwrap();
     interp.eval("proc user1proc {} { return \"user1\" }").unwrap();
     let state1 = InterpreterState::capture(&interp).unwrap();
-    let changes1 = state0.diff(&state1, &HashSet::new());
+    let changes1 = state0.diff(&state1, &HashSet::new(), &HashSet::new());
 
     let user1 = UserInfo::new("user1".to_string(), "host1.com".to_string());
     let commit1 = persistence.save_changes(&interp, &changes1, &user1, "user1 code").unwrap();
@@ -327,7 +327,7 @@ fn test_multiple_users_different_commits() {
     // User 2 creates a proc
     interp.eval("proc user2proc {} { return \"user2\" }").unwrap();
     let state2 = InterpreterState::capture(&interp).unwrap();
-    let changes2 = state1.diff(&state2, &HashSet::new());
+    let changes2 = state1.diff(&state2, &HashSet::new(), &HashSet::new());
 
     let user2 = UserInfo::new("user2".to_string(), "host2.com".to_string());
     let commit2 = persistence.save_changes(&interp, &changes2, &user2, "user2 code").unwrap();

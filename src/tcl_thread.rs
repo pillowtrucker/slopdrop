@@ -652,15 +652,20 @@ impl TclThreadWorker {
             },
         };
 
+        // Update var traces to catch any new vars created during eval
+        let _ = self.interp.interpreter().eval("::slopdrop::update_var_traces");
+
         // Capture state after and save if changed
         let mut output = output;
         if let Ok(state_after) = InterpreterState::capture(self.interp.interpreter()) {
             if let Ok(state_before) = state_before {
-                // Get list of procs that were modified during this eval
+                // Get list of procs and vars that were modified during this eval
                 let modified_procs = InterpreterState::get_modified_procs(self.interp.interpreter())
                     .unwrap_or_else(|_| HashSet::new());
+                let modified_vars = InterpreterState::get_modified_vars(self.interp.interpreter())
+                    .unwrap_or_else(|_| HashSet::new());
 
-                let changes = state_before.diff(&state_after, &modified_procs);
+                let changes = state_before.diff(&state_after, &modified_procs, &modified_vars);
 
                 if changes.has_changes() {
                     debug!("State changed: {:?}", changes);

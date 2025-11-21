@@ -102,7 +102,7 @@ fn test_state_diff_new_procs() {
     interp.eval("proc test {} { return \"test\" }").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.has_changes());
     assert_eq!(changes.new_procs.len(), 1);
@@ -121,7 +121,7 @@ fn test_state_diff_deleted_procs() {
 
     interp.eval("rename test {}").unwrap();
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.has_changes());
     assert_eq!(changes.deleted_procs.len(), 1);
@@ -138,7 +138,7 @@ fn test_state_diff_new_vars() {
     interp.eval("set newvar \"value\"").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.has_changes());
     assert_eq!(changes.new_vars.len(), 1);
@@ -155,7 +155,7 @@ fn test_state_diff_deleted_vars() {
 
     interp.eval("unset testvar").unwrap();
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.has_changes());
     assert_eq!(changes.deleted_vars.len(), 1);
@@ -173,7 +173,7 @@ fn test_state_diff_modified_proc() {
     // Redefine the proc
     interp.eval("proc test {} { return \"v2\" }").unwrap();
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     // NOTE: Redefining a proc doesn't change the proc list, so there are no changes
     // detected by the state capture. This is expected behavior because we only
@@ -190,7 +190,7 @@ fn test_state_diff_no_changes() {
     let before = InterpreterState::capture(&interp).unwrap();
     let after = InterpreterState::capture(&interp).unwrap();
 
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(!changes.has_changes());
 }
@@ -210,7 +210,7 @@ fn test_save_and_load_proc() {
     interp.eval("proc greet {name} { return \"Hello, $name!\" }").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     // Should only have the greet proc as new
     assert_eq!(changes.new_procs.len(), 1);
@@ -241,7 +241,7 @@ fn test_save_and_load_var() {
     interp.eval("set testvar \"test value\"").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     // Should only have testvar as new
     assert!(changes.new_vars.contains(&"testvar".to_string()));
@@ -270,7 +270,7 @@ fn test_git_commit_returns_info() {
     interp.eval("set testvar \"value\"").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
     let commit_info = persistence.save_changes(&interp, &changes, &user_info, "set testvar \"value\"").unwrap();
@@ -301,7 +301,7 @@ fn test_multiple_changes_single_commit() {
     interp.eval("set var2 \"value2\"").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert_eq!(changes.new_procs.len(), 2);
     assert_eq!(changes.new_vars.len(), 2);
@@ -329,7 +329,7 @@ fn test_delete_proc() {
     // Create and save a proc
     interp.eval("proc test {} { return \"test\" }").unwrap();
     let state1 = InterpreterState::capture(&interp).unwrap();
-    let changes1 = state0.diff(&state1, &HashSet::new());
+    let changes1 = state0.diff(&state1, &HashSet::new(), &HashSet::new());
 
     assert_eq!(changes1.new_procs.len(), 1);
     assert_eq!(changes1.new_procs[0], "test");
@@ -340,7 +340,7 @@ fn test_delete_proc() {
     // Delete the proc
     interp.eval("rename test {}").unwrap();
     let state2 = InterpreterState::capture(&interp).unwrap();
-    let changes2 = state1.diff(&state2, &HashSet::new());
+    let changes2 = state1.diff(&state2, &HashSet::new(), &HashSet::new());
 
     assert_eq!(changes2.deleted_procs.len(), 1);
     assert_eq!(changes2.deleted_procs[0], "test");
@@ -397,7 +397,7 @@ fn test_proc_with_special_characters() {
     interp.eval("proc test_with_underscores {} { return \"test\" }").unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert_eq!(changes.new_procs.len(), 1);
     assert_eq!(changes.new_procs[0], "test_with_underscores");
@@ -427,7 +427,7 @@ fn test_var_with_special_values() {
     interp.eval(r#"set var3 [list 1 2 3]"#).unwrap();
 
     let after = InterpreterState::capture(&interp).unwrap();
-    let changes = before.diff(&after, &HashSet::new());
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
 
     assert!(changes.new_vars.len() >= 3);
 
@@ -459,14 +459,14 @@ fn test_multiple_commits_in_sequence() {
     // First commit
     interp.eval("set var1 \"value1\"").unwrap();
     let state1 = InterpreterState::capture(&interp).unwrap();
-    let changes1 = state0.diff(&state1, &HashSet::new());
+    let changes1 = state0.diff(&state1, &HashSet::new(), &HashSet::new());
     let commit1 = persistence.save_changes(&interp, &changes1, &user_info, "commit 1").unwrap();
     assert!(commit1.is_some());
 
     // Second commit
     interp.eval("set var2 \"value2\"").unwrap();
     let state2 = InterpreterState::capture(&interp).unwrap();
-    let changes2 = state1.diff(&state2, &HashSet::new());
+    let changes2 = state1.diff(&state2, &HashSet::new(), &HashSet::new());
     let commit2 = persistence.save_changes(&interp, &changes2, &user_info, "commit 2").unwrap();
     assert!(commit2.is_some());
 
@@ -482,7 +482,7 @@ fn test_empty_changes_no_commit() {
     let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
 
     let state = InterpreterState::capture(&interp).unwrap();
-    let changes = state.diff(&state, &HashSet::new()); // No changes
+    let changes = state.diff(&state, &HashSet::new(), &HashSet::new()); // No changes
 
     assert!(!changes.has_changes());
 
@@ -578,7 +578,7 @@ fn test_proc_modification_detected_in_diff() {
     let modified_procs = InterpreterState::get_modified_procs(&interp).unwrap();
     
     // Diff should detect new proc
-    let changes = state_before.diff(&state_after, &modified_procs);
+    let changes = state_before.diff(&state_after, &modified_procs, &HashSet::new());
     assert!(changes.new_procs.contains(&"test_proc".to_string()));
 }
 
@@ -604,7 +604,7 @@ fn test_proc_modification_saved_to_disk() {
     let modified_procs = InterpreterState::get_modified_procs(&interp).unwrap();
     
     // Get changes
-    let changes = state_before.diff(&state_after, &modified_procs);
+    let changes = state_before.diff(&state_after, &modified_procs, &HashSet::new());
     assert!(changes.has_changes());
     
     // Save changes
@@ -633,7 +633,7 @@ fn test_unchanged_proc_not_saved() {
     // Capture states
     let state1 = InterpreterState::capture(&interp).unwrap();
     let modified1 = InterpreterState::get_modified_procs(&interp).unwrap();
-    let changes1 = InterpreterState::capture(&interp).unwrap().diff(&state1, &modified1);
+    let changes1 = InterpreterState::capture(&interp).unwrap().diff(&state1, &modified1, &HashSet::new());
     
     // Save first time
     let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
@@ -645,7 +645,7 @@ fn test_unchanged_proc_not_saved() {
     let modified2 = InterpreterState::get_modified_procs(&interp).unwrap();
     
     // Should have no changes
-    let changes2 = state2.diff(&state3, &modified2);
+    let changes2 = state2.diff(&state3, &modified2, &HashSet::new());
     assert!(!changes2.has_changes());
 }
 
@@ -665,7 +665,7 @@ fn test_internal_var_not_tracked() {
     
     // Diff should not detect this as a change
     let modified_procs = HashSet::new();
-    let changes = state_before.diff(&state_after, &modified_procs);
+    let changes = state_before.diff(&state_after, &modified_procs, &HashSet::new());
     
     // slopdrop_modified_procs should not be in new_vars
     assert!(!changes.new_vars.contains(&"slopdrop_modified_procs".to_string()));
