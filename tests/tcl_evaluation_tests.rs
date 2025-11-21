@@ -99,6 +99,7 @@ async fn test_timeout_handling() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let tcl_config = TclConfig {

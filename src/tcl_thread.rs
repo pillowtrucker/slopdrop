@@ -3,6 +3,7 @@ use crate::state::{InterpreterState, StatePersistence, UserInfo};
 use crate::tcl_wrapper::SafeTclInterp;
 use crate::types::ChannelMembers;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -651,13 +652,37 @@ impl TclThreadWorker {
             },
         };
 
+        // Update var traces AFTER eval to catch any new variables that were created
+        // This is more efficient than checking all 1000+ vars before every eval
+        // New vars will get traces for the NEXT eval, existing vars already have traces
+        let _ = self.interp.interpreter().eval("::slopdrop::update_var_traces");
+
         // Capture state after and save if changed
         let mut output = output;
         if let Ok(state_after) = InterpreterState::capture(self.interp.interpreter()) {
             if let Ok(state_before) = state_before {
-                let changes = state_before.diff(&state_after);
+                // Get list of procs and vars that were modified during this eval
+                let modified_procs = InterpreterState::get_modified_procs(self.interp.interpreter())
+                    .unwrap_or_else(|_| HashSet::new());
+                let modified_vars = InterpreterState::get_modified_vars(self.interp.interpreter())
+                    .unwrap_or_else(|_| HashSet::new());
 
-                if changes.has_changes() {
+                debug!("Modified procs: {:?}", modified_procs);
+                debug!("Modified vars: {:?}", modified_vars);
+                debug!("State before vars: {} procs: {}", state_before.vars.len(), state_before.procs.len());
+                debug!("State after vars: {} procs: {}", state_after.vars.len(), state_after.procs.len());
+
+                let changes = state_before.diff(&state_after, &modified_procs, &modified_vars);
+
+                debug!("Changes detected: new_procs={}, new_vars={}, deleted_procs={}, deleted_vars={}",
+                    changes.new_procs.len(), changes.new_vars.len(),
+                    changes.deleted_procs.len(), changes.deleted_vars.len());
+
+                // Skip state persistence for system evals (timers, triggers, etc.)
+                // Only persist state changes from actual user interactions
+                let is_system_eval = request.nick == "system";
+
+                if changes.has_changes() && !is_system_eval {
                     debug!("State changed: {:?}", changes);
 
                     let user_info = UserInfo::new(request.nick.clone(), request.host.clone());
@@ -681,6 +706,11 @@ impl TclThreadWorker {
                             warn!("Failed to save state: {}", e);
                         }
                     }
+                } else if changes.has_changes() && is_system_eval {
+                    debug!("Skipping state persistence for system eval (nick={})", request.nick);
+                    // Clear modified tracking so system changes don't pollute user commits
+                    let _ = self.interp.interpreter().eval("set ::slopdrop_modified_procs [list]");
+                    let _ = self.interp.interpreter().eval("set ::slopdrop_modified_vars [list]");
                 }
             }
         }

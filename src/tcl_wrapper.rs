@@ -103,6 +103,10 @@ impl SafeTclInterp {
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
+        // Load proc tracking wrapper FIRST to intercept all proc definitions
+        interpreter.eval(crate::smeggdrop_commands::proc_tracking().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to inject proc tracking: {:?}", e))?;
+
         // Inject other smeggdrop commands (cache, utils, encoding)
         // These don't require package loading so they can be loaded after making safe
         interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())
@@ -143,6 +147,13 @@ impl SafeTclInterp {
         if state_path.exists() {
             debug!("Loading TCL state from {:?}", state_path);
             Self::load_state(&interpreter, state_path)?;
+
+            // Clear the modified procs/vars list after loading state
+            // State loading triggers the proc wrapper, but these are initialization procs
+            // not actual modifications, so we clear the tracking lists
+            debug!("Clearing modified tracking after state load");
+            let _ = interpreter.eval("set ::slopdrop_modified_procs [list]");
+            let _ = interpreter.eval("set ::slopdrop_modified_vars [list]");
         }
 
         Ok(Self {
@@ -160,7 +171,7 @@ impl SafeTclInterp {
         let dangerous_commands = vec![
             "interp",
             // "namespace",  // Allowed for cache/utils commands
-            "trace",
+            // "trace",  // Allowed - needed for variable modification tracking
             // "vwait",  // Allowed - needed by http package for event loop
             // "apply",  // Allowed - needed for lambdas and stolen-treasure.tcl
             "yield",
@@ -382,6 +393,10 @@ impl SafeTclInterp {
         if let Err(e) = self.interpreter.eval(crate::smeggdrop_commands::sha1_command().as_str()) {
             debug!("Failed to reload SHA1 command: {:?}", e);
         }
+
+        // Reload proc tracking wrapper FIRST to intercept all proc definitions
+        self.interpreter.eval(crate::smeggdrop_commands::proc_tracking().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload proc tracking: {:?}", e))?;
 
         // Reload other smeggdrop commands
         self.interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())

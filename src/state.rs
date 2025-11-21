@@ -57,11 +57,23 @@ impl InterpreterState {
     }
 
     fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("info procs") {
+        // Use TCL to convert the list to a format we can parse safely
+        // This avoids issues with special characters in proc names
+        // Also validate each proc to filter out invalid entries
+        match interp.eval(r#"
+            set validated [list]
+            foreach p [info procs] {
+                if {![catch {info args $p}]} {
+                    lappend validated $p
+                }
+            }
+            join $validated \n
+        "#) {
             Ok(obj) => {
                 let procs_str = obj.get_string();
                 Ok(procs_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }
@@ -69,12 +81,41 @@ impl InterpreterState {
         }
     }
 
+    /// Get list of procedures that were modified since last check
+    /// This uses the TCL proc tracking wrapper to detect which procs were touched
+    pub fn get_modified_procs(interp: &Interpreter) -> Result<HashSet<String>> {
+        match interp.eval("join [::slopdrop::get_modified_procs] \\n") {
+            Ok(obj) => {
+                let procs_str = obj.get_string();
+                Ok(procs_str
+                    .lines()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect())
+            }
+            Err(_) => {
+                // If the tracking isn't set up yet, return empty set
+                Ok(HashSet::new())
+            }
+        }
+    }
+
     fn get_vars(interp: &Interpreter) -> Result<HashSet<String>> {
-        match interp.eval("info globals") {
+        // Validate each var to filter out invalid entries
+        match interp.eval(r#"
+            set validated [list]
+            foreach v [info globals] {
+                if {![catch {set ::$v}]} {
+                    lappend validated $v
+                }
+            }
+            join $validated \n
+        "#) {
             Ok(obj) => {
                 let vars_str = obj.get_string();
                 Ok(vars_str
-                    .split_whitespace()
+                    .lines()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .collect())
             }
@@ -82,8 +123,28 @@ impl InterpreterState {
         }
     }
 
+    /// Get list of variables that were modified since last check
+    /// This uses the TCL trace tracking to detect which vars were touched
+    pub fn get_modified_vars(interp: &Interpreter) -> Result<HashSet<String>> {
+        match interp.eval("join [::slopdrop::get_modified_vars] \\n") {
+            Ok(obj) => {
+                let vars_str = obj.get_string();
+                Ok(vars_str
+                    .lines()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect())
+            }
+            Err(_) => {
+                // If the tracking isn't set up yet, return empty set
+                Ok(HashSet::new())
+            }
+        }
+    }
+
     /// Find what changed between two states
-    pub fn diff(&self, other: &Self) -> StateChanges {
+    /// Uses modified_procs and modified_vars sets to efficiently detect changes
+    pub fn diff(&self, other: &Self, modified_procs: &HashSet<String>, modified_vars: &HashSet<String>) -> StateChanges {
         // Internal context variables that should not be tracked as state changes
         // These are set by eval_with_context for each command, or are system arrays
         let internal_vars: HashSet<String> = [
@@ -91,23 +152,84 @@ impl InterpreterState {
             "slopdrop_channel_members", // Channel member lists synced before each eval
             "slopdrop_log_lines",       // Message log array
             "nick_channel",             // HTTP rate limiting context
+            "slopdrop_modified_procs",  // Proc tracking list (proc_tracking.tcl)
+            "v", "p", "validated",      // Temp variables created by state capture itself
         ]
             .iter()
             .map(|s| s.to_string())
             .collect();
 
-        StateChanges {
-            new_procs: other.procs.difference(&self.procs).cloned().collect(),
-            deleted_procs: self.procs.difference(&other.procs).cloned().collect(),
-            new_vars: other.vars.difference(&self.vars)
-                .filter(|v| !internal_vars.contains(*v))
-                .cloned()
-                .collect(),
-            deleted_vars: self.vars.difference(&other.vars)
-                .filter(|v| !internal_vars.contains(*v))
-                .cloned()
-                .collect(),
+        let mut new_or_modified_procs = Vec::new();
+
+        // New procs (in after but not before)
+        for proc_name in other.procs.difference(&self.procs) {
+            new_or_modified_procs.push(proc_name.clone());
         }
+
+        // Modified procs (exist in both and were touched)
+        for proc_name in modified_procs {
+            if self.procs.contains(proc_name) && other.procs.contains(proc_name) {
+                // Proc existed before and still exists, and was touched
+                new_or_modified_procs.push(proc_name.clone());
+            }
+        }
+
+        // Detect deleted procs
+        let deleted_procs: Vec<String> = self.procs
+            .difference(&other.procs)
+            .cloned()
+            .collect();
+
+        let mut new_or_modified_vars = Vec::new();
+
+        // New vars (in after but not before)
+        for var_name in other.vars.difference(&self.vars) {
+            if !internal_vars.contains(var_name) {
+                new_or_modified_vars.push(var_name.clone());
+            }
+        }
+
+        // Modified vars (exist in both and were touched)
+        for var_name in modified_vars {
+            if !internal_vars.contains(var_name)
+                && self.vars.contains(var_name)
+                && other.vars.contains(var_name) {
+                // Var existed before and still exists, and was touched
+                new_or_modified_vars.push(var_name.clone());
+            }
+        }
+
+        // Detect deleted vars
+        let deleted_vars: Vec<String> = self.vars
+            .difference(&other.vars)
+            .filter(|name| !internal_vars.contains(*name))
+            .cloned()
+            .collect();
+
+        StateChanges {
+            new_procs: new_or_modified_procs,
+            deleted_procs,
+            new_vars: new_or_modified_vars,
+            deleted_vars,
+        }
+    }
+
+    /// Get the current content (args + body) of a procedure
+    fn get_proc_content(interp: &Interpreter, proc_name: &str) -> Result<String> {
+        let args_cmd = format!("info args {{{}}}", proc_name);
+        let body_cmd = format!("info body {{{}}}", proc_name);
+
+        let args = interp
+            .eval(args_cmd.as_str())
+            .map_err(|e| anyhow!("Failed to get args: {:?}", e))?
+            .get_string();
+
+        let body = interp
+            .eval(body_cmd.as_str())
+            .map_err(|e| anyhow!("Failed to get body: {:?}", e))?
+            .get_string();
+
+        Ok(format!("{{{}}} {{{}}}", args, body))
     }
 }
 
@@ -530,6 +652,7 @@ impl StatePersistence {
 
     fn save_proc(&self, interp: &Interpreter, proc_name: &str) -> Result<()> {
         // Get proc args and body
+        // Note: Invalid proc names are filtered out in TCL via mark_all_procs_modified
         let args_cmd = format!("info args {{{}}}", proc_name);
         let body_cmd = format!("info body {{{}}}", proc_name);
 
@@ -548,6 +671,21 @@ impl StatePersistence {
 
         // Calculate SHA1 hash
         let hash = Self::sha1_hash(&content);
+
+        // Check if this proc already has the same hash in the index
+        let index_path = self.state_path.join("procs/_index");
+        if index_path.exists() {
+            if let Ok(index_content) = fs::read_to_string(&index_path) {
+                for line in index_content.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 && parts[0] == proc_name && parts[1] == hash {
+                        // Hash unchanged, skip save
+                        debug!("Proc {} unchanged (hash {}), skipping save", proc_name, hash);
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // Create procs directory if needed
         let procs_dir = self.state_path.join("procs");
