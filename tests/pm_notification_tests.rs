@@ -14,6 +14,7 @@ fn test_extract_admin_nicks_from_hostmasks() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     // Extract nicks from patterns (this is the logic from tcl_plugin.rs)
@@ -41,6 +42,7 @@ fn test_commit_info_format() {
         files_changed: 2,
         insertions: 10,
         deletions: 5,
+        changes_summary: "Modified: proc1, proc2".to_string(),
     };
 
     // Format as expected by PM notification: "[Git] <hash> committed by <author> | <files> files changed (+<ins> -<del>) | <message>"
@@ -69,6 +71,7 @@ fn test_commit_info_single_file() {
         files_changed: 1,
         insertions: 1,
         deletions: 1,
+        changes_summary: "Modified: proc3".to_string(),
     };
 
     // Should say "file" (singular) when files_changed == 1
@@ -97,6 +100,7 @@ fn test_empty_admin_list() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let mut admin_nicks = Vec::new();
@@ -123,6 +127,7 @@ fn test_wildcard_only_patterns() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let mut admin_nicks = Vec::new();
@@ -150,6 +155,7 @@ fn test_complex_hostmask_patterns() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let mut admin_nicks = Vec::new();
@@ -179,6 +185,7 @@ fn test_duplicate_admin_nicks() {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let mut admin_nicks = Vec::new();

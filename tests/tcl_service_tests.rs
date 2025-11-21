@@ -32,6 +32,7 @@ fn create_test_service_with_members(state_path: PathBuf, channel_members: Arc<Rw
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        notify_self: false,
     };
 
     let tcl_config = TclConfig {

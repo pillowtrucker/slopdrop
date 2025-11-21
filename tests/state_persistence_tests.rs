@@ -690,3 +690,196 @@ fn test_multiple_procs_modification_tracked() {
     assert!(modified.contains("proc3"));
     assert_eq!(modified.len(), 3);
 }
+
+// =============================================================================
+// Variable Modification Tracking Tests
+// =============================================================================
+
+#[test]
+fn test_var_tracking_detects_new_var() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Set a new var
+    interp.eval("set test_var 42").unwrap();
+    
+    // Update traces to catch it
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    
+    // Modify the var
+    interp.eval("set test_var 99").unwrap();
+    
+    // Check it was tracked
+    let modified = InterpreterState::get_modified_vars(&interp).unwrap();
+    assert!(modified.contains("test_var"));
+}
+
+#[test]
+fn test_var_tracking_detects_modification() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Set initial var
+    interp.eval("set test_var initial").unwrap();
+    
+    // Update traces
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    
+    // Clear tracking
+    InterpreterState::get_modified_vars(&interp).unwrap();
+    
+    // Modify the var
+    interp.eval("set test_var modified").unwrap();
+    
+    // Check it was tracked again
+    let modified = InterpreterState::get_modified_vars(&interp).unwrap();
+    assert!(modified.contains("test_var"));
+}
+
+#[test]
+fn test_var_tracking_clears_after_get() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Set a var
+    interp.eval("set test_var 123").unwrap();
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    interp.eval("set test_var 456").unwrap();
+    
+    // Get modified vars (should clear the list)
+    let modified = InterpreterState::get_modified_vars(&interp).unwrap();
+    assert!(modified.contains("test_var"));
+    
+    // Get again (should be empty)
+    let modified2 = InterpreterState::get_modified_vars(&interp).unwrap();
+    assert!(modified2.is_empty());
+}
+
+#[test]
+fn test_var_modification_detected_in_diff() {
+    let (_temp, _state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Set initial var
+    interp.eval("set test_var initial").unwrap();
+    
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+    
+    // Update traces
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    
+    // Clear modified list
+    InterpreterState::get_modified_vars(&interp).unwrap();
+    
+    // Modify var
+    interp.eval("set test_var modified").unwrap();
+    
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+    
+    // Get modified vars
+    let modified_vars = InterpreterState::get_modified_vars(&interp).unwrap();
+    let modified_procs = HashSet::new();
+    
+    // Diff should detect modified var
+    let changes = state_before.diff(&state_after, &modified_procs, &modified_vars);
+    assert!(changes.new_vars.contains(&"test_var".to_string()));
+}
+
+#[test]
+fn test_var_modification_saved_to_disk() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    persistence.ensure_initialized().unwrap();
+    
+    // Set initial var and save it
+    interp.eval("set test_var initial").unwrap();
+    let state1 = InterpreterState::capture(&interp).unwrap();
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    InterpreterState::get_modified_vars(&interp).unwrap(); // Clear
+    let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
+    let changes1 = InterpreterState::capture(&interp).unwrap().diff(&state1, &HashSet::new(), &HashSet::new());
+    if changes1.has_changes() {
+        persistence.save_changes(&interp, &changes1, &user_info, "set test_var initial").unwrap();
+    }
+    
+    // Modify var
+    let state2 = InterpreterState::capture(&interp).unwrap();
+    interp.eval("set test_var modified").unwrap();
+    let state3 = InterpreterState::capture(&interp).unwrap();
+    let modified_vars = InterpreterState::get_modified_vars(&interp).unwrap();
+    
+    // Get changes
+    let changes2 = state2.diff(&state3, &HashSet::new(), &modified_vars);
+    assert!(changes2.has_changes());
+    
+    // Save changes
+    persistence.save_changes(&interp, &changes2, &user_info, "set test_var modified").unwrap();
+    
+    // Verify var was saved (check index updated)
+    let index_path = state_path.join("vars/_index");
+    assert!(index_path.exists());
+    let index_content = fs::read_to_string(&index_path).unwrap();
+    assert!(index_content.contains("test_var"));
+}
+
+#[test]
+fn test_multiple_vars_modification_tracked() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Set multiple vars
+    interp.eval("set var1 value1").unwrap();
+    interp.eval("set var2 value2").unwrap();
+    interp.eval("set var3 value3").unwrap();
+    
+    // Update traces
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    
+    // Clear modified list
+    InterpreterState::get_modified_vars(&interp).unwrap();
+    
+    // Modify all vars
+    interp.eval("set var1 newvalue1").unwrap();
+    interp.eval("set var2 newvalue2").unwrap();
+    interp.eval("set var3 newvalue3").unwrap();
+    
+    // Get modified vars
+    let modified = InterpreterState::get_modified_vars(&interp).unwrap();
+    
+    // All three should be tracked
+    assert!(modified.contains("var1"));
+    assert!(modified.contains("var2"));
+    assert!(modified.contains("var3"));
+    assert_eq!(modified.len(), 3);
+}
+
+#[test]
+fn test_internal_var_slopdrop_not_tracked() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+    
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+    
+    // Modify internal tracking vars directly
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    interp.eval("set slopdrop_modified_vars {foo bar}").unwrap();
+    interp.eval("set slopdrop_modified_procs {baz}").unwrap();
+    
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+    
+    // Diff should not detect internal vars as changes
+    let modified_vars = HashSet::new();
+    let modified_procs = HashSet::new();
+    let changes = state_before.diff(&state_after, &modified_procs, &modified_vars);
+    
+    // Internal slopdrop vars should not be in new_vars
+    assert!(!changes.new_vars.iter().any(|v| v.starts_with("slopdrop_")));
+}

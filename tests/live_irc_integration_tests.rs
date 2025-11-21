@@ -74,7 +74,7 @@ impl TestBot {
 
         // Create communication channels
         let (tcl_command_tx, tcl_command_rx) = mpsc::channel(100);
-        let (irc_response_tx, irc_response_rx) = mpsc::channel(100);
+        let (irc_response_tx, mut irc_response_rx) = mpsc::channel(100);
 
         // Create configs
         let server_config = ServerConfig {
@@ -91,6 +91,7 @@ impl TestBot {
             blacklisted_users: vec![],
             memory_limit_mb: 0,
             max_recursion_depth: 1000,
+            notify_self: false,
         };
 
         let tcl_config = TclConfig {
@@ -102,10 +103,13 @@ impl TestBot {
 
         // Spawn TCL plugin
         let channel_members_clone = channel_members.clone();
+        let server_config_clone = server_config.clone();
         let tcl_handle = tokio::task::spawn_blocking(move || {
             let mut tcl_plugin = match TclPlugin::new(
                 security_config,
                 tcl_config,
+                server_config_clone,
+                PathBuf::from("/tmp/test_config.toml"),
                 channel_members_clone,
             ) {
                 Ok(plugin) => plugin,
@@ -117,7 +121,7 @@ impl TestBot {
 
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {
-                if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx).await {
+                if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx, None).await {
                     eprintln!("TCL plugin error: {}", e);
                 }
             });
@@ -127,7 +131,7 @@ impl TestBot {
         let irc_handle = tokio::spawn(async move {
             match IrcClient::new(server_config, channel_members).await {
                 Ok(irc_client) => {
-                    if let Err(e) = irc_client.run(tcl_command_tx, irc_response_rx).await {
+                    if let Err(e) = irc_client.run(tcl_command_tx, &mut irc_response_rx).await {
                         eprintln!("IRC client error: {}", e);
                     }
                 }
