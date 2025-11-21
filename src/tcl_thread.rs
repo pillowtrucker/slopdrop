@@ -676,7 +676,11 @@ impl TclThreadWorker {
                     changes.new_procs.len(), changes.new_vars.len(),
                     changes.deleted_procs.len(), changes.deleted_vars.len());
 
-                if changes.has_changes() {
+                // Skip state persistence for system evals (timers, triggers, etc.)
+                // Only persist state changes from actual user interactions
+                let is_system_eval = request.nick == "system";
+
+                if changes.has_changes() && !is_system_eval {
                     debug!("State changed: {:?}", changes);
 
                     let user_info = UserInfo::new(request.nick.clone(), request.host.clone());
@@ -700,6 +704,11 @@ impl TclThreadWorker {
                             warn!("Failed to save state: {}", e);
                         }
                     }
+                } else if changes.has_changes() && is_system_eval {
+                    debug!("Skipping state persistence for system eval (nick={})", request.nick);
+                    // Clear modified tracking so system changes don't pollute user commits
+                    let _ = self.interp.interpreter().eval("set ::slopdrop_modified_procs [list]");
+                    let _ = self.interp.interpreter().eval("set ::slopdrop_modified_vars [list]");
                 }
             }
         }
