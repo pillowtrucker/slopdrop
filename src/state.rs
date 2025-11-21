@@ -147,12 +147,12 @@ impl InterpreterState {
         let body_cmd = format!("info body {{{}}}", proc_name);
 
         let args = interp
-            .eval(&args_cmd)
+            .eval(args_cmd.as_str())
             .map_err(|e| anyhow!("Failed to get args: {:?}", e))?
             .get_string();
 
         let body = interp
-            .eval(&body_cmd)
+            .eval(body_cmd.as_str())
             .map_err(|e| anyhow!("Failed to get body: {:?}", e))?
             .get_string();
 
