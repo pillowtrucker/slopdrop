@@ -103,6 +103,10 @@ impl SafeTclInterp {
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
+        // Load proc tracking wrapper FIRST to intercept all proc definitions
+        interpreter.eval(crate::smeggdrop_commands::proc_tracking().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to inject proc tracking: {:?}", e))?;
+
         // Inject other smeggdrop commands (cache, utils, encoding)
         // These don't require package loading so they can be loaded after making safe
         interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())
@@ -382,6 +386,10 @@ impl SafeTclInterp {
         if let Err(e) = self.interpreter.eval(crate::smeggdrop_commands::sha1_command().as_str()) {
             debug!("Failed to reload SHA1 command: {:?}", e);
         }
+
+        // Reload proc tracking wrapper FIRST to intercept all proc definitions
+        self.interpreter.eval(crate::smeggdrop_commands::proc_tracking().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload proc tracking: {:?}", e))?;
 
         // Reload other smeggdrop commands
         self.interpreter.eval(crate::smeggdrop_commands::cache_commands().as_str())

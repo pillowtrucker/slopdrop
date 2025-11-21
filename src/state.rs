@@ -43,7 +43,7 @@ impl UserInfo {
 /// Represents the state of procs and vars in the interpreter
 #[derive(Debug, Clone)]
 pub struct InterpreterState {
-    pub procs: HashMap<String, String>, // name -> content hash
+    pub procs: HashSet<String>,
     pub vars: HashSet<String>,
 }
 
@@ -56,26 +56,34 @@ impl InterpreterState {
         Ok(Self { procs, vars })
     }
 
-    fn get_procs(interp: &Interpreter) -> Result<HashMap<String, String>> {
+    fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
         match interp.eval("info procs") {
             Ok(obj) => {
                 let procs_str = obj.get_string();
-                let proc_names: Vec<String> = procs_str
+                Ok(procs_str
                     .split_whitespace()
                     .map(|s| s.to_string())
-                    .collect();
-
-                let mut procs = HashMap::new();
-                for proc_name in proc_names {
-                    // Get proc content and hash it
-                    if let Ok(content) = Self::get_proc_content(interp, &proc_name) {
-                        let hash = StatePersistence::sha1_hash(&content);
-                        procs.insert(proc_name, hash);
-                    }
-                }
-                Ok(procs)
+                    .collect())
             }
             Err(e) => Err(anyhow!("Failed to get procs: {:?}", e)),
+        }
+    }
+
+    /// Get list of procedures that were modified since last check
+    /// This uses the TCL proc tracking wrapper to detect which procs were touched
+    pub fn get_modified_procs(interp: &Interpreter) -> Result<HashSet<String>> {
+        match interp.eval("::slopdrop::get_modified_procs") {
+            Ok(obj) => {
+                let procs_str = obj.get_string();
+                Ok(procs_str
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect())
+            }
+            Err(_) => {
+                // If the tracking isn't set up yet, return empty set
+                Ok(HashSet::new())
+            }
         }
     }
 
@@ -93,7 +101,8 @@ impl InterpreterState {
     }
 
     /// Find what changed between two states
-    pub fn diff(&self, other: &Self) -> StateChanges {
+    /// Uses modified_procs set to efficiently detect which procs to check
+    pub fn diff(&self, other: &Self, modified_procs: &HashSet<String>) -> StateChanges {
         // Internal context variables that should not be tracked as state changes
         // These are set by eval_with_context for each command, or are system arrays
         let internal_vars: HashSet<String> = [
@@ -106,24 +115,24 @@ impl InterpreterState {
             .map(|s| s.to_string())
             .collect();
 
-        // Detect new and modified procs by comparing hashes
         let mut new_or_modified_procs = Vec::new();
-        for (proc_name, new_hash) in &other.procs {
-            if let Some(old_hash) = self.procs.get(proc_name) {
-                // Proc exists in both - check if hash changed
-                if old_hash != new_hash {
-                    new_or_modified_procs.push(proc_name.clone());
-                }
-            } else {
-                // New proc
+
+        // New procs (in after but not before)
+        for proc_name in other.procs.difference(&self.procs) {
+            new_or_modified_procs.push(proc_name.clone());
+        }
+
+        // Modified procs (exist in both and were touched)
+        for proc_name in modified_procs {
+            if self.procs.contains(proc_name) && other.procs.contains(proc_name) {
+                // Proc existed before and still exists, and was touched
                 new_or_modified_procs.push(proc_name.clone());
             }
         }
 
         // Detect deleted procs
         let deleted_procs: Vec<String> = self.procs
-            .keys()
-            .filter(|name| !other.procs.contains_key(*name))
+            .difference(&other.procs)
             .cloned()
             .collect();
 
@@ -597,6 +606,21 @@ impl StatePersistence {
 
         // Calculate SHA1 hash
         let hash = Self::sha1_hash(&content);
+
+        // Check if this proc already has the same hash in the index
+        let index_path = self.state_path.join("procs/_index");
+        if index_path.exists() {
+            if let Ok(index_content) = fs::read_to_string(&index_path) {
+                for line in index_content.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 && parts[0] == proc_name && parts[1] == hash {
+                        // Hash unchanged, skip save
+                        debug!("Proc {} unchanged (hash {}), skipping save", proc_name, hash);
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // Create procs directory if needed
         let procs_dir = self.state_path.join("procs");

@@ -3,6 +3,7 @@ use crate::state::{InterpreterState, StatePersistence, UserInfo};
 use crate::tcl_wrapper::SafeTclInterp;
 use crate::types::ChannelMembers;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -655,7 +656,11 @@ impl TclThreadWorker {
         let mut output = output;
         if let Ok(state_after) = InterpreterState::capture(self.interp.interpreter()) {
             if let Ok(state_before) = state_before {
-                let changes = state_before.diff(&state_after);
+                // Get list of procs that were modified during this eval
+                let modified_procs = InterpreterState::get_modified_procs(self.interp.interpreter())
+                    .unwrap_or_else(|_| HashSet::new());
+
+                let changes = state_before.diff(&state_after, &modified_procs);
 
                 if changes.has_changes() {
                     debug!("State changed: {:?}", changes);
