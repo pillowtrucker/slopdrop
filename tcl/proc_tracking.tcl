@@ -29,9 +29,13 @@ rename proc ::slopdrop::_original_proc
     }
 
     # Call original proc command in the caller's namespace using uplevel
-    uplevel 1 [list ::slopdrop::_original_proc $name $args $body]
+    # Only track if the proc creation succeeds
+    if {[catch {uplevel 1 [list ::slopdrop::_original_proc $name $args $body]} error]} {
+        # Proc creation failed, propagate the error without tracking
+        return -code error $error
+    }
 
-    # Track the fully qualified proc name
+    # Track the fully qualified proc name (only reached if creation succeeded)
     global slopdrop_modified_procs
     if {[lsearch -exact $slopdrop_modified_procs $qualified_name] == -1} {
         lappend slopdrop_modified_procs $qualified_name
@@ -41,9 +45,19 @@ rename proc ::slopdrop::_original_proc
 # Helper proc to get and clear the modified procs list
 ::slopdrop::_original_proc ::slopdrop::get_modified_procs {} {
     global slopdrop_modified_procs
-    set result $slopdrop_modified_procs
+
+    # Filter out any invalid proc names before returning
+    # This provides defense-in-depth in case invalid names got into the list somehow
+    set validated [list]
+    foreach procname $slopdrop_modified_procs {
+        # Verify it's actually a valid procedure by testing info args
+        if {![catch {info args $procname}]} {
+            lappend validated $procname
+        }
+    }
+
     set slopdrop_modified_procs [list]
-    return $result
+    return $validated
 }
 
 # Helper proc to mark all existing procs as modified
