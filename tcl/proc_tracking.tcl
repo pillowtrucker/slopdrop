@@ -14,8 +14,13 @@ if {![info exists ::slopdrop_traced_vars]} {
 
 # Rename built-in commands to protect them from user-defined procs
 # User code might define `proc trace {}` which would override the built-in
-rename proc ::slopdrop::_original_proc
-rename trace ::slopdrop::_original_trace
+# Only rename if not already renamed (important for hot-reloading)
+if {[llength [info commands ::slopdrop::_original_proc]] == 0} {
+    rename proc ::slopdrop::_original_proc
+}
+if {[llength [info commands ::slopdrop::_original_trace]] == 0} {
+    rename trace ::slopdrop::_original_trace
+}
 
 # Create wrapper that tracks proc definitions
 # Must use ::slopdrop::_original_proc since we just renamed proc
