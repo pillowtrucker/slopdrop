@@ -619,7 +619,13 @@ impl TclThreadWorker {
             self.handle_chanlist_command(request);
             return;
         }
-        if code_trimmed.starts_with("stock::") {
+        // Only intercept specific stock commands that need Rust backend
+        // stock::chart is handled purely in TCL
+        if code_trimmed.starts_with("stock::quote ")
+            || code_trimmed.starts_with("stock::price ")
+            || code_trimmed.starts_with("stock::detail ")
+            || code_trimmed.starts_with("stock::history ")
+        {
             self.handle_stock_command(request);
             return;
         }
