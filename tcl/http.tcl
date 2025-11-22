@@ -5,6 +5,10 @@
 # Don't "package require http" as it conflicts with our http ensemble
 package require TclCurl
 
+# Force UTF-8 encoding for proper Unicode handling in HTTP responses
+# This is now allowed by the modified encoding.tcl wrapper
+encoding system utf-8
+
 namespace eval httpx {
     variable requests_per_eval 5
     variable requests_per_minute 25
@@ -274,29 +278,31 @@ namespace eval httpx {
             error [curl::easystrerror $curlErrorNumber]
         }
 
-        # Extract charset from Content-Type header and convert to UTF-8 if needed
-        set charset "utf-8"
-        if {[info exists http_resp_header(Content-Type)]} {
-            set content_type $http_resp_header(Content-Type)
-            if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
-                set charset [string trim $detected_charset]
-            }
-        }
-
-        # Convert from detected charset to UTF-8 if needed and if html is not empty
-        if {$html ne "" && [string tolower $charset] ne "utf-8" && [string tolower $charset] ne "utf8"} {
-            # Try to convert from detected charset to UTF-8
+        # Fix encoding: TclCurl may interpret UTF-8 bytes as Latin-1
+        # We need to convert back to bytes and re-interpret as UTF-8
+        if {$html ne ""} {
+            # Try to fix garbled UTF-8 that was interpreted as Latin-1
+            # First convert the string back to bytes as if it were Latin-1
+            # Then re-interpret those bytes as UTF-8
             if {[catch {
-                set html [encoding convertfrom $charset $html]
+                set bytes [encoding convertto iso8859-1 $html]
+                set html [encoding convertfrom utf-8 $bytes]
             } err]} {
-                # If conversion fails, try common fallback encodings
-                foreach fallback {iso8859-1 cp1252} {
-                    if {[catch {
-                        set html [encoding convertfrom $fallback $html]
-                        break
-                    }]} {
-                        # Continue to next fallback
+                # If that fails, try to detect charset from headers
+                set charset "utf-8"
+                if {[info exists http_resp_header(Content-Type)]} {
+                    set content_type $http_resp_header(Content-Type)
+                    if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
+                        set charset [string trim $detected_charset]
                     }
+                }
+
+                # Try converting from detected charset
+                if {[catch {
+                    set bytes [encoding convertto iso8859-1 $html]
+                    set html [encoding convertfrom $charset $bytes]
+                }]} {
+                    # If all else fails, leave as is
                 }
             }
         }
@@ -360,29 +366,31 @@ namespace eval httpx {
             error [curl::easystrerror $curlErrorNumber]
         }
 
-        # Extract charset from Content-Type header and convert to UTF-8 if needed
-        set charset "utf-8"
-        if {[info exists http_resp_header(Content-Type)]} {
-            set content_type $http_resp_header(Content-Type)
-            if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
-                set charset [string trim $detected_charset]
-            }
-        }
-
-        # Convert from detected charset to UTF-8 if needed and if html is not empty
-        if {$html ne "" && [string tolower $charset] ne "utf-8" && [string tolower $charset] ne "utf8"} {
-            # Try to convert from detected charset to UTF-8
+        # Fix encoding: TclCurl may interpret UTF-8 bytes as Latin-1
+        # We need to convert back to bytes and re-interpret as UTF-8
+        if {$html ne ""} {
+            # Try to fix garbled UTF-8 that was interpreted as Latin-1
+            # First convert the string back to bytes as if it were Latin-1
+            # Then re-interpret those bytes as UTF-8
             if {[catch {
-                set html [encoding convertfrom $charset $html]
+                set bytes [encoding convertto iso8859-1 $html]
+                set html [encoding convertfrom utf-8 $bytes]
             } err]} {
-                # If conversion fails, try common fallback encodings
-                foreach fallback {iso8859-1 cp1252} {
-                    if {[catch {
-                        set html [encoding convertfrom $fallback $html]
-                        break
-                    }]} {
-                        # Continue to next fallback
+                # If that fails, try to detect charset from headers
+                set charset "utf-8"
+                if {[info exists http_resp_header(Content-Type)]} {
+                    set content_type $http_resp_header(Content-Type)
+                    if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
+                        set charset [string trim $detected_charset]
                     }
+                }
+
+                # Try converting from detected charset
+                if {[catch {
+                    set bytes [encoding convertto iso8859-1 $html]
+                    set html [encoding convertfrom $charset $bytes]
+                }]} {
+                    # If all else fails, leave as is
                 }
             }
         }
