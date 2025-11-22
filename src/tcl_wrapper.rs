@@ -66,16 +66,10 @@ impl SafeTclInterp {
             debug!("Bot will work but HTTP commands will not be available");
         }
 
-        // Inject stocks commands (ASCII charts for stock data)
+        // Inject stocks commands (includes both API wrappers and charting)
         if let Err(e) = interpreter.eval(crate::http_tcl_commands::stocks_commands().as_str()) {
             debug!("Stocks commands not available: {:?}", e);
-            debug!("Bot will work but stock charts will not be available");
-        }
-
-        // Inject stock wrapper commands (TCL procs that call Rust backend)
-        if let Err(e) = interpreter.eval(crate::http_tcl_commands::stock_wrappers().as_str()) {
-            debug!("Stock wrappers not available: {:?}", e);
-            debug!("Bot will work but stock commands may not be callable from TCL");
+            debug!("Bot will work but stock functionality will not be available");
         }
 
         // Inject SHA1 command BEFORE making interpreter safe
@@ -401,14 +395,9 @@ impl SafeTclInterp {
             debug!("Failed to reload HTTP commands: {:?}", e);
         }
 
-        // Reload stocks commands
+        // Reload stocks commands (includes both API and charting)
         if let Err(e) = self.interpreter.eval(crate::http_tcl_commands::stocks_commands().as_str()) {
             debug!("Failed to reload stocks commands: {:?}", e);
-        }
-
-        // Reload stock wrappers
-        if let Err(e) = self.interpreter.eval(crate::http_tcl_commands::stock_wrappers().as_str()) {
-            debug!("Failed to reload stock wrappers: {:?}", e);
         }
 
         // Reload SHA1 command
