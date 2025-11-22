@@ -55,3 +55,16 @@ pub fn stocks_commands() -> String {
         }
     }
 }
+
+pub fn stock_wrappers() -> String {
+    let tcl_dir = get_tcl_dir();
+    let file_path = tcl_dir.join("stock_wrappers.tcl");
+
+    match fs::read_to_string(&file_path) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to load stock_wrappers.tcl: {}. Using embedded version.", e);
+            include_str!("../tcl/stock_wrappers.tcl").to_string()
+        }
+    }
+}

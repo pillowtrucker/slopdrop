@@ -3,20 +3,13 @@
 
 namespace eval stock {
 
-    # Generate ASCII art chart from stock history
-    # Args: symbol - stock symbol (e.g., "AAPL")
-    #       days - number of days to chart (default: 7)
+    # Generate ASCII art chart from stock history data
+    # Args: symbol - stock symbol
+    #       history_data - list of {timestamp price} pairs
     # Returns: ASCII chart as a string
-    proc chart {symbol {days 7}} {
-        # Validate days parameter
-        if {![string is integer -strict $days] || $days < 1 || $days > 30} {
-            error "days must be an integer between 1 and 30"
-        }
-
-        # Get historical data from Rust backend
-        set history [stock::history $symbol $days]
-
-        if {[llength $history] == 0} {
+    # Note: This is called from Rust with pre-fetched historical data
+    proc chart_from_data {symbol history_data} {
+        if {[llength $history_data] == 0} {
             error "No historical data available for $symbol"
         }
 
@@ -24,7 +17,7 @@ namespace eval stock {
         set prices [list]
         set timestamps [list]
 
-        foreach datapoint $history {
+        foreach datapoint $history_data {
             lassign $datapoint timestamp price
             lappend timestamps $timestamp
             lappend prices $price
