@@ -249,6 +249,54 @@ impl StockClient {
             format!("{:.2}", quote.change_percent)
         ))
     }
+
+    /// Get historical quotes for charting (up to 30 days)
+    pub(crate) fn get_historical_quotes(&self, symbol: &str, days: usize) -> Result<Vec<(i64, f64)>> {
+        // Check rate limit
+        if let Ok(mut limiter) = self.rate_limiter.lock() {
+            limiter.check_and_record()?;
+        } else {
+            return Err(anyhow!("Failed to acquire rate limiter lock"));
+        }
+
+        debug!("Fetching historical quotes for symbol: {} ({} days)", symbol, days);
+
+        // Calculate time range for the query
+        use yahoo_finance_api::time::{OffsetDateTime, Duration};
+        let now = OffsetDateTime::now_utc();
+        let days_duration = Duration::days(days as i64);
+        let start_time = now - days_duration;
+
+        // Fetch from Yahoo Finance
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow!("Failed to create Tokio runtime: {}", e))?;
+
+        let response = runtime.block_on(async {
+            self.provider.get_quote_history(symbol, start_time, now).await
+        })
+        .map_err(|e| {
+            warn!("Failed to fetch historical quotes for {}: {:?}", symbol, e);
+            anyhow!("Failed to fetch historical stock data: {}", e)
+        })?;
+
+        let quotes = response.quotes().map_err(|e| anyhow!("Failed to get quotes: {}", e))?;
+
+        // Return (timestamp, close_price) pairs
+        let mut result: Vec<(i64, f64)> = quotes
+            .iter()
+            .map(|q| (q.timestamp, q.close))
+            .collect();
+
+        // Limit to requested number of days (in case we got more than requested)
+        if result.len() > days * 2 {
+            // Allow up to 2x requested days to account for market hours
+            result = result[result.len() - (days * 2)..].to_vec();
+        }
+
+        Ok(result)
+    }
 }
 
 // Global stock client instance
@@ -292,7 +340,7 @@ pub fn handle_stock_command(command: &str) -> Result<String> {
     let parts: Vec<&str> = command.trim().split_whitespace().collect();
 
     if parts.len() < 2 {
-        return Err(anyhow!("Usage: stock::command <symbol>"));
+        return Err(anyhow!("Usage: stock::command <symbol> [days]"));
     }
 
     let cmd = parts[0];
@@ -315,6 +363,24 @@ pub fn handle_stock_command(command: &str) -> Result<String> {
                 format!("{:.2}", quote.change_percent),
                 quote.volume
             ))
+        }
+        "stock::history" => {
+            // Get optional days parameter (default to 7)
+            let days = if parts.len() > 2 {
+                parts[2].parse::<usize>().unwrap_or(7)
+            } else {
+                7
+            };
+
+            let history = STOCK_CLIENT.get_historical_quotes(symbol, days)?;
+
+            // Format as TCL list: {timestamp1 price1} {timestamp2 price2} ...
+            let formatted: Vec<String> = history
+                .iter()
+                .map(|(ts, price)| format!("{{{} {:.2}}}", ts, price))
+                .collect();
+
+            Ok(formatted.join(" "))
         }
         _ => Err(anyhow!("Unknown stock command: {}", cmd)),
     }
