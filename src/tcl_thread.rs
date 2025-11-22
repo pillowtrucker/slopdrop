@@ -619,7 +619,13 @@ impl TclThreadWorker {
             self.handle_chanlist_command(request);
             return;
         }
-        if code_trimmed.starts_with("stock::") {
+        // Intercept stock commands that need Rust backend
+        if code_trimmed.starts_with("stock::quote ")
+            || code_trimmed.starts_with("stock::price ")
+            || code_trimmed.starts_with("stock::detail ")
+            || code_trimmed.starts_with("stock::history ")
+            || code_trimmed.starts_with("stock::chart ")
+        {
             self.handle_stock_command(request);
             return;
         }
@@ -902,6 +908,65 @@ impl TclThreadWorker {
 
     fn handle_stock_command(&self, request: EvalRequest) {
         let code = request.code.trim();
+
+        // Special handling for stock::chart - needs to call TCL code with data
+        if code.starts_with("stock::chart ") {
+            let parts: Vec<&str> = code.split_whitespace().collect();
+            if parts.len() < 2 {
+                let _ = request.response_tx.send(EvalResult {
+                    output: "error: Usage: stock::chart <symbol> [days] [interval]".to_string(),
+                    is_error: true,
+                    commit_info: None,
+                });
+                return;
+            }
+
+            let symbol = parts[1];
+            let days = if parts.len() > 2 {
+                parts[2].parse::<usize>().unwrap_or(7)
+            } else {
+                7
+            };
+
+            // Get optional interval (e.g., "1m", "5m", "1h", "1d")
+            let interval_arg = if parts.len() > 3 {
+                format!(" {}", parts[3])
+            } else {
+                String::new()
+            };
+
+            // Get historical data from Rust backend
+            match crate::stock_commands::handle_stock_command(&format!("stock::history {} {}{}", symbol, days, interval_arg)) {
+                Ok(history_data) => {
+                    // Call TCL chart_from_data with the history
+                    let tcl_code = format!("stock::chart_from_data {{{}}} {{{}}}", symbol, history_data);
+                    match self.interp.interpreter().eval(tcl_code.as_str()) {
+                        Ok(result) => {
+                            let _ = request.response_tx.send(EvalResult {
+                                output: result.to_string(),
+                                is_error: false,
+                                commit_info: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = request.response_tx.send(EvalResult {
+                                output: format!("error: Failed to generate chart: {:?}", e),
+                                is_error: true,
+                                commit_info: None,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = request.response_tx.send(EvalResult {
+                        output: format!("error: {}", e),
+                        is_error: true,
+                        commit_info: None,
+                    });
+                }
+            }
+            return;
+        }
 
         // Call the stock command handler from stock_commands module
         match crate::stock_commands::handle_stock_command(code) {

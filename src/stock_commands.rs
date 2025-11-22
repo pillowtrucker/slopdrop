@@ -249,6 +249,70 @@ impl StockClient {
             format!("{:.2}", quote.change_percent)
         ))
     }
+
+    /// Get historical quotes for charting with configurable interval
+    ///
+    /// # Arguments
+    /// * `symbol` - Stock symbol (e.g., "AAPL")
+    /// * `days` - Number of days to fetch
+    /// * `interval` - Optional interval ("1m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo")
+    ///                If None, uses smart defaults based on the time range
+    pub(crate) fn get_historical_quotes(&self, symbol: &str, days: usize, interval: Option<&str>) -> Result<Vec<(i64, f64)>> {
+        // Check rate limit
+        if let Ok(mut limiter) = self.rate_limiter.lock() {
+            limiter.check_and_record()?;
+        } else {
+            return Err(anyhow!("Failed to acquire rate limiter lock"));
+        }
+
+        // Smart defaults based on time range
+        let interval_str = match interval {
+            Some(i) => i,
+            None => {
+                if days == 1 {
+                    "5m"  // 1 day: 5-minute intervals
+                } else if days <= 7 {
+                    "1h"  // 2-7 days: hourly intervals
+                } else if days <= 60 {
+                    "1d"  // 8-60 days: daily intervals
+                } else {
+                    "1wk" // 60+ days: weekly intervals
+                }
+            }
+        };
+
+        debug!("Fetching historical quotes for symbol: {} ({} days, {} interval)", symbol, days, interval_str);
+
+        // Calculate time range for the query
+        use yahoo_finance_api::time::{OffsetDateTime, Duration};
+        let now = OffsetDateTime::now_utc();
+        let days_duration = Duration::days(days as i64);
+        let start_time = now - days_duration;
+
+        // Fetch from Yahoo Finance with interval
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow!("Failed to create Tokio runtime: {}", e))?;
+
+        let response = runtime.block_on(async {
+            self.provider.get_quote_history_interval(symbol, start_time, now, interval_str).await
+        })
+        .map_err(|e| {
+            warn!("Failed to fetch historical quotes for {}: {:?}", symbol, e);
+            anyhow!("Failed to fetch historical stock data: {}", e)
+        })?;
+
+        let quotes = response.quotes().map_err(|e| anyhow!("Failed to get quotes: {}", e))?;
+
+        // Return (timestamp, close_price) pairs
+        let result: Vec<(i64, f64)> = quotes
+            .iter()
+            .map(|q| (q.timestamp, q.close))
+            .collect();
+
+        Ok(result)
+    }
 }
 
 // Global stock client instance
@@ -292,7 +356,7 @@ pub fn handle_stock_command(command: &str) -> Result<String> {
     let parts: Vec<&str> = command.trim().split_whitespace().collect();
 
     if parts.len() < 2 {
-        return Err(anyhow!("Usage: stock::command <symbol>"));
+        return Err(anyhow!("Usage: stock::command <symbol> [days]"));
     }
 
     let cmd = parts[0];
@@ -315,6 +379,31 @@ pub fn handle_stock_command(command: &str) -> Result<String> {
                 format!("{:.2}", quote.change_percent),
                 quote.volume
             ))
+        }
+        "stock::history" => {
+            // Get optional days parameter (default to 7)
+            let days = if parts.len() > 2 {
+                parts[2].parse::<usize>().unwrap_or(7)
+            } else {
+                7
+            };
+
+            // Get optional interval parameter (uses smart defaults if not provided)
+            let interval = if parts.len() > 3 {
+                Some(parts[3])
+            } else {
+                None
+            };
+
+            let history = STOCK_CLIENT.get_historical_quotes(symbol, days, interval)?;
+
+            // Format as TCL list: {timestamp1 price1} {timestamp2 price2} ...
+            let formatted: Vec<String> = history
+                .iter()
+                .map(|(ts, price)| format!("{{{} {:.2}}}", ts, price))
+                .collect();
+
+            Ok(formatted.join(" "))
         }
         _ => Err(anyhow!("Unknown stock command: {}", cmd)),
     }

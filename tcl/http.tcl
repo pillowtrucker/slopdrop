@@ -264,7 +264,8 @@ namespace eval httpx {
             -headervar http_resp_header \
             -timeout [expr {$time_limit / 1000}] \
             -followlocation 1 \
-            -maxredirs 5
+            -maxredirs 5 \
+            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)"
 
         catch { $curlHandle perform } curlErrorNumber
 
@@ -320,7 +321,8 @@ namespace eval httpx {
             -postfields $body \
             -timeout [expr {$time_limit / 1000}] \
             -followlocation 1 \
-            -maxredirs 5
+            -maxredirs 5 \
+            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)"
 
         catch { $curlHandle perform } curlErrorNumber
 

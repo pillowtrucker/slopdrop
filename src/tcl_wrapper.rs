@@ -66,6 +66,12 @@ impl SafeTclInterp {
             debug!("Bot will work but HTTP commands will not be available");
         }
 
+        // Inject stocks commands (includes both API wrappers and charting)
+        if let Err(e) = interpreter.eval(crate::http_tcl_commands::stocks_commands().as_str()) {
+            debug!("Stocks commands not available: {:?}", e);
+            debug!("Bot will work but stock functionality will not be available");
+        }
+
         // Inject SHA1 command BEFORE making interpreter safe
         // (package require sha1 needs unrestricted access to TCL package system)
         if let Err(e) = interpreter.eval(crate::smeggdrop_commands::sha1_command().as_str()) {
@@ -387,6 +393,11 @@ impl SafeTclInterp {
         // We can still eval new code in a safe interpreter
         if let Err(e) = self.interpreter.eval(crate::http_tcl_commands::http_commands().as_str()) {
             debug!("Failed to reload HTTP commands: {:?}", e);
+        }
+
+        // Reload stocks commands (includes both API and charting)
+        if let Err(e) = self.interpreter.eval(crate::http_tcl_commands::stocks_commands().as_str()) {
+            debug!("Failed to reload stocks commands: {:?}", e);
         }
 
         // Reload SHA1 command

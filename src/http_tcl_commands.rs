@@ -42,3 +42,16 @@ pub fn http_commands() -> String {
         }
     }
 }
+
+pub fn stocks_commands() -> String {
+    let tcl_dir = get_tcl_dir();
+    let file_path = tcl_dir.join("stocks.tcl");
+
+    match fs::read_to_string(&file_path) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to load stocks.tcl: {}. Using embedded version.", e);
+            include_str!("../tcl/stocks.tcl").to_string()
+        }
+    }
+}

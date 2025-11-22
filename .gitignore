@@ -1118,3 +1118,7 @@ tests/ergo/ergo
 tests/ergo/*.db
 tests/ergo/*.db-shm
 tests/ergo/*.db-wal
+
+# Runtime generated files
+.slopdrop_history
+config.toml
