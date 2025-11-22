@@ -7,9 +7,17 @@ if {[llength [info commands _tcl_encoding_original]] == 0} {
 }
 
 proc encoding args {
-    # Block system encoding modification
+    # Block system encoding modification except for UTF-8
+    # This allows proper Unicode handling while preventing security issues
     if {[string match s* [lindex $args 0]] && [llength $args] > 1} {
-        error "can't modify system encoding"
+        set encoding_name [lindex $args 1]
+        # Allow UTF-8 encoding (needed for proper HTTP response handling)
+        if {[string tolower $encoding_name] eq "utf-8" ||
+            [string tolower $encoding_name] eq "utf8"} {
+            uplevel 1 [list _tcl_encoding_original {*}$args]
+            return
+        }
+        error "can't modify system encoding (except to utf-8)"
     }
     # Call TCL's built-in encoding command (renamed above)
     uplevel 1 [list _tcl_encoding_original {*}$args]

@@ -106,6 +106,11 @@ impl SafeTclInterp {
             debug!("TclCurl package not available (HTTP/HTTPS will not work): {:?}", e);
         }
 
+        // Force UTF-8 encoding for proper Unicode handling before making interpreter safe
+        // This ensures HTTP responses and other text data are correctly interpreted
+        interpreter.eval("encoding system utf-8")
+            .map_err(|e| anyhow::anyhow!("Failed to set UTF-8 encoding: {:?}", e))?;
+
         // Make the interpreter safe (AFTER loading packages)
         Self::setup_safe_interp(&interpreter)?;
 
