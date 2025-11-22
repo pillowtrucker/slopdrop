@@ -70,9 +70,9 @@ namespace eval stock {
         set change [expr {$current_price - $first_price}]
         set change_pct [expr {($change / $first_price) * 100.0}]
 
-        # Build the chart header
+        # Build the chart header with data point count
         set sign [expr {$change >= 0 ? "+" : ""}]
-        append result "\002$symbol\002 \$[format "%.2f" $current_price] ($sign[format "%.2f" $change_pct]%)\n"
+        append result "\002$symbol\002 \$[format "%.2f" $current_price] ($sign[format "%.2f" $change_pct]%) - $num_points data points\n"
 
         # Create the chart grid
         set chart_lines [list]

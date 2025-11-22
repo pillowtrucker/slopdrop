@@ -914,7 +914,7 @@ impl TclThreadWorker {
             let parts: Vec<&str> = code.split_whitespace().collect();
             if parts.len() < 2 {
                 let _ = request.response_tx.send(EvalResult {
-                    output: "error: Usage: stock::chart <symbol> [days]".to_string(),
+                    output: "error: Usage: stock::chart <symbol> [days] [interval]".to_string(),
                     is_error: true,
                     commit_info: None,
                 });
@@ -928,8 +928,15 @@ impl TclThreadWorker {
                 7
             };
 
+            // Get optional interval (e.g., "1m", "5m", "1h", "1d")
+            let interval_arg = if parts.len() > 3 {
+                format!(" {}", parts[3])
+            } else {
+                String::new()
+            };
+
             // Get historical data from Rust backend
-            match crate::stock_commands::handle_stock_command(&format!("stock::history {} {}", symbol, days)) {
+            match crate::stock_commands::handle_stock_command(&format!("stock::history {} {}{}", symbol, days, interval_arg)) {
                 Ok(history_data) => {
                     // Call TCL chart_from_data with the history
                     let tcl_code = format!("stock::chart_from_data {{{}}} {{{}}}", symbol, history_data);
