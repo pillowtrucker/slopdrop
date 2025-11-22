@@ -222,10 +222,15 @@ namespace eval stock {
         # Add X-axis
         append result "        [string repeat "-" $chart_width]\n"
 
-        # Add time range label
+        # Add time range label with proper spacing
         set start_date [clock format [lindex $timestamps 0] -format "%m/%d"]
         set end_date [clock format [lindex $timestamps end] -format "%m/%d"]
-        append result "        $start_date[string repeat " " [expr {$chart_width - 10}]]$end_date\n"
+        set start_len [string length $start_date]
+        set end_len [string length $end_date]
+
+        # Calculate spacing (ensure at least 1 space between dates)
+        set spacing [expr {max(1, $chart_width - $start_len - $end_len)}]
+        append result "        $start_date[string repeat " " $spacing]$end_date\n"
 
         return $result
     }
