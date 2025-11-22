@@ -274,6 +274,33 @@ namespace eval httpx {
             error [curl::easystrerror $curlErrorNumber]
         }
 
+        # Extract charset from Content-Type header and convert to UTF-8 if needed
+        set charset "utf-8"
+        if {[info exists http_resp_header(Content-Type)]} {
+            set content_type $http_resp_header(Content-Type)
+            if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
+                set charset [string trim $detected_charset]
+            }
+        }
+
+        # Convert from detected charset to UTF-8 if needed and if html is not empty
+        if {$html ne "" && [string tolower $charset] ne "utf-8" && [string tolower $charset] ne "utf8"} {
+            # Try to convert from detected charset to UTF-8
+            if {[catch {
+                set html [encoding convertfrom $charset $html]
+            } err]} {
+                # If conversion fails, try common fallback encodings
+                foreach fallback {iso8859-1 cp1252} {
+                    if {[catch {
+                        set html [encoding convertfrom $fallback $html]
+                        break
+                    }]} {
+                        # Continue to next fallback
+                    }
+                }
+            }
+        }
+
         set ret [list]
         lappend ret [$curlHandle getinfo responsecode]
         lappend ret [array get http_resp_header]
@@ -312,11 +339,13 @@ namespace eval httpx {
         # Use TclCurl for the request
         set curlHandle [curl::init]
         set html {}
+        array set http_resp_header [list]
 
         $curlHandle configure \
             -url $url \
             -nosignal 1 \
             -bodyvar html \
+            -headervar http_resp_header \
             -post 1 \
             -postfields $body \
             -timeout [expr {$time_limit / 1000}] \
@@ -331,11 +360,39 @@ namespace eval httpx {
             error [curl::easystrerror $curlErrorNumber]
         }
 
+        # Extract charset from Content-Type header and convert to UTF-8 if needed
+        set charset "utf-8"
+        if {[info exists http_resp_header(Content-Type)]} {
+            set content_type $http_resp_header(Content-Type)
+            if {[regexp -nocase {charset\s*=\s*([^\s;\"']+)} $content_type -> detected_charset]} {
+                set charset [string trim $detected_charset]
+            }
+        }
+
+        # Convert from detected charset to UTF-8 if needed and if html is not empty
+        if {$html ne "" && [string tolower $charset] ne "utf-8" && [string tolower $charset] ne "utf8"} {
+            # Try to convert from detected charset to UTF-8
+            if {[catch {
+                set html [encoding convertfrom $charset $html]
+            } err]} {
+                # If conversion fails, try common fallback encodings
+                foreach fallback {iso8859-1 cp1252} {
+                    if {[catch {
+                        set html [encoding convertfrom $fallback $html]
+                        break
+                    }]} {
+                        # Continue to next fallback
+                    }
+                }
+            }
+        }
+
         set ret [list]
         lappend ret [$curlHandle getinfo responsecode]
-        lappend ret {}  ;# headers not captured in post
+        lappend ret [array get http_resp_header]
         lappend ret $html
 
+        array unset http_resp_header
         $curlHandle cleanup
 
         # Record actual bytes transferred (request body + response body)
