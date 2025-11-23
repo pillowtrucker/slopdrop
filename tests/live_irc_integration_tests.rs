@@ -1232,11 +1232,11 @@ async fn test_live_linkresolver_enable_disable() {
     let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
     let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
 
-    // Test enable
+    // Test enable (might already be enabled by default)
     client.send_privmsg(&channel, "tcl linkresolver enable").expect("Failed to send");
 
     if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
-        assert!(response.contains("enabled"));
+        assert!(response.contains("enabled") || response.contains("already"));
     } else {
         panic!("No response received for linkresolver enable");
     }
@@ -1248,6 +1248,15 @@ async fn test_live_linkresolver_enable_disable() {
         assert!(response.contains("disabled"));
     } else {
         panic!("No response received for linkresolver disable");
+    }
+
+    // Test enable again (now it should enable)
+    client.send_privmsg(&channel, "tcl linkresolver enable").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("enabled"));
+    } else {
+        panic!("No response received for second linkresolver enable");
     }
 
     let _ = fs::remove_dir_all(&state_path);
