@@ -315,12 +315,13 @@ namespace eval ::linkresolver {
 # Auto-register example resolvers when this file is loaded
 # Users can customize which resolvers to enable
 
+# Built-in resolvers (fourth param = 1 means builtin, won't be persisted)
 # Uncomment the ones you want to use:
-::linkresolver::register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10
-::linkresolver::register {bsky\.app/profile/.*/(post|feed)} ::linkresolver::bluesky_resolver 10
-# ::linkresolver::register {(twitter\.com|x\.com)/.*/(status|statuses)/} ::linkresolver::twitter_resolver 10
-# ::linkresolver::register {reddit\.com/r/[^/]+/comments/} ::linkresolver::reddit_resolver 10
-# ::linkresolver::register {github\.com/[^/]+/[^/]+} ::linkresolver::github_resolver 10
+::linkresolver::register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10 1
+::linkresolver::register {bsky\.app/profile/.*/(post|feed)} ::linkresolver::bluesky_resolver 10 1
+# ::linkresolver::register {(twitter\.com|x\.com)/.*/(status|statuses)/} ::linkresolver::twitter_resolver 10 1
+# ::linkresolver::register {reddit\.com/r/[^/]+/comments/} ::linkresolver::reddit_resolver 10 1
+# ::linkresolver::register {github\.com/[^/]+/[^/]+} ::linkresolver::github_resolver 10 1
 
 # Enable auto-resolution by default (comment out if you want manual control)
 ::linkresolver::enable

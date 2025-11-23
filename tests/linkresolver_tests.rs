@@ -54,8 +54,8 @@ fn test_linkresolver_list_empty() {
     // Disable auto-enable to get clean state
     let _ = interp.eval("linkresolver disable");
 
-    // List should be empty initially (after clearing built-in resolvers)
-    let result = interp.eval("set ::linkresolver::resolvers {}; linkresolver list").unwrap();
+    // List should be empty initially (after clearing both builtin and custom resolvers)
+    let result = interp.eval("set ::linkresolver::builtin_resolvers {}; set ::linkresolver_custom_resolvers {}; linkresolver list").unwrap();
     assert!(result.contains("No custom resolvers registered"));
 }
 
@@ -73,7 +73,7 @@ fn test_linkresolver_register_custom_resolver() {
 
     // Register the resolver
     let result = interp.eval(r#"linkresolver register {example\.com} test_resolver 50"#).unwrap();
-    assert!(result.contains("Registered resolver"));
+    assert!(result.contains("Registered custom resolver") || result.contains("Registered resolver"));
 
     // List should show the registered resolver
     let result = interp.eval("linkresolver list").unwrap();
@@ -86,8 +86,9 @@ fn test_linkresolver_unregister_resolver() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
-    // Clear existing resolvers
-    interp.eval("set ::linkresolver::resolvers {}").unwrap();
+    // Clear existing resolvers (both builtin and custom)
+    interp.eval("set ::linkresolver::builtin_resolvers {}").unwrap();
+    interp.eval("set ::linkresolver_custom_resolvers {}").unwrap();
 
     // Create and register a test resolver
     interp.eval(r#"
@@ -238,8 +239,9 @@ fn test_linkresolver_find_resolver_match() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
-    // Clear existing resolvers
-    interp.eval("set ::linkresolver::resolvers {}").unwrap();
+    // Clear existing resolvers (both builtin and custom)
+    interp.eval("set ::linkresolver::builtin_resolvers {}").unwrap();
+    interp.eval("set ::linkresolver_custom_resolvers {}").unwrap();
 
     // Create and register a test resolver
     interp.eval(r#"
@@ -259,8 +261,9 @@ fn test_linkresolver_find_resolver_default() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
-    // Clear resolvers
-    interp.eval("set ::linkresolver::resolvers {}").unwrap();
+    // Clear resolvers (both builtin and custom)
+    interp.eval("set ::linkresolver::builtin_resolvers {}").unwrap();
+    interp.eval("set ::linkresolver_custom_resolvers {}").unwrap();
 
     // Find resolver for non-matching URL (should return default)
     let result = interp.eval(r#"::linkresolver::find_resolver "http://random-site.example.com""#).unwrap();
@@ -278,15 +281,23 @@ fn test_linkresolver_priority_ordering() {
         proc high_priority {url nick channel} { return "high" }
     "#).unwrap();
 
-    // Register with different priorities
-    interp.eval(r#"linkresolver register {test\.com} low_priority 100"#).unwrap();
-    interp.eval(r#"linkresolver register {test\.com} high_priority 10"#).unwrap();
+    // Register with different priorities and different patterns
+    interp.eval(r#"linkresolver register {lowprio\.com} low_priority 100"#).unwrap();
+    interp.eval(r#"linkresolver register {highprio\.com} high_priority 10"#).unwrap();
 
     // List should show high priority first
     let result = interp.eval("linkresolver list").unwrap();
-    let high_pos = result.find("high_priority").unwrap();
-    let low_pos = result.find("low_priority").unwrap();
-    assert!(high_pos < low_pos, "High priority resolver should appear before low priority");
+
+    // Find positions
+    if let Some(high_pos) = result.find("high_priority") {
+        if let Some(low_pos) = result.find("low_priority") {
+            assert!(high_pos < low_pos, "High priority resolver should appear before low priority");
+        } else {
+            panic!("low_priority not found in list");
+        }
+    } else {
+        panic!("high_priority not found in list");
+    }
 }
 
 // =============================================================================

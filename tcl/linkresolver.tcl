@@ -2,12 +2,17 @@
 # Automatically resolves links posted in channels with extensible resolver API
 
 namespace eval ::linkresolver {
-    # Configuration variables
+    # Configuration variables (not persisted)
     variable enabled 0
-    variable resolvers {}
+    variable builtin_resolvers {}  # Built-in resolvers from examples file
     variable cache_expiry 3600 ;# 1 hour cache
     variable max_title_length 200
     variable auto_resolve_enabled 0
+
+    # Initialize global variable for custom resolvers (persisted)
+    if {![info exists ::linkresolver_custom_resolvers]} {
+        set ::linkresolver_custom_resolvers {}
+    }
 
     # Initialize the link resolver
     proc init {} {
@@ -49,13 +54,20 @@ namespace eval ::linkresolver {
         return "Link resolver disabled"
     }
 
+    # Get combined list of all resolvers (builtin + custom)
+    proc get_all_resolvers {} {
+        variable builtin_resolvers
+        # Merge builtin and custom, sort by priority
+        set all_resolvers [concat $builtin_resolvers $::linkresolver_custom_resolvers]
+        return [lsort -integer -index 2 $all_resolvers]
+    }
+
     # Register a custom resolver
     # pattern: regex pattern to match URLs (e.g., {youtube\.com|youtu\.be})
     # proc: procedure name to call with (url, nick, channel)
     # priority: lower numbers = higher priority (default: 50)
-    proc register {pattern proc_name {priority 50}} {
-        variable resolvers
-
+    # builtin: if true, register as builtin (not persisted), default false
+    proc register {pattern proc_name {priority 50} {builtin 0}} {
         # Validate that the proc exists (check both global and namespaced procs)
         set proc_exists 0
         if {[llength [info procs $proc_name]]} {
@@ -70,8 +82,19 @@ namespace eval ::linkresolver {
             return -code error "Procedure $proc_name does not exist"
         }
 
-        # Check if pattern already registered
-        set idx [lsearch -index 0 $resolvers $pattern]
+        # Choose which list to modify
+        if {$builtin} {
+            variable builtin_resolvers
+            set resolvers_var builtin_resolvers
+        } else {
+            set resolvers_var ::linkresolver_custom_resolvers
+        }
+
+        # Get current list
+        upvar 0 $resolvers_var resolvers
+
+        # Check if pattern already registered in this list
+        set idx [lsearch -exact -index 0 $resolvers $pattern]
         if {$idx >= 0} {
             # Update existing resolver
             lset resolvers $idx [list $pattern $proc_name $priority]
@@ -82,31 +105,49 @@ namespace eval ::linkresolver {
         # Add new resolver and sort by priority
         lappend resolvers [list $pattern $proc_name $priority]
         set resolvers [lsort -integer -index 2 $resolvers]
-        return "Registered resolver for pattern: $pattern (priority: $priority)"
+
+        set type [expr {$builtin ? "built-in" : "custom"}]
+        return "Registered $type resolver for pattern: $pattern (priority: $priority)"
     }
 
     # Unregister a custom resolver
     proc unregister {pattern} {
-        variable resolvers
-        set idx [lsearch -exact -index 0 $resolvers $pattern]
-        if {$idx < 0} {
-            return -code error "No resolver registered for pattern: $pattern"
+        # Try to remove from custom resolvers first
+        set idx [lsearch -exact -index 0 $::linkresolver_custom_resolvers $pattern]
+        if {$idx >= 0} {
+            set ::linkresolver_custom_resolvers [lreplace $::linkresolver_custom_resolvers $idx $idx]
+            return "Unregistered custom resolver for pattern: $pattern"
         }
-        set resolvers [lreplace $resolvers $idx $idx]
-        return "Unregistered resolver for pattern: $pattern"
+
+        # Also check builtin (though users shouldn't unregister these)
+        variable builtin_resolvers
+        set idx [lsearch -exact -index 0 $builtin_resolvers $pattern]
+        if {$idx >= 0} {
+            set builtin_resolvers [lreplace $builtin_resolvers $idx $idx]
+            return "Unregistered built-in resolver for pattern: $pattern"
+        }
+
+        return -code error "No resolver registered for pattern: $pattern"
     }
 
     # List all registered resolvers
     proc list_resolvers {} {
-        variable resolvers
-        if {[llength $resolvers] == 0} {
+        set all_resolvers [get_all_resolvers]
+
+        if {[llength $all_resolvers] == 0} {
             return "No custom resolvers registered"
         }
 
         set result "Registered resolvers (by priority):\n"
-        foreach resolver $resolvers {
+        foreach resolver $all_resolvers {
             lassign $resolver pattern proc_name priority
-            append result "  \[$priority\] $pattern -> $proc_name\n"
+            # Determine if it's builtin or custom
+            variable builtin_resolvers
+            set type "custom"
+            if {[lsearch -exact -index 0 $builtin_resolvers $pattern] >= 0} {
+                set type "built-in"
+            }
+            append result "  \[$priority\] $pattern -> $proc_name ($type)\n"
         }
         return $result
     }
@@ -160,9 +201,9 @@ namespace eval ::linkresolver {
 
     # Find matching resolver for URL
     proc find_resolver {url} {
-        variable resolvers
+        set all_resolvers [get_all_resolvers]
 
-        foreach resolver $resolvers {
+        foreach resolver $all_resolvers {
             lassign $resolver pattern proc_name priority
             if {[regexp $pattern $url]} {
                 return $proc_name
