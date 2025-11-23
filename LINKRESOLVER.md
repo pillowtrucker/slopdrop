@@ -28,6 +28,40 @@ This will automatically start resolving links posted in channels.
 linkresolver disable
 ```
 
+## Persistence
+
+**Custom resolvers are automatically persisted** and will survive bot restarts. When you register a custom resolver, it's stored in the bot's git-backed state and will be restored when the bot restarts.
+
+**Built-in resolvers are NOT persisted** - they're registered fresh on each bot startup from `tcl/linkresolver_examples.tcl`. This keeps your git state clean and makes it easy to update built-in resolvers by editing the file.
+
+### What Gets Persisted
+
+✅ **Persisted (saved to git):**
+- Custom resolvers you register via `linkresolver register`
+- The resolver pattern, procedure name, and priority
+
+❌ **NOT Persisted (transient):**
+- Built-in resolvers (YouTube, Bluesky, etc.)
+- Enable/disable state (defaults to enabled if configured in examples file)
+- Cached URL results (cache is in-memory only)
+- The resolver procedure code itself (must be defined in your state as a normal proc)
+
+### Example
+
+```tcl
+# Define a custom resolver procedure (this gets persisted as a normal proc)
+proc my_site_resolver {url nick channel} {
+    return "My Site: $url"
+}
+
+# Register it (this registration gets persisted)
+linkresolver register {mysite\.com} my_site_resolver 20
+
+# After bot restart, both the proc and registration are restored!
+```
+
+**Note:** The resolver procedure itself must exist as a persisted proc in your bot's state. The link resolver only persists the *registration* (which pattern maps to which proc), not the procedure code.
+
 ## Built-in Example Resolvers
 
 The following resolvers are included and can be enabled in `tcl/linkresolver_examples.tcl`:
