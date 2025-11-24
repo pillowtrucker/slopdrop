@@ -942,3 +942,184 @@ impl StatePersistence {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ephemeral_vars_filtered_in_diff() {
+        // Create a "before" state with some regular vars
+        let before = InterpreterState {
+            procs: HashSet::new(),
+            vars: ["myvar", "anothervar"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        };
+
+        // Create an "after" state that includes ephemeral error variables
+        let after = InterpreterState {
+            procs: HashSet::new(),
+            vars: [
+                "myvar",      // existing var
+                "anothervar", // existing var
+                "newvar",     // new regular var
+                "errorInfo",  // ephemeral - should be filtered
+                "errorCode",  // ephemeral - should be filtered
+                "nick",       // context var - should be filtered
+                "channel",    // context var - should be filtered
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        };
+
+        // Simulate modified vars tracking
+        let modified_vars: HashSet<String> = ["newvar", "errorInfo", "errorCode"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Compute diff
+        let changes = before.diff(&after, &HashSet::new(), &modified_vars);
+
+        // Verify errorInfo and errorCode are NOT in new_vars
+        assert!(
+            !changes.new_vars.contains(&"errorInfo".to_string()),
+            "errorInfo should be filtered out"
+        );
+        assert!(
+            !changes.new_vars.contains(&"errorCode".to_string()),
+            "errorCode should be filtered out"
+        );
+
+        // Verify context vars are also filtered
+        assert!(
+            !changes.new_vars.contains(&"nick".to_string()),
+            "nick should be filtered out"
+        );
+        assert!(
+            !changes.new_vars.contains(&"channel".to_string()),
+            "channel should be filtered out"
+        );
+
+        // Verify regular new var IS included
+        assert!(
+            changes.new_vars.contains(&"newvar".to_string()),
+            "newvar should be included in changes"
+        );
+
+        // Verify existing vars are not marked as new
+        assert!(
+            !changes.new_vars.contains(&"myvar".to_string()),
+            "myvar was not modified so should not be in new_vars"
+        );
+    }
+
+    #[test]
+    fn test_ephemeral_vars_not_tracked_when_deleted() {
+        // Create a "before" state with ephemeral vars present
+        let before = InterpreterState {
+            procs: HashSet::new(),
+            vars: [
+                "myvar",
+                "errorInfo", // ephemeral
+                "errorCode", // ephemeral
+                "nick",      // context var
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        };
+
+        // Create an "after" state where they're gone
+        let after = InterpreterState {
+            procs: HashSet::new(),
+            vars: ["myvar"].iter().map(|s| s.to_string()).collect(),
+        };
+
+        // Compute diff
+        let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+
+        // Verify ephemeral vars are NOT in deleted_vars
+        assert!(
+            !changes.deleted_vars.contains(&"errorInfo".to_string()),
+            "errorInfo deletion should be ignored"
+        );
+        assert!(
+            !changes.deleted_vars.contains(&"errorCode".to_string()),
+            "errorCode deletion should be ignored"
+        );
+        assert!(
+            !changes.deleted_vars.contains(&"nick".to_string()),
+            "nick deletion should be ignored"
+        );
+
+        // Verify no changes are reported
+        assert!(changes.deleted_vars.is_empty(), "No vars should be deleted");
+        assert!(changes.new_vars.is_empty(), "No vars should be new");
+    }
+
+    #[test]
+    fn test_temp_validation_vars_filtered() {
+        // Test that temporary variables created during state capture are filtered
+        let before = InterpreterState {
+            procs: HashSet::new(),
+            vars: ["myvar"].iter().map(|s| s.to_string()).collect(),
+        };
+
+        let after = InterpreterState {
+            procs: HashSet::new(),
+            vars: [
+                "myvar",
+                "v",         // temp var from validation loop
+                "p",         // temp var from validation loop
+                "validated", // temp var from validation
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        };
+
+        let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+
+        // All temp vars should be filtered
+        assert!(
+            changes.new_vars.is_empty(),
+            "Temp validation vars should be filtered: {:?}",
+            changes.new_vars
+        );
+    }
+
+    #[test]
+    fn test_system_arrays_filtered() {
+        // Test that system arrays are filtered
+        let before = InterpreterState {
+            procs: HashSet::new(),
+            vars: HashSet::new(),
+        };
+
+        let after = InterpreterState {
+            procs: HashSet::new(),
+            vars: [
+                "slopdrop_channel_members",
+                "slopdrop_log_lines",
+                "slopdrop_modified_procs",
+                "nick_channel",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        };
+
+        let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+
+        // All system arrays should be filtered
+        assert!(
+            changes.new_vars.is_empty(),
+            "System arrays should be filtered: {:?}",
+            changes.new_vars
+        );
+    }
+}
