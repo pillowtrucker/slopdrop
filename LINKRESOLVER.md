@@ -5,6 +5,7 @@ The link auto-resolver automatically detects and resolves URLs posted in IRC cha
 ## Features
 
 - **Automatic URL Detection**: Detects http:// and https:// URLs in channel messages
+- **Smart Command Detection**: Skips URL resolution in TCL commands (messages starting with `tcl` or `tclAdmin`)
 - **Extensible Resolver API**: Register custom resolvers for specific domains/patterns
 - **Built-in Caching**: Prevents re-fetching the same URLs (1-hour cache by default)
 - **Priority System**: Control which resolver runs first
@@ -286,10 +287,11 @@ linkresolver register {wikipedia\.org/wiki/} wikipedia_resolver 5
 ## How It Works
 
 1. **URL Detection**: The linkresolver binds to TEXT events and uses regex to extract URLs
-2. **Pattern Matching**: Each URL is tested against registered resolver patterns in priority order
-3. **Resolution**: The matching resolver is called with the URL, nick, and channel
-4. **Caching**: Results are cached by URL hash to avoid redundant fetches
-5. **Output**: Non-empty results are sent to the channel via the `send` command
+2. **Command Filtering**: Skips processing if the message starts with `tcl` or `tclAdmin` (case insensitive)
+3. **Pattern Matching**: Each URL is tested against registered resolver patterns in priority order
+4. **Resolution**: The matching resolver is called with the URL, nick, and channel
+5. **Caching**: Results are cached by URL hash to avoid redundant fetches
+6. **Output**: Non-empty results are returned to the trigger system, which sends them to the channel
 
 ## Limitations
 
