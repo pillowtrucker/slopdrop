@@ -443,6 +443,45 @@ fn test_linkresolver_on_text_returns_messages() {
 }
 
 #[test]
+fn test_linkresolver_skips_tcl_commands() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Create a test resolver
+    interp.eval(r#"
+        proc test_resolver {url nick channel} {
+            return "Resolved: $url"
+        }
+    "#).unwrap();
+
+    // Register it
+    interp.eval(r#"linkresolver register {example\.com} test_resolver"#).unwrap();
+
+    // Enable linkresolver
+    interp.eval("linkresolver enable").unwrap();
+
+    // Test that TCL commands are skipped (lowercase)
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "tcl somecommand https://example.com/page""#).unwrap();
+    assert_eq!(result.trim(), "", "Should not resolve URLs in 'tcl' commands");
+
+    // Test with tclAdmin (lowercase)
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "tcladmin somecommand https://example.com/page""#).unwrap();
+    assert_eq!(result.trim(), "", "Should not resolve URLs in 'tcladmin' commands");
+
+    // Test with uppercase TCL
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "TCL somecommand https://example.com/page""#).unwrap();
+    assert_eq!(result.trim(), "", "Should not resolve URLs in 'TCL' commands (case insensitive)");
+
+    // Test with tclAdmin mixed case
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "TclAdmin somecommand https://example.com/page""#).unwrap();
+    assert_eq!(result.trim(), "", "Should not resolve URLs in 'TclAdmin' commands (case insensitive)");
+
+    // Test that normal messages with URLs still work
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "Check out https://example.com/page""#).unwrap();
+    assert!(result.contains("Resolved: https://example.com/page"), "Should resolve URLs in normal messages");
+}
+
+#[test]
 fn test_linkresolver_unbind_on_disable() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();

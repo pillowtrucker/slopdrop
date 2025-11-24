@@ -291,6 +291,12 @@ namespace eval ::linkresolver {
             return ""
         }
 
+        # Skip if this is a TCL command (starts with "tcl " or "tclAdmin ")
+        set text_lower [string tolower [string trimleft $text]]
+        if {[string match "tcl *" $text_lower] || [string match "tcladmin *" $text_lower]} {
+            return ""
+        }
+
         # Extract URLs from the message
         set urls [extract_urls $text]
 
