@@ -922,3 +922,202 @@ fn test_proc_name_with_special_characters() {
     assert!(modified.contains("unknown:2:cmd/(.+)amid$/"),
             "Modified list should contain amid proc");
 }
+
+// =============================================================================
+// Array Tracking Tests
+// =============================================================================
+
+#[test]
+fn test_array_captured_in_state() {
+    let interp = create_test_interp();
+
+    // Create an array
+    interp.eval("set myarray(key1) value1").unwrap();
+    interp.eval("set myarray(key2) value2").unwrap();
+
+    let state = InterpreterState::capture(&interp).unwrap();
+
+    // Array name should be in vars
+    assert!(state.vars.contains("myarray"),
+            "Array 'myarray' should be captured in state.vars");
+}
+
+#[test]
+fn test_new_array_detected() {
+    let interp = create_test_interp();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+
+    // Create a new array
+    interp.eval("set testarray(foo) bar").unwrap();
+
+    let after = InterpreterState::capture(&interp).unwrap();
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+
+    // Should detect new array
+    assert!(changes.has_changes(), "Should detect array creation as a change");
+    assert!(changes.new_vars.contains(&"testarray".to_string()),
+            "New array 'testarray' should be in new_vars");
+}
+
+#[test]
+fn test_array_modification_with_tracking() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+
+    // Create initial array
+    interp.eval("set agenda(ryan) {initial item}").unwrap();
+    let state_before = InterpreterState::capture(&interp).unwrap();
+
+    // Update traces to track the array
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+
+    // Clear modified list
+    InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Add another item to the array
+    interp.eval("lappend agenda(ryan) {second item}").unwrap();
+
+    // Capture new state
+    let state_after = InterpreterState::capture(&interp).unwrap();
+
+    // Get modified vars
+    let modified_vars = InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Should have tracked the array modification
+    assert!(modified_vars.contains("agenda"),
+            "Array 'agenda' should be in modified_vars after element modification");
+
+    // Diff should detect the modification
+    let changes = state_before.diff(&state_after, &HashSet::new(), &modified_vars);
+    assert!(changes.new_vars.contains(&"agenda".to_string()),
+            "Modified array 'agenda' should appear in changes");
+}
+
+#[test]
+fn test_agenda_command_tracking() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+
+    // Define the +agenda command similar to user's implementation
+    interp.eval(r#"
+        proc +agenda {who args} {
+            if {[info exists ::agenda($who)] != 1} {
+                set ::agenda($who) {}
+            }
+            lappend ::agenda($who) $args
+            return "Added $args to $who"
+        }
+    "#).unwrap();
+
+    // Clear proc tracking
+    InterpreterState::get_modified_procs(&interp).unwrap();
+
+    // Capture initial state
+    let state_before = InterpreterState::capture(&interp).unwrap();
+
+    // Update traces
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+
+    // Execute +agenda command (first time - creates array)
+    interp.eval("+agenda ryan {have hbo documentary and book document hacks}").unwrap();
+
+    // Update traces again to catch the new array
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+
+    // Clear modified tracking from first command
+    InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Capture state after first command
+    let state_after_first = InterpreterState::capture(&interp).unwrap();
+
+    // Execute +agenda again (this time array exists, should be tracked)
+    interp.eval("+agenda ryan {ransom trannies}").unwrap();
+
+    // Capture final state
+    let state_after_second = InterpreterState::capture(&interp).unwrap();
+
+    // Get modified vars
+    let modified_vars = InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // The array modification should be tracked
+    assert!(modified_vars.contains("agenda"),
+            "Array 'agenda' should be tracked when modified by +agenda command");
+
+    // Diff should detect the change
+    let changes = state_after_first.diff(&state_after_second, &HashSet::new(), &modified_vars);
+    assert!(changes.has_changes(),
+            "Should detect changes when +agenda modifies existing array");
+    assert!(changes.new_vars.contains(&"agenda".to_string()),
+            "Modified array 'agenda' should be in changes");
+}
+
+#[test]
+fn test_array_modification_saved_to_disk() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    persistence.ensure_initialized().unwrap();
+
+    // Create initial array
+    interp.eval("set mydata(key1) value1").unwrap();
+    let state1 = InterpreterState::capture(&interp).unwrap();
+
+    // Update traces and save initial state
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    let user_info = UserInfo::new("testuser".to_string(), "testhost".to_string());
+
+    // Clear tracking
+    InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Modify array
+    let state2 = InterpreterState::capture(&interp).unwrap();
+    interp.eval("set mydata(key2) value2").unwrap();
+    let state3 = InterpreterState::capture(&interp).unwrap();
+    let modified_vars = InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Get changes
+    let changes = state2.diff(&state3, &HashSet::new(), &modified_vars);
+    assert!(changes.has_changes(), "Array modification should be detected as a change");
+
+    // Save changes
+    let commit_info = persistence.save_changes(&interp, &changes, &user_info,
+                                               "set mydata(key2) value2").unwrap();
+
+    // Should create a commit
+    assert!(commit_info.is_some(), "Array modification should result in a commit");
+
+    // Verify array was saved
+    let index_path = state_path.join("vars/_index");
+    let index_content = fs::read_to_string(&index_path).unwrap();
+    assert!(index_content.contains("mydata"),
+            "Array 'mydata' should be in the vars index");
+}
+
+#[test]
+fn test_multiple_array_elements_single_tracking() {
+    let interp = create_test_interp();
+    load_proc_tracking(&interp);
+
+    // Create array and set up tracking
+    interp.eval("set data(a) 1").unwrap();
+    interp.eval("::slopdrop::update_var_traces").unwrap();
+    InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Modify multiple elements
+    interp.eval("set data(b) 2").unwrap();
+    interp.eval("set data(c) 3").unwrap();
+    interp.eval("set data(a) 10").unwrap(); // Modify existing element
+
+    // Get modified vars
+    let modified = InterpreterState::get_modified_vars(&interp).unwrap();
+
+    // Should contain the array name (not individual elements)
+    assert!(modified.contains("data"),
+            "Array 'data' should be tracked when any element is modified");
+    // Should only appear once even though multiple elements were modified
+    assert_eq!(modified.iter().filter(|v| *v == "data").count(), 1,
+               "Array should only appear once in modified list");
+}

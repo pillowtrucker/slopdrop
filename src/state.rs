@@ -102,10 +102,11 @@ impl InterpreterState {
 
     fn get_vars(interp: &Interpreter) -> Result<HashSet<String>> {
         // Validate each var to filter out invalid entries
+        // Use 'info exists' instead of 'set' to properly handle both scalars and arrays
         match interp.eval(r#"
             set validated [list]
             foreach v [info globals] {
-                if {![catch {set ::$v}]} {
+                if {[info exists ::$v]} {
                     lappend validated $v
                 }
             }
