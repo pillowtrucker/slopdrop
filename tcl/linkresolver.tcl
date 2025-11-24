@@ -82,6 +82,16 @@ namespace eval ::linkresolver {
             return -code error "Procedure $proc_name does not exist"
         }
 
+        # Validate proc signature: should accept 3 arguments (url, nick, channel)
+        if {[catch {info args $proc_name} args]} {
+            # Can't check args for built-in commands, assume OK
+        } else {
+            set arg_count [llength $args]
+            if {$arg_count != 3} {
+                return -code error "Resolver proc must accept 3 arguments (url nick channel), got $arg_count: $args"
+            }
+        }
+
         # Choose which list to modify
         if {$builtin} {
             variable builtin_resolvers
@@ -278,17 +288,18 @@ namespace eval ::linkresolver {
         variable enabled
 
         if {!$enabled} {
-            return
+            return ""
         }
 
         # Extract URLs from the message
         set urls [extract_urls $text]
 
         if {[llength $urls] == 0} {
-            return
+            return ""
         }
 
         # Process each URL (but limit to first 2 to avoid spam)
+        set responses [list]
         set count 0
         foreach url $urls {
             if {$count >= 2} {
@@ -305,12 +316,17 @@ namespace eval ::linkresolver {
                 continue
             }
 
-            # If resolver returned something, send it to channel
+            # If resolver returned something, accumulate it
             if {$result ne ""} {
-                # Use the send command to post to channel
-                send $channel $result
+                lappend responses $result
             }
         }
+
+        # Return all responses joined by newlines (trigger system will send to channel)
+        if {[llength $responses] > 0} {
+            return [join $responses "\n"]
+        }
+        return ""
     }
 
     # Test URL resolution (for debugging)
