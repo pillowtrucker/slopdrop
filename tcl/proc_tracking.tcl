@@ -95,9 +95,15 @@ if {[llength [info commands ::slopdrop::_original_trace]] == 0} {
 ::slopdrop::_original_proc ::slopdrop::var_write_trace {varname index op} {
     global slopdrop_modified_vars
 
+    # Strip leading :: from varname to match what info globals returns
+    set normalized_name $varname
+    if {[string match "::*" $normalized_name]} {
+        set normalized_name [string range $normalized_name 2 end]
+    }
+
     # Add to modified list if not already there
-    if {[lsearch -exact $slopdrop_modified_vars $varname] == -1} {
-        lappend slopdrop_modified_vars $varname
+    if {[lsearch -exact $slopdrop_modified_vars $normalized_name] == -1} {
+        lappend slopdrop_modified_vars $normalized_name
     }
 }
 
