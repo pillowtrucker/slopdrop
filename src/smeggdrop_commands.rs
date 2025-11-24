@@ -89,6 +89,16 @@ pub fn proc_tracking() -> String {
     load_tcl_file("proc_tracking.tcl", include_str!("../tcl/proc_tracking.tcl"))
 }
 
+/// Returns link resolver commands with extensible API
+pub fn linkresolver_commands() -> String {
+    load_tcl_file("linkresolver.tcl", include_str!("../tcl/linkresolver.tcl"))
+}
+
+/// Returns example link resolvers (YouTube, Bluesky, etc.)
+pub fn linkresolver_examples() -> String {
+    load_tcl_file("linkresolver_examples.tcl", include_str!("../tcl/linkresolver_examples.tcl"))
+}
+
 /// Initialize all smeggdrop commands in the interpreter
 /// NOTE: Currently unused - we call individual command loaders in tcl_wrapper.rs
 /// to control loading order (some must load before making interpreter safe).

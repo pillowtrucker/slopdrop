@@ -195,6 +195,7 @@ The bot implements defense-in-depth security for safe public deployment:
 - **http::*** - HTTP operations with rate limiting
 - **encoding::*** - Base64 and URL encoding
 - **sha1** - SHA1 hashing (requires tcllib)
+- **linkresolver** - Auto-resolve URLs with extensible resolver API
 - **Utility commands** - pick, choose, ??, first, last, rest, upper, lower
 - **get_english_words, random_word, word_count** - English word list
 
@@ -231,6 +232,7 @@ See `container-run.sh` for all options including memory limits and state reset.
 
 - `QUICKSTART.md` - Quick start guide
 - `FRONTEND_GUIDE.md` - Frontend usage details
+- `LINKRESOLVER.md` - Link auto-resolver with custom resolver API
 - `PUBLIC_DEPLOYMENT_SECURITY.md` - Security documentation
 - `HTTP_LIMITS.md` - HTTP rate limiting details
 - `OOM_PROTECTION.md` - Memory protection details

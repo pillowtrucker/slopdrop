@@ -1213,3 +1213,310 @@ async fn test_live_httpx_normalize_url() {
 
     let _ = fs::remove_dir_all(&state_path);
 }
+
+// =============================================================================
+// Link Resolver Integration Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_live_linkresolver_enable_disable() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Test enable (might already be enabled by default)
+    client.send_privmsg(&channel, "tcl linkresolver enable").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("enabled") || response.contains("already"));
+    } else {
+        panic!("No response received for linkresolver enable");
+    }
+
+    // Test disable
+    client.send_privmsg(&channel, "tcl linkresolver disable").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("disabled"));
+    } else {
+        panic!("No response received for linkresolver disable");
+    }
+
+    // Test enable again (now it should enable)
+    client.send_privmsg(&channel, "tcl linkresolver enable").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("enabled"));
+    } else {
+        panic!("No response received for second linkresolver enable");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_register_custom_resolver() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Create a test resolver
+    client.send_privmsg(&channel, r#"tcl proc test_resolver {url nick channel} { return "TEST: $url" }"#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    // Register the resolver
+    client.send_privmsg(&channel, r#"tcl linkresolver register {example\.com} test_resolver"#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("Registered resolver"));
+        assert!(response.contains("example"));
+    } else {
+        panic!("No response received for linkresolver register");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_list() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // List resolvers (should show built-in ones)
+    client.send_privmsg(&channel, "tcl linkresolver list").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        // Should show YouTube and Bluesky resolvers that are auto-registered
+        assert!(response.contains("youtube") || response.contains("bsky") || response.contains("Registered resolvers"));
+    } else {
+        panic!("No response received for linkresolver list");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_extract_urls() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Test URL extraction
+    client.send_privmsg(&channel, r#"tcl ::linkresolver::extract_urls "Check out http://example.com/test""#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("http://example.com/test"));
+    } else {
+        panic!("No response received for URL extraction");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_test_command() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Create a test resolver
+    client.send_privmsg(&channel, r#"tcl proc my_test_resolver {url nick channel} { return "Resolved: $url" }"#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    // Register it
+    client.send_privmsg(&channel, r#"tcl linkresolver register {testsite\.com} my_test_resolver"#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    // Test resolution
+    client.send_privmsg(&channel, r#"tcl linkresolver test "http://testsite.com/page""#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("Resolved: http://testsite.com/page"));
+    } else {
+        panic!("No response received for linkresolver test");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_caching() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Set cached value
+    client.send_privmsg(&channel, r#"tcl ::linkresolver::set_cached "http://example.com" "Cached result""#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    // Get cached value
+    client.send_privmsg(&channel, r#"tcl ::linkresolver::get_cached "http://example.com""#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert_eq!(response.trim(), "Cached result");
+    } else {
+        panic!("No response received for get_cached");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_html_entity_decoding() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Test HTML entity decoding
+    client.send_privmsg(&channel, r#"tcl ::linkresolver::decode_html_entities "A &amp; B &lt; C""#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert_eq!(response.trim(), "A & B < C");
+    } else {
+        panic!("No response received for HTML entity decoding");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_format_number() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Test number formatting
+    client.send_privmsg(&channel, "tcl ::linkresolver::format_number 1500000").expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("1M") || response.contains("1500K"));
+    } else {
+        panic!("No response received for format_number");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_find_resolver() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Find resolver for YouTube URL (should match built-in resolver)
+    client.send_privmsg(&channel, r#"tcl ::linkresolver::find_resolver "https://www.youtube.com/watch?v=test""#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("youtube_resolver"));
+    } else {
+        panic!("No response received for find_resolver");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
+
+#[tokio::test]
+async fn test_live_linkresolver_unregister() {
+    let _server = Lazy::force(&SHARED_SERVER);
+    let test_id = get_unique_test_id();
+    let channel = format!("#test{}", test_id);
+    let bot_nick = format!("bot{}", test_id);
+    let client_nick = format!("user{}", test_id);
+    let state_path = format!("/tmp/slopdrop_test_{}", test_id);
+    let _ = fs::remove_dir_all(&state_path);
+    fs::create_dir_all(&state_path).expect("Failed to create state directory");
+
+    let _bot = TestBot::start_with_channel(&state_path, &channel, &bot_nick).await.expect("Failed to start bot");
+    let (client, mut stream) = create_test_client_with_channel(&client_nick, &channel).await.expect("Failed to connect");
+
+    // Create and register a test resolver
+    client.send_privmsg(&channel, r#"tcl proc temp_resolver {url nick channel} { return "temp" }"#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    client.send_privmsg(&channel, r#"tcl linkresolver register {tempsite\.com} temp_resolver"#).expect("Failed to send");
+    wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await;
+
+    // Unregister it
+    client.send_privmsg(&channel, r#"tcl linkresolver unregister {tempsite\.com}"#).expect("Failed to send");
+
+    if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
+        assert!(response.contains("Unregistered"));
+    } else {
+        panic!("No response received for linkresolver unregister");
+    }
+
+    let _ = fs::remove_dir_all(&state_path);
+}
