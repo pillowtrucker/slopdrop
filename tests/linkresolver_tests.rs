@@ -411,6 +411,38 @@ fn test_linkresolver_trigger_binding() {
 }
 
 #[test]
+fn test_linkresolver_on_text_returns_messages() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Create a simple test resolver that returns a known message
+    interp.eval(r#"
+        proc test_message_resolver {url nick channel} {
+            return "Test resolved: $url"
+        }
+    "#).unwrap();
+
+    // Register it
+    interp.eval(r#"linkresolver register {example\.com} test_message_resolver"#).unwrap();
+
+    // Enable linkresolver
+    interp.eval("linkresolver enable").unwrap();
+
+    // Simulate what triggers dispatch does: call on_text and check return value
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "Check out https://example.com/page""#).unwrap();
+
+    // Should return the resolver's message, not try to call 'send'
+    assert!(result.contains("Test resolved: https://example.com/page"),
+        "Expected resolver message, got: {}", result);
+
+    // Test with multiple URLs
+    let result = interp.eval(r#"::linkresolver::on_text testuser user@host #channel "See https://example.com/1 and https://example.com/2""#).unwrap();
+    assert!(result.contains("https://example.com/1"));
+    assert!(result.contains("https://example.com/2"));
+    assert!(result.contains("\n")); // Should be joined with newline
+}
+
+#[test]
 fn test_linkresolver_unbind_on_disable() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
