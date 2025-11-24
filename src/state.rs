@@ -155,6 +155,7 @@ impl InterpreterState {
             "nick_channel",             // HTTP rate limiting context
             "slopdrop_modified_procs",  // Proc tracking list (proc_tracking.tcl)
             "v", "p", "validated",      // Temp variables created by state capture itself
+            "errorInfo", "errorCode",   // TCL built-in ephemeral error variables
         ]
             .iter()
             .map(|s| s.to_string())
