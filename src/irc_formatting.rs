@@ -345,6 +345,7 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
             // but also respect ACTUAL byte length to stay within IRC protocol limits
             let mut current = String::new();
             let mut visible_current_len = 0;
+            let mut active_formatting = FormattingState::default();
 
             // Split on spaces (not all whitespace) to preserve formatting codes
             // that might be adjacent to other whitespace characters
@@ -501,23 +502,28 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                 if new_visible_len > max_len || new_actual_len > max_len {
                     // Flush current buffer
                     if !current.is_empty() {
-                        // When flushing mid-processing, trailing \x03 is a complete RESET code
-                        // not an incomplete color code, so don't split it off
+                        // Close any active formatting before flushing
+                        let close_codes = active_formatting.to_close_codes();
+                        current.push_str(&close_codes);
                         result.push(current.trim_end().to_string());
-                        current.clear();
+
+                        // Start next line with active formatting reopened
+                        current = active_formatting.to_codes();
                         visible_current_len = 0;
                     }
                 }
 
                 // Add word to current buffer
-                // Don't add space if current is only an incomplete color code (has no visible chars)
-                // When we carry forward incomplete codes, we set visible_current_len = 0
+                // Don't add space if current is only formatting codes (has no visible chars)
                 if !current.is_empty() && visible_current_len > 0 {
                     current.push(' ');
                     visible_current_len += 1;
                 }
                 current.push_str(word);
                 visible_current_len += visible_word_len;
+
+                // Update active formatting state based on this word
+                active_formatting = FormattingState::from_text(&current);
             }
 
             // Flush remaining buffer
