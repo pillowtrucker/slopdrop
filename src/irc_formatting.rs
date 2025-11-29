@@ -376,10 +376,13 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                     // Use state machine to find the active formatting during the visible text
                     // We need to parse just the LEADING codes to get the active state,
                     // not the whole word (which includes trailing close codes)
-                    let (leading_codes, visible, _trailing_codes) = extract_formatting(word);
+                    let (leading_codes, _visible, _trailing_codes) = extract_formatting(word);
                     let active_state = FormattingState::from_text(&leading_codes);
 
                     // Split the visible text into chunks
+                    // Use strip_irc_formatting to ensure ALL formatting codes are removed,
+                    // not just leading/trailing ones
+                    let visible = strip_irc_formatting(word);
                     let visible_chars: Vec<char> = visible.chars().collect();
                     let mut start = 0;
 
