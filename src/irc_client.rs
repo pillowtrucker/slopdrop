@@ -150,8 +150,15 @@ impl IrcClient {
             prefix_len + command_len + target_len + suffix_len
         } else {
             // Conservative estimate if we don't know our hostmask yet
-            // Assume worst case: 30-char nick + 10-char ident + 63-char host
-            let estimated_prefix = 1 + 30 + 1 + 10 + 1 + 63; // :nick!ident@host
+            // Use server-provided limits if available, otherwise use RFC1459 maximums
+            let max_nick = self.server_limits.nicklen.unwrap_or(30);
+            // RFC1459: username is max 10 chars, but some servers allow more
+            let max_ident = 10;
+            // RFC1459: hostname is max 63 chars
+            let max_host = 63;
+
+            // Assume worst case: maxnick + maxident + maxhost
+            let estimated_prefix = 1 + max_nick + 1 + max_ident + 1 + max_host; // :nick!ident@host
             let command_len = 9; // " PRIVMSG "
             let target_len = channel.len() + 1; // "#channel "
             let suffix_len = 3; // ":\r\n"
