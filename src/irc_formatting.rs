@@ -153,9 +153,10 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
             for word in line.split_whitespace() {
                 // Calculate visible length of this word
                 let visible_word_len = strip_irc_formatting(word).len();
+                let actual_word_len = word.len();
 
-                // If a single word is longer than max_len (visibly), we have to split it
-                if visible_word_len > max_len {
+                // If a single word is longer than max_len (either visibly or in bytes), we have to split it
+                if visible_word_len > max_len || actual_word_len > max_len {
                     // Flush current buffer if not empty
                     if !current.is_empty() {
                         result.push(current.trim_end().to_string());

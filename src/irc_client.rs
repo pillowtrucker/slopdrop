@@ -170,8 +170,9 @@ impl IrcClient {
         let max_len = IRC_PROTOCOL_MAX.saturating_sub(overhead);
 
         // Ensure we have at least some reasonable minimum (100 bytes)
-        // and don't exceed a reasonable maximum (400 bytes as safety margin)
-        max_len.clamp(100, 400)
+        // Upper limit of 480 bytes leaves margin for edge cases while allowing
+        // most of the calculated space to be used
+        max_len.clamp(100, 480)
     }
 
     /// Generate an alternative nickname when the desired one is in use
