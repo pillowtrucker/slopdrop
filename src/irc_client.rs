@@ -4,10 +4,64 @@ use crate::types::{ChannelMembers, Message, MessageAuthor, PluginCommand};
 use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+
+/// Server limits and capabilities from ISUPPORT (005)
+#[derive(Debug, Clone, Default)]
+struct ServerLimits {
+    /// Maximum message length (MSGLEN), if advertised by server
+    msglen: Option<usize>,
+    /// Maximum nickname length
+    nicklen: Option<usize>,
+    /// Maximum channel name length
+    channellen: Option<usize>,
+    /// Other ISUPPORT parameters
+    params: HashMap<String, Option<String>>,
+}
+
+impl ServerLimits {
+    /// Parse ISUPPORT parameters from a 005 message
+    fn parse_isupport(&mut self, args: &[String]) {
+        // 005 format: <nick> <params...> :are supported by this server
+        // Skip the nickname (first arg) and the trailing message (last arg)
+        for arg in args.iter().skip(1) {
+            if arg.contains("are supported") {
+                break;
+            }
+
+            if let Some((key, value)) = arg.split_once('=') {
+                let key = key.to_uppercase();
+                match key.as_str() {
+                    "MSGLEN" => {
+                        if let Ok(len) = value.parse::<usize>() {
+                            self.msglen = Some(len);
+                            debug!("Server MSGLEN: {}", len);
+                        }
+                    }
+                    "NICKLEN" | "MAXNICKLEN" => {
+                        if let Ok(len) = value.parse::<usize>() {
+                            self.nicklen = Some(len);
+                        }
+                    }
+                    "CHANNELLEN" => {
+                        if let Ok(len) = value.parse::<usize>() {
+                            self.channellen = Some(len);
+                        }
+                    }
+                    _ => {}
+                }
+                self.params.insert(key, Some(value.to_string()));
+            } else {
+                // Parameter without value
+                self.params.insert(arg.to_uppercase(), None);
+            }
+        }
+    }
+}
 
 pub struct IrcClient {
     client: Client,
@@ -23,6 +77,10 @@ pub struct IrcClient {
     nick_attempt: u32,
     /// Whether we successfully registered and joined channels
     registered: bool,
+    /// Server limits and capabilities from ISUPPORT (005)
+    server_limits: ServerLimits,
+    /// Bot's own hostmask (nick!ident@host)
+    bot_hostmask: Option<String>,
 }
 
 impl IrcClient {
@@ -57,7 +115,64 @@ impl IrcClient {
             desired_nickname,
             nick_attempt: 0,
             registered: false,
+            server_limits: ServerLimits::default(),
+            bot_hostmask: None,
         })
+    }
+
+    /// Calculate maximum message length for a given channel
+    ///
+    /// Takes into account:
+    /// - Server's advertised MSGLEN (if available)
+    /// - IRC protocol limit (512 bytes)
+    /// - Overhead from: :nick!ident@host PRIVMSG #channel :\r\n
+    fn calculate_max_message_length(&self, channel: &str) -> usize {
+        // If server advertises MSGLEN, use that
+        if let Some(msglen) = self.server_limits.msglen {
+            return msglen;
+        }
+
+        // Otherwise calculate based on IRC protocol limit (512 bytes total)
+        const IRC_PROTOCOL_MAX: usize = 512;
+
+        // Calculate overhead: ":nick!ident@host PRIVMSG #channel :\r\n"
+        // Format: :<prefix> PRIVMSG <target> :<trailing>\r\n
+        let overhead = if let Some(ref hostmask) = self.bot_hostmask {
+            // :nick!ident@host (1 + hostmask length)
+            let prefix_len = 1 + hostmask.len();
+            // " PRIVMSG " (9 bytes)
+            let command_len = 9;
+            // "#channel " (channel + space = channel.len() + 1)
+            let target_len = channel.len() + 1;
+            // ":\r\n" (3 bytes)
+            let suffix_len = 3;
+
+            prefix_len + command_len + target_len + suffix_len
+        } else {
+            // Conservative estimate if we don't know our hostmask yet
+            // Use server-provided limits if available, otherwise use RFC1459 maximums
+            let max_nick = self.server_limits.nicklen.unwrap_or(30);
+            // RFC1459: username is max 10 chars, but some servers allow more
+            let max_ident = 10;
+            // RFC1459: hostname is max 63 chars
+            let max_host = 63;
+
+            // Assume worst case: maxnick + maxident + maxhost
+            let estimated_prefix = 1 + max_nick + 1 + max_ident + 1 + max_host; // :nick!ident@host
+            let command_len = 9; // " PRIVMSG "
+            let target_len = channel.len() + 1; // "#channel "
+            let suffix_len = 3; // ":\r\n"
+
+            estimated_prefix + command_len + target_len + suffix_len
+        };
+
+        // Available space for message content
+        let max_len = IRC_PROTOCOL_MAX.saturating_sub(overhead);
+
+        // Ensure we have at least some reasonable minimum (100 bytes)
+        // Upper limit of 480 bytes leaves margin for edge cases while allowing
+        // most of the calculated space to be used
+        max_len.clamp(100, 480)
     }
 
     /// Generate an alternative nickname when the desired one is in use
@@ -329,10 +444,33 @@ impl IrcClient {
                 // This marks the end of NAMES list, we can log it
                 debug!("End of NAMES list");
             }
-            Command::Response(Response::RPL_WELCOME, _) => {
-                // 001 reply: Registration complete, now join channels
+            Command::Response(Response::RPL_ISUPPORT, ref args) => {
+                // 005 reply: Server capabilities and limits
+                debug!("Received ISUPPORT: {:?}", args);
+                self.server_limits.parse_isupport(args);
+            }
+            Command::Response(Response::RPL_WELCOME, ref args) => {
+                // 001 reply: Registration complete
                 self.registered = true;
                 let current_nick = self.client.current_nickname();
+
+                // Try to extract hostmask from the welcome message
+                // Format: ":Welcome to the Network nick!ident@host"
+                if let Some(welcome_msg) = args.last() {
+                    if let Some(hostmask_start) = welcome_msg.rfind(char::is_whitespace) {
+                        let potential_hostmask = &welcome_msg[hostmask_start + 1..];
+                        if potential_hostmask.contains('!') && potential_hostmask.contains('@') {
+                            self.bot_hostmask = Some(potential_hostmask.to_string());
+                            info!("Bot hostmask: {}", potential_hostmask);
+                        }
+                    }
+                }
+
+                // If we didn't get it from welcome message, request it via USERHOST
+                if self.bot_hostmask.is_none() {
+                    debug!("Requesting hostmask via USERHOST");
+                    let _ = self.client.send(Command::USERHOST(vec![current_nick.to_string()]));
+                }
 
                 if current_nick != self.desired_nickname {
                     warn!("Registered with alternative nickname: {} (desired: {})",
@@ -347,6 +485,25 @@ impl IrcClient {
                     info!("Joining channel: {}", channel);
                     if let Err(e) = self.client.send_join(channel) {
                         error!("Failed to join {}: {}", channel, e);
+                    }
+                }
+            }
+            Command::Response(Response::RPL_USERHOST, ref args) => {
+                // 302 reply: USERHOST response
+                // Format: :nick*=+ident@host (the * means IRC operator, + means not away)
+                if let Some(response) = args.get(1) {
+                    debug!("USERHOST response: {}", response);
+                    // Parse: nick*=+ident@host or nick=+ident@host
+                    if let Some(eq_pos) = response.find('=') {
+                        let nick_part = &response[..eq_pos].trim_end_matches('*');
+                        let rest = &response[eq_pos + 1..].trim_start_matches(&['+', '-'][..]);
+                        if let Some(at_pos) = rest.find('@') {
+                            let ident = &rest[..at_pos];
+                            let host = &rest[at_pos + 1..];
+                            let hostmask = format!("{}!{}@{}", nick_part, ident, host);
+                            self.bot_hostmask = Some(hostmask.clone());
+                            info!("Bot hostmask from USERHOST: {}", hostmask);
+                        }
                     }
                 }
             }
@@ -377,8 +534,13 @@ impl IrcClient {
     async fn handle_plugin_command(&self, command: PluginCommand) -> Result<()> {
         match command {
             PluginCommand::SendToIrc { channel, text } => {
+                // Calculate maximum message length for this channel dynamically
+                // based on server limits and our hostmask
+                let max_len = self.calculate_max_message_length(&channel);
+                debug!("Using max message length {} for channel {}", max_len, channel);
+
                 // Split long messages with smart word-boundary splitting
-                for line in irc_formatting::split_message_smart(&text, 400) {
+                for line in irc_formatting::split_message_smart(&text, max_len) {
                     self.client.send_privmsg(&channel, &line)?;
                     // Small delay to avoid flooding
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
