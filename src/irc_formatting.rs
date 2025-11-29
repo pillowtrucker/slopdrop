@@ -373,37 +373,119 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                         visible_current_len = 0;
                     }
 
-                    // Use state machine to find the active formatting during the visible text
-                    // We need to parse just the LEADING codes to get the active state,
-                    // not the whole word (which includes trailing close codes)
-                    let (leading_codes, _visible, _trailing_codes) = extract_formatting(word);
-                    let active_state = FormattingState::from_text(&leading_codes);
+                    // Split the word while preserving ALL formatting changes throughout
+                    // Walk through the word character by character, tracking visible length
+                    let mut chunk = String::new();
+                    let mut chunk_visible_len = 0;
+                    let mut chars = word.chars().peekable();
+                    let mut active_state = FormattingState::default();
 
-                    // Split the visible text into chunks
-                    // Use strip_irc_formatting to ensure ALL formatting codes are removed,
-                    // not just leading/trailing ones
-                    let visible = strip_irc_formatting(word);
-                    let visible_chars: Vec<char> = visible.chars().collect();
-                    let mut start = 0;
+                    while let Some(ch) = chars.next() {
+                        // Check if this is a formatting code
+                        let is_formatting = match ch {
+                            '\x0F' => {
+                                chunk.push(ch);
+                                active_state = FormattingState::default();
+                                true
+                            }
+                            '\x02' => {
+                                chunk.push(ch);
+                                active_state.bold = !active_state.bold;
+                                true
+                            }
+                            '\x1D' => {
+                                chunk.push(ch);
+                                active_state.italic = !active_state.italic;
+                                true
+                            }
+                            '\x1F' => {
+                                chunk.push(ch);
+                                active_state.underline = !active_state.underline;
+                                true
+                            }
+                            '\x16' => {
+                                chunk.push(ch);
+                                active_state.reverse = !active_state.reverse;
+                                true
+                            }
+                            '\x11' => {
+                                chunk.push(ch);
+                                active_state.monospace = !active_state.monospace;
+                                true
+                            }
+                            '\x03' => {
+                                chunk.push(ch);
+                                // Parse color code
+                                let mut color_code = String::new();
+                                for _ in 0..2 {
+                                    if let Some(&next_ch) = chars.peek() {
+                                        if next_ch.is_ascii_digit() {
+                                            color_code.push(chars.next().unwrap());
+                                            chunk.push(color_code.chars().last().unwrap());
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Check for comma + background
+                                if chars.peek() == Some(&',') {
+                                    color_code.push(chars.next().unwrap());
+                                    chunk.push(',');
+                                    for _ in 0..2 {
+                                        if let Some(&next_ch) = chars.peek() {
+                                            if next_ch.is_ascii_digit() {
+                                                color_code.push(chars.next().unwrap());
+                                                chunk.push(color_code.chars().last().unwrap());
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Update state
+                                if color_code.is_empty() {
+                                    active_state.color = None;
+                                } else {
+                                    active_state.color = Some(color_code);
+                                }
+                                true
+                            }
+                            _ => false,
+                        };
 
-                    // Calculate formatting overhead (codes to open + close state)
-                    let state_overhead = active_state.to_codes().len() + active_state.to_close_codes().len();
-                    let chunk_visible_size = max_len.saturating_sub(state_overhead).max(1);
+                        if !is_formatting {
+                            // Regular visible character
+                            chunk.push(ch);
+                            chunk_visible_len += 1;
 
-                    while start < visible_chars.len() {
-                        let end = (start + chunk_visible_size).min(visible_chars.len());
-                        let chunk: String = visible_chars[start..end].iter().collect();
+                            // Check if we've reached the limit
+                            // Account for close codes that will be added
+                            let close_codes = active_state.to_close_codes();
+                            let would_exceed = chunk_visible_len >= max_len
+                                || (chunk.len() + close_codes.len()) >= max_len;
 
-                        // Wrap each chunk with the active formatting state
-                        let formatted_chunk = format!(
-                            "{}{}{}",
-                            active_state.to_codes(),
-                            chunk,
-                            active_state.to_close_codes()
-                        );
-                        result.push(formatted_chunk);
-                        start = end;
+                            if would_exceed {
+                                // Need to split here
+                                // Close any active formatting
+                                chunk.push_str(&close_codes);
+                                result.push(chunk);
+
+                                // Start new chunk with active formatting
+                                chunk = active_state.to_codes();
+                                chunk_visible_len = 0;
+                            }
+                        }
                     }
+
+                    // Push remaining chunk if not empty
+                    if !chunk.is_empty() && chunk_visible_len > 0 {
+                        result.push(chunk);
+                    }
+
                     current.clear();
                     visible_current_len = 0;
                     continue;
