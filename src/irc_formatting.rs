@@ -150,7 +150,20 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
             let mut current = String::new();
             let mut visible_current_len = 0;
 
-            for word in line.split_whitespace() {
+            // Split on spaces (not all whitespace) to preserve formatting codes
+            // that might be adjacent to other whitespace characters
+            let words: Vec<&str> = if line.contains(' ') {
+                line.split(' ').collect()
+            } else {
+                vec![line]
+            };
+
+            for word in words {
+                // Skip empty words (from consecutive spaces)
+                if word.is_empty() {
+                    continue;
+                }
+
                 // Calculate visible length of this word
                 let visible_word_len = strip_irc_formatting(word).len();
                 let actual_word_len = word.len();
