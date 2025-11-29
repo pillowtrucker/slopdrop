@@ -127,6 +127,48 @@ fn extract_formatting(text: &str) -> (String, String, String) {
     (leading, visible, trailing)
 }
 
+/// Check if text ends with an incomplete color code sequence
+/// Returns (complete_text, incomplete_suffix) where incomplete_suffix should be moved to next chunk
+fn split_incomplete_color_code(text: &str) -> (&str, &str) {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+
+    if len == 0 {
+        return (text, "");
+    }
+
+    // Check if ends with \x03 (color code start with no color number)
+    if bytes[len - 1] == 0x03 {
+        return (&text[..len - 1], &text[len - 1..]);
+    }
+
+    // Check if ends with \x03N (one digit - might be a two-digit color)
+    if len >= 2 && bytes[len - 2] == 0x03 && bytes[len - 1].is_ascii_digit() {
+        return (&text[..len - 2], &text[len - 2..]);
+    }
+
+    // Check if ends with \x03NN, (comma after color - background color incomplete)
+    if len >= 4
+        && bytes[len - 4] == 0x03
+        && bytes[len - 3].is_ascii_digit()
+        && bytes[len - 2].is_ascii_digit()
+        && bytes[len - 1] == b',' {
+        return (&text[..len - 4], &text[len - 4..]);
+    }
+
+    // Check if ends with \x03NN,N (background color with one digit)
+    if len >= 5
+        && bytes[len - 5] == 0x03
+        && bytes[len - 4].is_ascii_digit()
+        && bytes[len - 3].is_ascii_digit()
+        && bytes[len - 2] == b','
+        && bytes[len - 1].is_ascii_digit() {
+        return (&text[..len - 5], &text[len - 5..]);
+    }
+
+    (text, "")
+}
+
 /// Smart message splitting on word boundaries
 ///
 /// Splits a message into chunks of max_len, trying to break on word boundaries.
@@ -172,8 +214,11 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                 if visible_word_len > max_len || actual_word_len > max_len {
                     // Flush current buffer if not empty
                     if !current.is_empty() {
-                        result.push(current.trim_end().to_string());
-                        current.clear();
+                        let (complete, incomplete) = split_incomplete_color_code(&current);
+                        if !complete.is_empty() {
+                            result.push(complete.trim_end().to_string());
+                        }
+                        current = incomplete.to_string();
                         visible_current_len = 0;
                     }
 
@@ -181,14 +226,24 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                     let (leading, visible, trailing) = extract_formatting(word);
                     let visible_chars: Vec<char> = visible.chars().collect();
                     let mut start = 0;
+                    let mut first_chunk = true;
 
                     while start < visible_chars.len() {
                         let end = (start + max_len).min(visible_chars.len());
                         let chunk: String = visible_chars[start..end].iter().collect();
                         // Reapply formatting codes to each chunk
-                        result.push(format!("{}{}{}", leading, chunk, trailing));
+                        // For first chunk, prepend any incomplete color code from previous buffer
+                        let formatted_chunk = if first_chunk && !current.is_empty() {
+                            first_chunk = false;
+                            format!("{}{}{}{}", current, leading, chunk, trailing)
+                        } else {
+                            format!("{}{}{}", leading, chunk, trailing)
+                        };
+                        result.push(formatted_chunk);
                         start = end;
                     }
+                    current.clear();
+                    visible_current_len = 0;
                     continue;
                 }
 
@@ -202,8 +257,13 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                 if new_visible_len > max_len || new_actual_len > max_len {
                     // Flush current buffer
                     if !current.is_empty() {
-                        result.push(current.trim_end().to_string());
-                        current.clear();
+                        // Check if buffer ends with incomplete color code
+                        let (complete, incomplete) = split_incomplete_color_code(&current);
+                        if !complete.is_empty() {
+                            result.push(complete.trim_end().to_string());
+                        }
+                        // Carry incomplete color code to next chunk
+                        current = incomplete.to_string();
                         visible_current_len = 0;
                     }
                 }
