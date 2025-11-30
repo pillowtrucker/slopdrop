@@ -371,7 +371,6 @@ pub fn split_message_smart(text: &str, max_len: usize) -> Vec<String> {
                     if !current.is_empty() {
                         result.push(current.trim_end().to_string());
                         current.clear();
-                        visible_current_len = 0;
                     }
 
                     // Split the word while preserving ALL formatting changes throughout
@@ -985,8 +984,6 @@ mod tests {
 
         // Each chunk should preserve the active formatting
         for (i, chunk) in chunks.iter().enumerate() {
-            let state = FormattingState::from_text(chunk);
-
             // During the visible text, bold, underline, and color should be active
             // (They get closed at the end, so check the state in the middle)
             let (leading, _visible, _trailing) = extract_formatting(chunk);
