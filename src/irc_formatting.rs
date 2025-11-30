@@ -956,4 +956,111 @@ mod tests {
         let state = FormattingState::from_text("\x02bold\x02");
         assert!(!state.bold);
     }
+
+    #[test]
+    fn test_spaces_preserved_between_colored_words() {
+        // Test the bug where spaces were being dropped between colored words
+        // because we checked current.starts_with('\x03') which matched all colored text
+        let text = "\x0304word1\x03 \x0312word2\x03 \x0308word3\x03";
+        let chunks = split_message_smart(text, 100); // Large enough to not split
+
+        // Should be one chunk with all content
+        assert_eq!(chunks.len(), 1);
+
+        // Visible text should have spaces
+        let visible = strip_irc_formatting(&chunks[0]);
+        assert_eq!(visible, "word1 word2 word3");
+        assert!(visible.contains(" "), "Spaces should be preserved");
+    }
+
+    #[test]
+    fn test_formatting_carried_across_word_boundary_splits() {
+        // Test that bold/underline/color is carried across word-boundary splits
+        // This was the bug where formatting was lost on continuation lines
+        let text = "\x02\x1F\x0304word1 word2 word3 word4 word5 word6 word7 word8\x03\x1F\x02";
+        let chunks = split_message_smart(text, 25); // Will split at word boundaries
+
+        // Should have multiple chunks
+        assert!(chunks.len() > 1, "Should split into multiple chunks");
+
+        // Each chunk should preserve the active formatting
+        for (i, chunk) in chunks.iter().enumerate() {
+            let state = FormattingState::from_text(chunk);
+
+            // During the visible text, bold, underline, and color should be active
+            // (They get closed at the end, so check the state in the middle)
+            let (leading, _visible, _trailing) = extract_formatting(chunk);
+            let leading_state = FormattingState::from_text(&leading);
+
+            assert!(leading_state.bold, "Chunk {} missing bold at start", i);
+            assert!(leading_state.underline, "Chunk {} missing underline at start", i);
+            assert_eq!(leading_state.color, Some("04".to_string()),
+                       "Chunk {} missing color at start", i);
+        }
+
+        // Verify content is preserved
+        let recombined = chunks.iter()
+            .map(|c| strip_irc_formatting(c))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(recombined.contains("word1"));
+        assert!(recombined.contains("word8"));
+    }
+
+    #[test]
+    fn test_many_color_changes_in_single_word() {
+        // Test the spew-like pattern where a single "word" has many color changes
+        // This tests that we preserve ALL formatting changes, not just the initial state
+        let word = "\x0304a\x03\x0312b\x03\x0308c\x03\x0301d\x03".repeat(20); // 80 chars with colors
+        let chunks = split_message_smart(&word, 30);
+
+        // Should split into multiple chunks
+        assert!(chunks.len() > 1);
+
+        // Recombine and verify all letters are present
+        let recombined_visible = chunks.iter()
+            .map(|c| strip_irc_formatting(c))
+            .collect::<Vec<_>>()
+            .join("");
+
+        // Should have 20 copies of "abcd"
+        assert_eq!(recombined_visible.len(), 80);
+        let mut expected = String::new();
+        for _ in 0..20 {
+            expected.push_str("abcd");
+        }
+        assert_eq!(recombined_visible, expected);
+    }
+
+    #[test]
+    fn test_formatting_at_exact_split_boundary() {
+        // Test edge case where formatting code appears right at the split point
+        let text = "\x0304aaaaaaaaaa\x03bbbbbbbbbb"; // 20 visible chars, color changes at 10
+        let chunks = split_message_smart(text, 10); // Split exactly where color changes
+
+        assert!(chunks.len() >= 2);
+
+        // Verify content is preserved
+        let recombined_visible = chunks.iter()
+            .map(|c| strip_irc_formatting(c))
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(recombined_visible.len(), 20);
+    }
+
+    #[test]
+    fn test_empty_formatting_state_not_added() {
+        // Test that when there's no active formatting, we don't add unnecessary codes
+        let text = "plain text with no formatting that is quite long";
+        let chunks = split_message_smart(text, 20);
+
+        // Should split but shouldn't add any formatting codes
+        for chunk in &chunks {
+            // Count formatting codes
+            let code_count = chunk.chars().filter(|&c| {
+                matches!(c, '\x02' | '\x03' | '\x0F' | '\x11' | '\x16' | '\x1D' | '\x1F')
+            }).count();
+            assert_eq!(code_count, 0, "Plain text shouldn't have formatting codes");
+        }
+    }
 }
