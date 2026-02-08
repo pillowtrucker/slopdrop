@@ -1,4 +1,4 @@
-use crate::config::{Config, SecurityConfig, TclConfig};
+use crate::config::{Config, SecurityConfig, ServerConfig, TclConfig};
 use crate::file_watcher::{ChangeType, FileChangeEvent};
 use crate::hostmask;
 use crate::tcl_thread::TclThreadHandle;
@@ -22,20 +22,22 @@ pub struct TclPlugin {
     tcl_thread: TclThreadHandle,
     tcl_config: TclConfig,
     security_config: SecurityConfig,
-    server_config: crate::config::ServerConfig,
+    server_configs: Vec<ServerConfig>,
     /// Path to configuration file for hot-reloading
     config_path: std::path::PathBuf,
     /// Cache for paginated output: (channel, nick) -> remaining output
     output_cache: HashMap<(String, String), OutputCache>,
     /// Nicks of currently online admins (updated on join/part/quit)
     admin_nicks: HashSet<String>,
+    /// Per-network response channels for routing responses to correct IRC client
+    response_channels: HashMap<String, mpsc::Sender<PluginCommand>>,
 }
 
 impl TclPlugin {
     pub fn new(
         security_config: SecurityConfig,
         tcl_config: TclConfig,
-        server_config: crate::config::ServerConfig,
+        server_configs: Vec<ServerConfig>,
         config_path: std::path::PathBuf,
         channel_members: ChannelMembers,
     ) -> Result<Self> {
@@ -46,18 +48,34 @@ impl TclPlugin {
             tcl_thread,
             tcl_config,
             security_config,
-            server_config,
+            server_configs,
             config_path,
             output_cache: HashMap::new(),
             admin_nicks: HashSet::new(),
+            response_channels: HashMap::new(),
         })
+    }
+
+    /// Register a response channel for a network
+    pub fn register_network(&mut self, network_name: String, response_tx: mpsc::Sender<PluginCommand>) {
+        info!("Registered response channel for network: {}", network_name);
+        self.response_channels.insert(network_name, response_tx);
+    }
+
+    /// Send a response to the correct network's IRC client
+    async fn send_to_network(&self, network: &str, command: PluginCommand) -> Result<()> {
+        if let Some(tx) = self.response_channels.get(network) {
+            tx.send(command).await?;
+        } else {
+            warn!("No response channel for network '{}', dropping message", network);
+        }
+        Ok(())
     }
 
     /// Main event loop for the TCL plugin
     pub async fn run(
         &mut self,
         mut command_rx: mpsc::Receiver<PluginCommand>,
-        response_tx: mpsc::Sender<PluginCommand>,
         file_change_rx: Option<std::sync::mpsc::Receiver<FileChangeEvent>>,
     ) -> Result<()> {
         info!("TCL plugin started");
@@ -98,42 +116,42 @@ impl TclPlugin {
                 command = command_rx.recv() => {
                     match command {
                         Some(PluginCommand::EvalTcl { message, is_admin }) => {
-                            if let Err(e) = self.handle_eval(message, is_admin, &response_tx).await {
+                            if let Err(e) = self.handle_eval(message, is_admin).await {
                                 error!("Error handling TCL eval: {}", e);
                             }
                         }
-                        Some(PluginCommand::LogMessage { channel, nick, mask, text }) => {
+                        Some(PluginCommand::LogMessage { channel, nick, mask, text, .. }) => {
                             self.tcl_thread.log_message(channel, nick, mask, text);
                         }
-                        Some(PluginCommand::UserJoin { channel, nick, mask }) => {
+                        Some(PluginCommand::UserJoin { network, channel, nick, mask }) => {
                             // Track admin status on join
                             self.update_admin_status(&nick, &mask, true);
-                            if let Err(e) = self.handle_event("JOIN", &[&nick, &mask, &channel], &response_tx).await {
+                            if let Err(e) = self.handle_event("JOIN", &[&nick, &mask, &channel], &network).await {
                                 warn!("Error handling JOIN event: {}", e);
                             }
                         }
-                        Some(PluginCommand::UserPart { channel, nick, mask }) => {
+                        Some(PluginCommand::UserPart { network, channel, nick, mask }) => {
                             // Remove from admin list on part
                             self.admin_nicks.remove(&nick);
-                            if let Err(e) = self.handle_event("PART", &[&nick, &mask, &channel], &response_tx).await {
+                            if let Err(e) = self.handle_event("PART", &[&nick, &mask, &channel], &network).await {
                                 warn!("Error handling PART event: {}", e);
                             }
                         }
-                        Some(PluginCommand::UserQuit { nick, mask, message }) => {
+                        Some(PluginCommand::UserQuit { network, nick, mask, message }) => {
                             // Remove from admin list on quit
                             self.admin_nicks.remove(&nick);
-                            if let Err(e) = self.handle_event("QUIT", &[&nick, &mask, &message], &response_tx).await {
+                            if let Err(e) = self.handle_event("QUIT", &[&nick, &mask, &message], &network).await {
                                 warn!("Error handling QUIT event: {}", e);
                             }
                         }
-                        Some(PluginCommand::UserKick { channel, nick, kicker, reason }) => {
+                        Some(PluginCommand::UserKick { network, channel, nick, kicker, reason }) => {
                             // Remove kicked user from admin list
                             self.admin_nicks.remove(&nick);
-                            if let Err(e) = self.handle_event("KICK", &[&nick, &kicker, &channel, &reason], &response_tx).await {
+                            if let Err(e) = self.handle_event("KICK", &[&nick, &kicker, &channel, &reason], &network).await {
                                 warn!("Error handling KICK event: {}", e);
                             }
                         }
-                        Some(PluginCommand::UserNick { old_nick, new_nick, mask }) => {
+                        Some(PluginCommand::UserNick { network, old_nick, new_nick, mask }) => {
                             // Update admin tracking for nick change
                             if self.admin_nicks.remove(&old_nick) {
                                 self.admin_nicks.insert(new_nick.clone());
@@ -141,22 +159,22 @@ impl TclPlugin {
                                 // Check if new hostmask is admin
                                 self.update_admin_status(&new_nick, &mask, true);
                             }
-                            if let Err(e) = self.handle_event("NICK", &[&old_nick, &new_nick, &mask], &response_tx).await {
+                            if let Err(e) = self.handle_event("NICK", &[&old_nick, &new_nick, &mask], &network).await {
                                 warn!("Error handling NICK event: {}", e);
                             }
                         }
-                        Some(PluginCommand::UserHostChange { nick, old_mask: _, new_mask }) => {
+                        Some(PluginCommand::UserHostChange { network: _, nick, old_mask: _, new_mask }) => {
                             // Re-check admin status with new hostmask
                             self.admin_nicks.remove(&nick);
                             self.update_admin_status(&nick, &new_mask, true);
                             debug!("Updated admin status for {} after host change", nick);
                         }
-                        Some(PluginCommand::UserText { channel, nick, mask, text }) => {
+                        Some(PluginCommand::UserText { network, channel, nick, mask, text }) => {
                             // Update admin status on every message in case host changed
                             if !self.admin_nicks.contains(&nick) {
                                 self.update_admin_status(&nick, &mask, true);
                             }
-                            if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &response_tx).await {
+                            if let Err(e) = self.handle_event("TEXT", &[&nick, &mask, &channel, &text], &network).await {
                                 warn!("Error handling TEXT event: {}", e);
                             }
                         }
@@ -173,7 +191,7 @@ impl TclPlugin {
                 }
                 // Poll timers periodically
                 _ = timer_interval.tick() => {
-                    if let Err(e) = self.check_timers(&response_tx).await {
+                    if let Err(e) = self.check_timers().await {
                         warn!("Error checking timers: {}", e);
                     }
                 }
@@ -192,101 +210,57 @@ impl TclPlugin {
 
         info!("Configuration reloaded successfully");
 
-        // Server config changes (require IRC reconnection)
-        if self.server_config.hostname != new_config.server.hostname {
-            warn!("  ⚠ Server hostname: {} -> {} (requires restart/reconnect)",
-                self.server_config.hostname,
-                new_config.server.hostname);
-        }
+        let new_servers = new_config.get_servers();
 
-        if self.server_config.port != new_config.server.port {
-            warn!("  ⚠ Server port: {} -> {} (requires restart/reconnect)",
-                self.server_config.port,
-                new_config.server.port);
-        }
-
-        if self.server_config.use_tls != new_config.server.use_tls {
-            warn!("  ⚠ Use TLS: {} -> {} (requires restart/reconnect)",
-                self.server_config.use_tls,
-                new_config.server.use_tls);
-        }
-
-        if self.server_config.nickname != new_config.server.nickname {
-            warn!("  ⚠ Nickname: {} -> {} (requires restart/reconnect)",
-                self.server_config.nickname,
-                new_config.server.nickname);
-        }
-
-        if self.server_config.channels != new_config.server.channels {
-            warn!("  ⚠ Channels: {:?} -> {:?} (requires restart/reconnect)",
-                self.server_config.channels,
-                new_config.server.channels);
+        // Compare server configs
+        for (i, new_srv) in new_servers.iter().enumerate() {
+            let old_srv = self.server_configs.get(i);
+            if let Some(old) = old_srv {
+                if old.hostname != new_srv.hostname {
+                    warn!("  Server {}: hostname {} -> {} (requires restart/reconnect)",
+                        new_srv.network_name(), old.hostname, new_srv.hostname);
+                }
+                if old.port != new_srv.port {
+                    warn!("  Server {}: port {} -> {} (requires restart/reconnect)",
+                        new_srv.network_name(), old.port, new_srv.port);
+                }
+            }
         }
 
         // Security config changes
         if self.security_config.eval_timeout_ms != new_config.security.eval_timeout_ms {
-            info!("  ✓ Timeout: {}ms -> {}ms",
+            info!("  Timeout: {}ms -> {}ms",
                 self.security_config.eval_timeout_ms,
                 new_config.security.eval_timeout_ms);
         }
 
         if self.security_config.privileged_users != new_config.security.privileged_users {
-            info!("  ✓ Privileged users: {} -> {} patterns",
+            info!("  Privileged users: {} -> {} patterns",
                 self.security_config.privileged_users.len(),
                 new_config.security.privileged_users.len());
         }
 
         if self.security_config.blacklisted_users != new_config.security.blacklisted_users {
-            info!("  ✓ Blacklisted users: {} -> {} patterns",
+            info!("  Blacklisted users: {} -> {} patterns",
                 self.security_config.blacklisted_users.len(),
                 new_config.security.blacklisted_users.len());
         }
 
         if self.security_config.notify_self != new_config.security.notify_self {
-            info!("  ✓ Notify self: {} -> {}",
+            info!("  Notify self: {} -> {}",
                 self.security_config.notify_self,
                 new_config.security.notify_self);
         }
 
-        if self.security_config.max_recursion_depth != new_config.security.max_recursion_depth {
-            warn!("  ⚠ Max recursion: {} -> {} (requires restart)",
-                self.security_config.max_recursion_depth,
-                new_config.security.max_recursion_depth);
-        }
-
-        if self.security_config.memory_limit_mb != new_config.security.memory_limit_mb {
-            warn!("  ⚠ Memory limit: {}MB -> {}MB (requires restart)",
-                self.security_config.memory_limit_mb,
-                new_config.security.memory_limit_mb);
-        }
-
         // TCL config changes
         if self.tcl_config.max_output_lines != new_config.tcl.max_output_lines {
-            info!("  ✓ Max output lines: {} -> {}",
+            info!("  Max output lines: {} -> {}",
                 self.tcl_config.max_output_lines,
                 new_config.tcl.max_output_lines);
         }
 
-        if self.tcl_config.state_path != new_config.tcl.state_path {
-            warn!("  ⚠ State path: {:?} -> {:?} (requires restart)",
-                self.tcl_config.state_path,
-                new_config.tcl.state_path);
-        }
-
-        if self.tcl_config.state_repo != new_config.tcl.state_repo {
-            warn!("  ⚠ State repo: {:?} -> {:?} (requires restart)",
-                self.tcl_config.state_repo,
-                new_config.tcl.state_repo);
-        }
-
-        if self.tcl_config.ssh_key != new_config.tcl.ssh_key {
-            warn!("  ⚠ SSH key: {:?} -> {:?} (requires restart)",
-                self.tcl_config.ssh_key,
-                new_config.tcl.ssh_key);
-        }
-
         // Update our configs
-        self.server_config = new_config.server;
+        self.server_configs = new_servers;
         self.security_config = new_config.security.clone();
         self.tcl_config = new_config.tcl.clone();
 
@@ -301,11 +275,11 @@ impl TclPlugin {
         &mut self,
         event: &str,
         args: &[&str],
-        response_tx: &mpsc::Sender<PluginCommand>,
+        network: &str,
     ) -> Result<()> {
-        // Build TCL command to dispatch event
+        // Build TCL command to dispatch event (include network)
         let tcl_args: Vec<String> = args.iter().map(|s| format!("{{{}}}", s)).collect();
-        let dispatch_cmd = format!("triggers dispatch {} {}", event, tcl_args.join(" "));
+        let dispatch_cmd = format!("triggers dispatch {} {{{}}} {}", event, network, tcl_args.join(" "));
 
         debug!("Dispatching event: {}", dispatch_cmd);
 
@@ -320,20 +294,19 @@ impl TclPlugin {
         let responses = self.parse_timer_list(&result);
 
         for (channel, message) in responses {
-            debug!("Trigger response for {}: {}", channel, message);
-            response_tx
-                .send(PluginCommand::SendToIrc {
-                    channel,
-                    text: message,
-                })
-                .await?;
+            debug!("Trigger response for {} on {}: {}", channel, network, message);
+            self.send_to_network(network, PluginCommand::SendToIrc {
+                network: network.to_string(),
+                channel,
+                text: message,
+            }).await?;
         }
 
         Ok(())
     }
 
     /// Check for ready timers and send their messages
-    async fn check_timers(&mut self, response_tx: &mpsc::Sender<PluginCommand>) -> Result<()> {
+    async fn check_timers(&mut self) -> Result<()> {
         // Evaluate TCL to check timers (using general timer framework)
         let result = self.tcl_thread.eval_simple("timers check".to_string()).await?;
 
@@ -342,17 +315,28 @@ impl TclPlugin {
         }
 
         // Parse the TCL list of {channel message} pairs
-        // Format: {{channel1 message1} {channel2 message2} ...}
         let timers = self.parse_timer_list(&result);
 
         for (channel, message) in timers {
             debug!("Timer fired for {}: {}", channel, message);
-            response_tx
-                .send(PluginCommand::SendToIrc {
-                    channel,
-                    text: message,
-                })
-                .await?;
+            // Timer responses: try to figure out network from channel
+            // Format could be "network:#channel" or just "#channel"
+            let (net, chan) = if let Some(colon_pos) = channel.find(':') {
+                let n = &channel[..colon_pos];
+                let c = &channel[colon_pos + 1..];
+                (n.to_string(), c.to_string())
+            } else {
+                // Default to first network
+                let default_net = self.response_channels.keys().next()
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string());
+                (default_net, channel)
+            };
+            self.send_to_network(&net, PluginCommand::SendToIrc {
+                network: net.clone(),
+                channel: chan,
+                text: message,
+            }).await?;
         }
 
         Ok(())
@@ -440,8 +424,9 @@ impl TclPlugin {
         &mut self,
         message: Message,
         is_admin: bool,
-        response_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        let network = message.author.network.clone();
+
         // Clean up old cache entries (older than 5 minutes)
         self.cleanup_cache();
 
@@ -456,17 +441,17 @@ impl TclPlugin {
 
         // Handle "more" command to retrieve cached output
         if code.trim() == "more" {
-            return self.handle_more_command(&message, response_tx).await;
+            return self.handle_more_command(&message, &network).await;
         }
 
         // Handle admin blacklist commands
         if code.trim() == "blacklist" || code.trim().starts_with("blacklist ") {
-            return self.handle_blacklist_command(&message, is_admin, code.trim(), response_tx).await;
+            return self.handle_blacklist_command(&message, is_admin, code.trim(), &network).await;
         }
 
         // Validate bracket balancing
         if let Err(e) = validator::validate_brackets(code) {
-            self.send_response(&message, format!("error: {}", e), response_tx)
+            self.send_response(&message, format!("error: {}", e), &network)
                 .await?;
             return Ok(());
         }
@@ -486,7 +471,7 @@ impl TclPlugin {
 
         if let Some(pattern) = blacklisted_pattern {
             let msg = "error: you are blacklisted and cannot use this bot";
-            self.send_response(&message, msg.to_string(), response_tx).await?;
+            self.send_response(&message, msg.to_string(), &network).await?;
             info!("Blocked blacklisted user: {} (matched pattern: {})", user_hostmask, pattern);
             return Ok(());
         }
@@ -505,7 +490,7 @@ impl TclPlugin {
         // Send PM notifications to admins if state was committed
         if let Some(ref commit_info) = result.commit_info {
             debug!("Sending commit notifications");
-            self.send_commit_notifications(commit_info, &message, response_tx).await?;
+            self.send_commit_notifications(commit_info, &message, &network).await?;
         }
 
         debug!("Starting response send with timeout");
@@ -513,14 +498,15 @@ impl TclPlugin {
         let timeout = Duration::from_millis(self.security_config.eval_timeout_ms);
         match tokio::time::timeout(
             timeout,
-            self.send_response(&message, result.output, response_tx)
+            self.send_response(&message, result.output, &network)
         ).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 warn!("Response sending timed out after {}ms, likely huge output", self.security_config.eval_timeout_ms);
                 // Try to send error message
-                let _ = response_tx.send(PluginCommand::SendToIrc {
+                let _ = self.send_to_network(&network, PluginCommand::SendToIrc {
+                    network: network.clone(),
                     channel: message.author.channel.clone(),
                     text: "error: output too large, response timed out".to_string(),
                 }).await;
@@ -533,23 +519,20 @@ impl TclPlugin {
         &mut self,
         original_message: &Message,
         output: String,
-        response_tx: &mpsc::Sender<PluginCommand>,
+        network: &str,
     ) -> Result<()> {
         debug!("send_response called with {} bytes", output.len());
 
-        // Reject output that's too large - don't even try to send it
-        // Commands like 'crash' generate 2GB of output which would create thousands
-        // of IRC messages and fill the channel
+        // Reject output that's too large
         const MAX_OUTPUT_BYTES: usize = 100_000; // 100KB max
         if output.len() > MAX_OUTPUT_BYTES {
             warn!("Output too large ({} bytes), sending error instead", output.len());
-            response_tx
-                .send(PluginCommand::SendToIrc {
-                    channel: original_message.author.channel.clone(),
-                    text: format!("error: output too large ({} bytes, max {} bytes)",
-                                 output.len(), MAX_OUTPUT_BYTES),
-                })
-                .await?;
+            self.send_to_network(network, PluginCommand::SendToIrc {
+                network: network.to_string(),
+                channel: original_message.author.channel.clone(),
+                text: format!("error: output too large ({} bytes, max {} bytes)",
+                             output.len(), MAX_OUTPUT_BYTES),
+            }).await?;
             return Ok(());
         }
 
@@ -592,12 +575,11 @@ impl TclPlugin {
             (output, false)
         };
 
-        response_tx
-            .send(PluginCommand::SendToIrc {
-                channel: original_message.author.channel.clone(),
-                text: output,
-            })
-            .await?;
+        self.send_to_network(network, PluginCommand::SendToIrc {
+            network: network.to_string(),
+            channel: original_message.author.channel.clone(),
+            text: output,
+        }).await?;
 
         // Clean up cache entry if we showed all lines
         if !cache_remaining {
@@ -616,7 +598,7 @@ impl TclPlugin {
         &self,
         commit_info: &crate::state::CommitInfo,
         original_message: &Message,
-        response_tx: &mpsc::Sender<PluginCommand>,
+        network: &str,
     ) -> Result<()> {
         // Build notification message
         let notification = format!(
@@ -631,12 +613,11 @@ impl TclPlugin {
             let is_sender = admin_nick == &original_message.author.nick;
             if !is_sender || self.security_config.notify_self {
                 debug!("Sending commit notification to {}", admin_nick);
-                response_tx
-                    .send(PluginCommand::SendToIrc {
-                        channel: admin_nick.clone(), // In IRC, nick as channel = PM
-                        text: notification.clone(),
-                    })
-                    .await?;
+                self.send_to_network(network, PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel: admin_nick.clone(), // In IRC, nick as channel = PM
+                    text: notification.clone(),
+                }).await?;
             }
         }
 
@@ -677,7 +658,7 @@ impl TclPlugin {
     async fn handle_more_command(
         &mut self,
         message: &Message,
-        response_tx: &mpsc::Sender<PluginCommand>,
+        network: &str,
     ) -> Result<()> {
         let cache_key = (
             message.author.channel.clone(),
@@ -690,12 +671,11 @@ impl TclPlugin {
 
             if remaining == 0 {
                 // No more lines
-                response_tx
-                    .send(PluginCommand::SendToIrc {
-                        channel: message.author.channel.clone(),
-                        text: "No more output.".to_string(),
-                    })
-                    .await?;
+                self.send_to_network(network, PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel: message.author.channel.clone(),
+                    text: "No more output.".to_string(),
+                }).await?;
                 self.output_cache.remove(&cache_key);
                 return Ok(());
             }
@@ -720,24 +700,22 @@ impl TclPlugin {
                 chunk.join("\n")
             };
 
-            response_tx
-                .send(PluginCommand::SendToIrc {
-                    channel: message.author.channel.clone(),
-                    text: output,
-                })
-                .await?;
+            self.send_to_network(network, PluginCommand::SendToIrc {
+                network: network.to_string(),
+                channel: message.author.channel.clone(),
+                text: output,
+            }).await?;
 
             // Clean up if we showed all lines
             if still_remaining == 0 {
                 self.output_cache.remove(&cache_key);
             }
         } else {
-            response_tx
-                .send(PluginCommand::SendToIrc {
-                    channel: message.author.channel.clone(),
-                    text: "No cached output. Run a tcl command first.".to_string(),
-                })
-                .await?;
+            self.send_to_network(network, PluginCommand::SendToIrc {
+                network: network.to_string(),
+                channel: message.author.channel.clone(),
+                text: "No cached output. Run a tcl command first.".to_string(),
+            }).await?;
         }
 
         Ok(())
@@ -749,18 +727,18 @@ impl TclPlugin {
         message: &Message,
         is_admin: bool,
         code: &str,
-        response_tx: &mpsc::Sender<PluginCommand>,
+        network: &str,
     ) -> Result<()> {
         // Blacklist commands are admin-only
         if !is_admin {
-            self.send_response(message, "error: blacklist commands require admin privileges (use tclAdmin)".to_string(), response_tx).await?;
+            self.send_response(message, "error: blacklist commands require admin privileges (use tclAdmin)".to_string(), network).await?;
             return Ok(());
         }
 
         let parts: Vec<&str> = code.split_whitespace().collect();
 
         if parts.len() < 2 {
-            self.send_response(message, "error: usage: blacklist <add|remove|list> [hostmask]".to_string(), response_tx).await?;
+            self.send_response(message, "error: usage: blacklist <add|remove|list> [hostmask]".to_string(), network).await?;
             return Ok(());
         }
 
@@ -769,7 +747,7 @@ impl TclPlugin {
         match subcommand {
             "add" => {
                 if parts.len() < 3 {
-                    self.send_response(message, "error: usage: blacklist add <hostmask>".to_string(), response_tx).await?;
+                    self.send_response(message, "error: usage: blacklist add <hostmask>".to_string(), network).await?;
                     return Ok(());
                 }
 
@@ -777,19 +755,19 @@ impl TclPlugin {
 
                 // Check if already blacklisted
                 if self.security_config.blacklisted_users.contains(&hostmask) {
-                    self.send_response(message, format!("Hostmask '{}' is already blacklisted", hostmask), response_tx).await?;
+                    self.send_response(message, format!("Hostmask '{}' is already blacklisted", hostmask), network).await?;
                     return Ok(());
                 }
 
                 // Add to blacklist
                 self.security_config.blacklisted_users.push(hostmask.clone());
                 info!("Admin {} added '{}' to blacklist", message.author.nick, hostmask);
-                self.send_response(message, format!("Added '{}' to blacklist (runtime only, not saved to config)", hostmask), response_tx).await?;
+                self.send_response(message, format!("Added '{}' to blacklist (runtime only, not saved to config)", hostmask), network).await?;
             }
 
             "remove" => {
                 if parts.len() < 3 {
-                    self.send_response(message, "error: usage: blacklist remove <hostmask>".to_string(), response_tx).await?;
+                    self.send_response(message, "error: usage: blacklist remove <hostmask>".to_string(), network).await?;
                     return Ok(());
                 }
 
@@ -799,23 +777,23 @@ impl TclPlugin {
                 if let Some(pos) = self.security_config.blacklisted_users.iter().position(|x| x == &hostmask) {
                     self.security_config.blacklisted_users.remove(pos);
                     info!("Admin {} removed '{}' from blacklist", message.author.nick, hostmask);
-                    self.send_response(message, format!("Removed '{}' from blacklist", hostmask), response_tx).await?;
+                    self.send_response(message, format!("Removed '{}' from blacklist", hostmask), network).await?;
                 } else {
-                    self.send_response(message, format!("Hostmask '{}' is not in blacklist", hostmask), response_tx).await?;
+                    self.send_response(message, format!("Hostmask '{}' is not in blacklist", hostmask), network).await?;
                 }
             }
 
             "list" => {
                 if self.security_config.blacklisted_users.is_empty() {
-                    self.send_response(message, "Blacklist is empty".to_string(), response_tx).await?;
+                    self.send_response(message, "Blacklist is empty".to_string(), network).await?;
                 } else {
                     let list = self.security_config.blacklisted_users.join(", ");
-                    self.send_response(message, format!("Blacklisted hostmasks ({}): {}", self.security_config.blacklisted_users.len(), list), response_tx).await?;
+                    self.send_response(message, format!("Blacklisted hostmasks ({}): {}", self.security_config.blacklisted_users.len(), list), network).await?;
                 }
             }
 
             _ => {
-                self.send_response(message, format!("error: unknown blacklist subcommand '{}'. Use: add, remove, or list", subcommand), response_tx).await?;
+                self.send_response(message, format!("error: unknown blacklist subcommand '{}'. Use: add, remove, or list", subcommand), network).await?;
             }
         }
 
@@ -855,6 +833,7 @@ mod tests {
         };
 
         let server_config = ServerConfig {
+            name: None,
             hostname: "irc.example.com".to_string(),
             port: 6667,
             use_tls: false,
@@ -864,7 +843,7 @@ mod tests {
 
         let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
 
-        TclPlugin::new(security_config, tcl_config, server_config, config_path, channel_members).unwrap()
+        TclPlugin::new(security_config, tcl_config, vec![server_config], config_path, channel_members).unwrap()
     }
 
     #[test]

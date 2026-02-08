@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 /// Shared state for tracking channel members
-/// Key: channel name, Value: set of nicknames
+/// Key: "network:#channel" composite key, Value: set of nicknames
 pub type ChannelMembers = Arc<RwLock<HashMap<String, HashSet<String>>>>;
 
 /// Represents the author/source of a message
@@ -13,6 +13,7 @@ pub struct MessageAuthor {
     pub ident: Option<String>,
     pub host: Option<String>,
     pub channel: String,
+    pub network: String,
 }
 
 impl MessageAuthor {
@@ -22,6 +23,7 @@ impl MessageAuthor {
             ident: None,
             host: None,
             channel,
+            network: "default".to_string(),
         }
     }
 
@@ -32,6 +34,11 @@ impl MessageAuthor {
 
     pub fn with_ident(mut self, ident: String) -> Self {
         self.ident = Some(ident);
+        self
+    }
+
+    pub fn with_network(mut self, network: String) -> Self {
+        self.network = network;
         self
     }
 
@@ -52,9 +59,9 @@ impl MessageAuthor {
 impl fmt::Display for MessageAuthor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref host) = self.host {
-            write!(f, "{} <{}> on {}", self.nick, host, self.channel)
+            write!(f, "{} <{}> on {} [{}]", self.nick, host, self.channel, self.network)
         } else {
-            write!(f, "{} on {}", self.nick, self.channel)
+            write!(f, "{} on {} [{}]", self.nick, self.channel, self.network)
         }
     }
 }
@@ -78,11 +85,12 @@ pub enum PluginCommand {
     /// Evaluate TCL code
     EvalTcl { message: Message, is_admin: bool },
 
-    /// Send a message to IRC
-    SendToIrc { channel: String, text: String },
+    /// Send a message to IRC (routed by network)
+    SendToIrc { network: String, channel: String, text: String },
 
     /// Log a message (for channel history)
     LogMessage {
+        network: String,
         channel: String,
         nick: String,
         mask: String,
@@ -91,6 +99,7 @@ pub enum PluginCommand {
 
     /// User joined a channel
     UserJoin {
+        network: String,
         channel: String,
         nick: String,
         mask: String,
@@ -98,6 +107,7 @@ pub enum PluginCommand {
 
     /// User left a channel
     UserPart {
+        network: String,
         channel: String,
         nick: String,
         mask: String,
@@ -105,6 +115,7 @@ pub enum PluginCommand {
 
     /// User quit IRC
     UserQuit {
+        network: String,
         nick: String,
         mask: String,
         message: String,
@@ -112,6 +123,7 @@ pub enum PluginCommand {
 
     /// User was kicked from a channel
     UserKick {
+        network: String,
         channel: String,
         nick: String,
         kicker: String,
@@ -120,6 +132,7 @@ pub enum PluginCommand {
 
     /// User changed nickname
     UserNick {
+        network: String,
         old_nick: String,
         new_nick: String,
         mask: String,
@@ -127,6 +140,7 @@ pub enum PluginCommand {
 
     /// User's host changed (e.g., after auth with services)
     UserHostChange {
+        network: String,
         nick: String,
         old_mask: String,
         new_mask: String,
@@ -134,6 +148,7 @@ pub enum PluginCommand {
 
     /// User sent a message to a channel
     UserText {
+        network: String,
         channel: String,
         nick: String,
         mask: String,

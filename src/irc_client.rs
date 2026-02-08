@@ -68,6 +68,8 @@ pub struct IrcClient {
     /// Server configuration (kept for potential future use, e.g., reconnection)
     #[allow(dead_code)]
     config: ServerConfig,
+    /// Network name for this connection
+    network_name: String,
     channel_members: ChannelMembers,
     /// Channels to join after registration
     channels_to_join: Vec<String>,
@@ -84,7 +86,7 @@ pub struct IrcClient {
 }
 
 impl IrcClient {
-    pub async fn new(config: ServerConfig, channel_members: ChannelMembers) -> Result<Self> {
+    pub async fn new(config: ServerConfig, network_name: String, channel_members: ChannelMembers) -> Result<Self> {
         // Store channels to join after registration
         let channels_to_join = config.channels.clone();
         let desired_nickname = config.nickname.clone();
@@ -105,11 +107,12 @@ impl IrcClient {
         let client = Client::from_config(irc_config).await?;
         client.identify()?;
 
-        info!("IRC client connected to {}:{}", config.hostname, config.port);
+        info!("[{}] IRC client connected to {}:{}", network_name, config.hostname, config.port);
 
         Ok(Self {
             client,
             config,
+            network_name,
             channel_members,
             channels_to_join,
             desired_nickname,
@@ -189,10 +192,15 @@ impl IrcClient {
     fn try_reclaim_nick(&mut self) -> Result<()> {
         let current = self.client.current_nickname();
         if current != self.desired_nickname && self.registered {
-            info!("Attempting to reclaim desired nickname: {}", self.desired_nickname);
+            info!("[{}] Attempting to reclaim desired nickname: {}", self.network_name, self.desired_nickname);
             self.client.send(Command::NICK(self.desired_nickname.clone()))?;
         }
         Ok(())
+    }
+
+    /// Composite key for channel members: "network:#channel"
+    fn member_key(&self, channel: &str) -> String {
+        format!("{}:{}", self.network_name, channel)
     }
 
     /// Main event loop for the IRC client
@@ -202,7 +210,7 @@ impl IrcClient {
         response_rx: &mut mpsc::Receiver<PluginCommand>,
     ) -> Result<()> {
         let mut stream = self.client.stream()?;
-        info!("IRC event loop started, waiting for messages...");
+        info!("[{}] IRC event loop started, waiting for messages...", self.network_name);
 
         // Timer for periodic nickname reclaim attempts (every 5 minutes)
         let mut nick_reclaim_interval = tokio::time::interval(Duration::from_secs(300));
@@ -213,18 +221,18 @@ impl IrcClient {
                 result = stream.next() => {
                     match result {
                         Some(Ok(message)) => {
-                            debug!("Received IRC message: {:?}", message);
+                            debug!("[{}] Received IRC message: {:?}", self.network_name, message);
                             if let Err(e) = self.handle_irc_message(message, &command_tx).await {
-                                error!("Error handling IRC message: {}", e);
+                                error!("[{}] Error handling IRC message: {}", self.network_name, e);
                             }
                         }
                         Some(Err(e)) => {
-                            error!("IRC connection error: {}", e);
-                            info!("IRC connection lost - will exit");
+                            error!("[{}] IRC connection error: {}", self.network_name, e);
+                            info!("[{}] IRC connection lost - will exit", self.network_name);
                             break;
                         }
                         None => {
-                            info!("IRC stream closed by server");
+                            info!("[{}] IRC stream closed by server", self.network_name);
                             break;
                         }
                     }
@@ -232,19 +240,19 @@ impl IrcClient {
 
                 Some(command) = response_rx.recv() => {
                     if let Err(e) = self.handle_plugin_command(command).await {
-                        error!("Error handling plugin command: {}", e);
+                        error!("[{}] Error handling plugin command: {}", self.network_name, e);
                     }
                 }
 
                 _ = nick_reclaim_interval.tick() => {
                     // Periodically try to reclaim our desired nickname
                     if let Err(e) = self.try_reclaim_nick() {
-                        debug!("Failed to reclaim nickname: {}", e);
+                        debug!("[{}] Failed to reclaim nickname: {}", self.network_name, e);
                     }
                 }
 
                 else => {
-                    info!("IRC event loop ending - response channel closed");
+                    info!("[{}] IRC event loop ending - response channel closed", self.network_name);
                     break;
                 }
             }
@@ -258,6 +266,7 @@ impl IrcClient {
         message: irc::proto::Message,
         command_tx: &mpsc::Sender<PluginCommand>,
     ) -> Result<()> {
+        let net = self.network_name.clone();
         match message.command {
             Command::PRIVMSG(ref target, ref msg) => {
                 if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
@@ -269,6 +278,7 @@ impl IrcClient {
                         let mask = format!("{}@{}", user, host);
                         command_tx
                             .send(PluginCommand::LogMessage {
+                                network: net.clone(),
                                 channel: target.clone(),
                                 nick: nick.clone(),
                                 mask: mask.clone(),
@@ -279,6 +289,7 @@ impl IrcClient {
                         // Send TEXT event for trigger handling
                         command_tx
                             .send(PluginCommand::UserText {
+                                network: net.clone(),
                                 channel: target.clone(),
                                 nick: nick.clone(),
                                 mask,
@@ -291,7 +302,7 @@ impl IrcClient {
                     if clean_msg.starts_with("tcl ") || clean_msg.starts_with("tclAdmin ") {
                         // Only respond to commands in channels, not private messages
                         if !target.starts_with('#') {
-                            debug!("Ignoring tcl command from private message ({})", nick);
+                            debug!("[{}] Ignoring tcl command from private message ({})", net, nick);
                             return Ok(());
                         }
 
@@ -300,11 +311,12 @@ impl IrcClient {
 
                         let author = MessageAuthor::new(nick.clone(), channel)
                             .with_ident(user.clone())
-                            .with_host(host.clone());
+                            .with_host(host.clone())
+                            .with_network(net.clone());
 
                         let content = clean_msg;
 
-                        debug!("Received command from {}: {}", author, content);
+                        debug!("[{}] Received command from {}: {}", net, author, content);
 
                         command_tx
                             .send(PluginCommand::EvalTcl {
@@ -316,12 +328,12 @@ impl IrcClient {
                 }
             }
             Command::INVITE(ref _nick, ref channel) => {
-                debug!("Invited to {}, joining", channel);
+                debug!("[{}] Invited to {}, joining", net, channel);
                 self.client.send_join(channel)?;
             }
             Command::KICK(ref channel, ref nick, ref reason) => {
                 if nick == self.client.current_nickname() {
-                    info!("Kicked from {}, rejoining in 10s", channel);
+                    info!("[{}] Kicked from {}, rejoining in 10s", net, channel);
                     // Wait 10 seconds then automatically rejoin
                     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     let _ = self.client.send_join(channel);
@@ -337,6 +349,7 @@ impl IrcClient {
                     };
                     command_tx
                         .send(PluginCommand::UserKick {
+                            network: net.clone(),
                             channel: channel.clone(),
                             nick: nick.clone(),
                             kicker,
@@ -347,13 +360,14 @@ impl IrcClient {
             }
             Command::JOIN(ref channel, _, _) => {
                 if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
-                    debug!("{} joined {}", nick, channel);
+                    debug!("[{}] {} joined {}", net, nick, channel);
                     self.add_member(channel, nick);
 
                     // Send event to plugin for trigger handling
                     let mask = format!("{}@{}", user, host);
                     command_tx
                         .send(PluginCommand::UserJoin {
+                            network: net.clone(),
                             channel: channel.clone(),
                             nick: nick.clone(),
                             mask,
@@ -363,13 +377,14 @@ impl IrcClient {
             }
             Command::PART(ref channel, _) => {
                 if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
-                    debug!("{} left {}", nick, channel);
+                    debug!("[{}] {} left {}", net, nick, channel);
                     self.remove_member(channel, nick);
 
                     // Send event to plugin for trigger handling
                     let mask = format!("{}@{}", user, host);
                     command_tx
                         .send(PluginCommand::UserPart {
+                            network: net.clone(),
                             channel: channel.clone(),
                             nick: nick.clone(),
                             mask,
@@ -379,13 +394,14 @@ impl IrcClient {
             }
             Command::QUIT(ref quit_msg) => {
                 if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
-                    debug!("{} quit", nick);
+                    debug!("[{}] {} quit", net, nick);
                     self.remove_member_from_all(nick);
 
                     // Send event to plugin for trigger handling
                     let mask = format!("{}@{}", user, host);
                     command_tx
                         .send(PluginCommand::UserQuit {
+                            network: net.clone(),
                             nick: nick.clone(),
                             mask,
                             message: quit_msg.clone().unwrap_or_default(),
@@ -395,15 +411,15 @@ impl IrcClient {
             }
             Command::NICK(ref new_nick) => {
                 if let Some(Prefix::Nickname(ref old_nick, ref user, ref host)) = message.prefix {
-                    debug!("{} changed nick to {}", old_nick, new_nick);
+                    debug!("[{}] {} changed nick to {}", net, old_nick, new_nick);
 
                     // Check if this is our own nick change
                     if old_nick == self.client.current_nickname() {
                         if new_nick == &self.desired_nickname {
-                            info!("Successfully reclaimed desired nickname: {}", self.desired_nickname);
+                            info!("[{}] Successfully reclaimed desired nickname: {}", net, self.desired_nickname);
                             self.nick_attempt = 0;
                         } else {
-                            debug!("Our nickname changed to: {}", new_nick);
+                            debug!("[{}] Our nickname changed to: {}", net, new_nick);
                         }
                     }
 
@@ -413,6 +429,7 @@ impl IrcClient {
                     let mask = format!("{}@{}", user, host);
                     command_tx
                         .send(PluginCommand::UserNick {
+                            network: net.clone(),
                             old_nick: old_nick.clone(),
                             new_nick: new_nick.clone(),
                             mask,
@@ -421,16 +438,11 @@ impl IrcClient {
                 }
             }
             Command::Response(Response::RPL_NAMREPLY, ref args) => {
-                // 353 reply: :<server> 353 <nick> <channel_type> <channel> :<nicks>
-                // args[0] = our nickname
-                // args[1] = channel type (=, *, @)
-                // args[2] = channel name
-                // args[3] = space-separated list of nicks (may have prefixes like @ or +)
                 if args.len() >= 4 {
                     let channel = &args[2];
                     let nicks_str = &args[3];
 
-                    debug!("NAMES for {}: {}", channel, nicks_str);
+                    debug!("[{}] NAMES for {}: {}", net, channel, nicks_str);
 
                     for nick in nicks_str.split_whitespace() {
                         // Strip mode prefixes (@, +, etc.)
@@ -440,60 +452,50 @@ impl IrcClient {
                 }
             }
             Command::Response(Response::RPL_ENDOFNAMES, _) => {
-                // 366 reply: :<server> 366 <nick> <channel> :End of /NAMES list.
-                // This marks the end of NAMES list, we can log it
-                debug!("End of NAMES list");
+                debug!("[{}] End of NAMES list", net);
             }
             Command::Response(Response::RPL_ISUPPORT, ref args) => {
-                // 005 reply: Server capabilities and limits
-                debug!("Received ISUPPORT: {:?}", args);
+                debug!("[{}] Received ISUPPORT: {:?}", net, args);
                 self.server_limits.parse_isupport(args);
             }
             Command::Response(Response::RPL_WELCOME, ref args) => {
-                // 001 reply: Registration complete
                 self.registered = true;
                 let current_nick = self.client.current_nickname();
 
-                // Try to extract hostmask from the welcome message
-                // Format: ":Welcome to the Network nick!ident@host"
                 if let Some(welcome_msg) = args.last() {
                     if let Some(hostmask_start) = welcome_msg.rfind(char::is_whitespace) {
                         let potential_hostmask = &welcome_msg[hostmask_start + 1..];
                         if potential_hostmask.contains('!') && potential_hostmask.contains('@') {
                             self.bot_hostmask = Some(potential_hostmask.to_string());
-                            info!("Bot hostmask: {}", potential_hostmask);
+                            info!("[{}] Bot hostmask: {}", net, potential_hostmask);
                         }
                     }
                 }
 
-                // If we didn't get it from welcome message, request it via USERHOST
                 if self.bot_hostmask.is_none() {
-                    debug!("Requesting hostmask via USERHOST");
+                    debug!("[{}] Requesting hostmask via USERHOST", net);
                     let _ = self.client.send(Command::USERHOST(vec![current_nick.to_string()]));
                 }
 
                 if current_nick != self.desired_nickname {
-                    warn!("Registered with alternative nickname: {} (desired: {})",
-                          current_nick, self.desired_nickname);
-                    warn!("Will attempt to reclaim {} periodically", self.desired_nickname);
+                    warn!("[{}] Registered with alternative nickname: {} (desired: {})",
+                          net, current_nick, self.desired_nickname);
+                    warn!("[{}] Will attempt to reclaim {} periodically", net, self.desired_nickname);
                 } else {
-                    info!("Registration complete with desired nickname: {}", current_nick);
+                    info!("[{}] Registration complete with desired nickname: {}", net, current_nick);
                 }
 
-                info!("Joining channels");
+                info!("[{}] Joining channels", net);
                 for channel in &self.channels_to_join {
-                    info!("Joining channel: {}", channel);
+                    info!("[{}] Joining channel: {}", net, channel);
                     if let Err(e) = self.client.send_join(channel) {
-                        error!("Failed to join {}: {}", channel, e);
+                        error!("[{}] Failed to join {}: {}", net, channel, e);
                     }
                 }
             }
             Command::Response(Response::RPL_USERHOST, ref args) => {
-                // 302 reply: USERHOST response
-                // Format: :nick*=+ident@host (the * means IRC operator, + means not away)
                 if let Some(response) = args.get(1) {
-                    debug!("USERHOST response: {}", response);
-                    // Parse: nick*=+ident@host or nick=+ident@host
+                    debug!("[{}] USERHOST response: {}", net, response);
                     if let Some(eq_pos) = response.find('=') {
                         let nick_part = &response[..eq_pos].trim_end_matches('*');
                         let rest = &response[eq_pos + 1..].trim_start_matches(&['+', '-'][..]);
@@ -502,26 +504,23 @@ impl IrcClient {
                             let host = &rest[at_pos + 1..];
                             let hostmask = format!("{}!{}@{}", nick_part, ident, host);
                             self.bot_hostmask = Some(hostmask.clone());
-                            info!("Bot hostmask from USERHOST: {}", hostmask);
+                            info!("[{}] Bot hostmask from USERHOST: {}", net, hostmask);
                         }
                     }
                 }
             }
             Command::Response(Response::ERR_NICKNAMEINUSE, _) => {
-                // 433 reply: Nickname is already in use
                 self.nick_attempt += 1;
                 let alt_nick = self.generate_alternative_nick();
 
                 if self.registered {
-                    // Already registered, just log that reclaim failed
-                    debug!("Nickname {} still in use, cannot reclaim yet", self.desired_nickname);
+                    debug!("[{}] Nickname {} still in use, cannot reclaim yet", net, self.desired_nickname);
                 } else {
-                    // During registration, try an alternative
-                    warn!("Nickname {} is in use, trying alternative: {}",
-                          self.desired_nickname, alt_nick);
+                    warn!("[{}] Nickname {} is in use, trying alternative: {}",
+                          net, self.desired_nickname, alt_nick);
 
                     if let Err(e) = self.client.send(Command::NICK(alt_nick)) {
-                        error!("Failed to send NICK command: {}", e);
+                        error!("[{}] Failed to send NICK command: {}", net, e);
                     }
                 }
             }
@@ -533,21 +532,17 @@ impl IrcClient {
 
     async fn handle_plugin_command(&self, command: PluginCommand) -> Result<()> {
         match command {
-            PluginCommand::SendToIrc { channel, text } => {
-                // Calculate maximum message length for this channel dynamically
-                // based on server limits and our hostmask
+            PluginCommand::SendToIrc { channel, text, .. } => {
                 let max_len = self.calculate_max_message_length(&channel);
-                debug!("Using max message length {} for channel {}", max_len, channel);
+                debug!("[{}] Using max message length {} for channel {}", self.network_name, max_len, channel);
 
-                // Split long messages with smart word-boundary splitting
                 for line in irc_formatting::split_message_smart(&text, max_len) {
                     self.client.send_privmsg(&channel, &line)?;
-                    // Small delay to avoid flooding
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
             PluginCommand::Shutdown => {
-                info!("Shutting down IRC client");
+                info!("[{}] Shutting down IRC client", self.network_name);
                 self.client.send_quit("Goodbye")?;
             }
             _ => {}
@@ -556,48 +551,58 @@ impl IrcClient {
         Ok(())
     }
 
-    /// Add a member to a channel
+    /// Add a member to a channel (using composite network:channel key)
     fn add_member(&self, channel: &str, nick: &str) {
         use std::collections::HashSet;
+        let key = self.member_key(channel);
         let mut members = self.channel_members.write().unwrap();
         members
-            .entry(channel.to_string())
+            .entry(key)
             .or_insert_with(HashSet::new)
             .insert(nick.to_string());
     }
 
-    /// Remove a member from a channel
+    /// Remove a member from a channel (using composite key)
     fn remove_member(&self, channel: &str, nick: &str) {
+        let key = self.member_key(channel);
         let mut members = self.channel_members.write().unwrap();
-        if let Some(channel_set) = members.get_mut(channel) {
+        if let Some(channel_set) = members.get_mut(&key) {
             channel_set.remove(nick);
         }
     }
 
-    /// Remove a member from all channels (for QUIT)
+    /// Remove a member from all channels on this network (for QUIT)
     fn remove_member_from_all(&self, nick: &str) {
+        let prefix = format!("{}:", self.network_name);
         let mut members = self.channel_members.write().unwrap();
-        for channel_set in members.values_mut() {
-            channel_set.remove(nick);
+        for (key, channel_set) in members.iter_mut() {
+            if key.starts_with(&prefix) {
+                channel_set.remove(nick);
+            }
         }
     }
 
-    /// Rename a member in all channels (for NICK)
+    /// Rename a member in all channels on this network (for NICK)
     fn rename_member(&self, old_nick: &str, new_nick: &str) {
+        let prefix = format!("{}:", self.network_name);
         let mut members = self.channel_members.write().unwrap();
-        for channel_set in members.values_mut() {
-            if channel_set.remove(old_nick) {
-                channel_set.insert(new_nick.to_string());
+        for (key, channel_set) in members.iter_mut() {
+            if key.starts_with(&prefix) {
+                if channel_set.remove(old_nick) {
+                    channel_set.insert(new_nick.to_string());
+                }
             }
         }
     }
 }
 
 /// Run IRC client with automatic reconnection on failure
-/// Uses exponential backoff: 1s, 2s, 4s, 8s, ... up to 5 minutes max
-/// Cycles through DNS-resolved IPs on each reconnection attempt
+/// Uses exponential backoff only on connection failures.
+/// On successful connection followed by disconnect, uses initial delay.
+/// Cycles through DNS-resolved IPs on each reconnection attempt.
 pub async fn run_with_reconnect(
     config: ServerConfig,
+    network_name: String,
     channel_members: ChannelMembers,
     command_tx: mpsc::Sender<PluginCommand>,
     mut response_rx: mpsc::Receiver<PluginCommand>,
@@ -614,8 +619,8 @@ pub async fn run_with_reconnect(
         let resolved_ips: Vec<_> = match lookup_host(&lookup_addr).await {
             Ok(addrs) => addrs.collect(),
             Err(e) => {
-                error!("DNS lookup failed for {}: {}", config.hostname, e);
-                info!("Reconnecting in {} seconds...", delay_secs);
+                error!("[{}] DNS lookup failed for {}: {}", network_name, config.hostname, e);
+                info!("[{}] Reconnecting in {} seconds...", network_name, delay_secs);
                 tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 delay_secs = (delay_secs * 2).min(MAX_DELAY);
                 continue;
@@ -623,8 +628,8 @@ pub async fn run_with_reconnect(
         };
 
         if resolved_ips.is_empty() {
-            error!("No IPs resolved for {}", config.hostname);
-            info!("Reconnecting in {} seconds...", delay_secs);
+            error!("[{}] No IPs resolved for {}", network_name, config.hostname);
+            info!("[{}] Reconnecting in {} seconds...", network_name, delay_secs);
             tokio::time::sleep(Duration::from_secs(delay_secs)).await;
             delay_secs = (delay_secs * 2).min(MAX_DELAY);
             continue;
@@ -634,8 +639,8 @@ pub async fn run_with_reconnect(
         let addr = &resolved_ips[server_index % resolved_ips.len()];
         server_index += 1;
 
-        info!("Connecting to IRC server {} ({}) [{}/{}]",
-              config.hostname, addr.ip(),
+        info!("[{}] Connecting to IRC server {} ({}) [{}/{}]",
+              network_name, config.hostname, addr.ip(),
               (server_index - 1) % resolved_ips.len() + 1,
               resolved_ips.len());
 
@@ -643,27 +648,27 @@ pub async fn run_with_reconnect(
         let mut connect_config = config.clone();
         connect_config.hostname = addr.ip().to_string();
 
-        match IrcClient::new(connect_config, channel_members.clone()).await {
+        match IrcClient::new(connect_config, network_name.clone(), channel_members.clone()).await {
             Ok(irc_client) => {
-                // Reset delay on successful connection
+                // Connection succeeded - reset backoff for future connection failures
                 delay_secs = INITIAL_DELAY;
 
                 // Run the client - this blocks until disconnection
                 if let Err(e) = irc_client.run(command_tx.clone(), &mut response_rx).await {
-                    error!("IRC client error: {}", e);
+                    error!("[{}] IRC client error: {}", network_name, e);
                 }
 
-                info!("IRC connection lost, will reconnect");
+                // After a successful connection + run, always use initial delay (no exponential backoff)
+                info!("[{}] IRC connection lost, reconnecting in {} seconds", network_name, INITIAL_DELAY);
+                tokio::time::sleep(Duration::from_secs(INITIAL_DELAY)).await;
             }
             Err(e) => {
-                error!("Failed to connect to IRC: {}", e);
+                // Connection failed - use exponential backoff
+                error!("[{}] Failed to connect to IRC: {}", network_name, e);
+                info!("[{}] Reconnecting in {} seconds...", network_name, delay_secs);
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                delay_secs = (delay_secs * 2).min(MAX_DELAY);
             }
         }
-
-        info!("Reconnecting in {} seconds...", delay_secs);
-        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-
-        // Exponential backoff
-        delay_secs = (delay_secs * 2).min(MAX_DELAY);
     }
 }

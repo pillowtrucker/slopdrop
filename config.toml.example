@@ -19,8 +19,16 @@
 # IRC FRONTEND CONFIGURATION
 # ============================================================================
 # Used when running with --irc (or no flags, as IRC is default)
+#
+# SINGLE NETWORK: Use [server] for a single IRC network (backwards compatible)
+# MULTI NETWORK:  Use [[servers]] for connecting to multiple networks
+#                 All networks share the same TCL state/interpreter
 
+# --- Single network example (use this OR [[servers]], not both) ---
 [server]
+# Optional network name (defaults to hostname if not set)
+# name = "libera"
+
 # IRC server hostname
 hostname = "irc.libera.chat"
 
@@ -36,6 +44,26 @@ nickname = "slopdrop"
 # Channels to join automatically
 # The bot will respond to 'tcl' and 'tclAdmin' commands in these channels
 channels = ["#bottest"]
+
+# --- Multi-network example (uncomment and remove [server] above to use) ---
+# All networks share the same TCL interpreter and state.
+# Use 'triggers disable_for' to control triggers per-network/channel.
+#
+# [[servers]]
+# name = "libera"
+# hostname = "irc.libera.chat"
+# port = 6697
+# use_tls = true
+# nickname = "slopdrop"
+# channels = ["#bottest", "#mychannel"]
+#
+# [[servers]]
+# name = "oftc"
+# hostname = "irc.oftc.net"
+# port = 6697
+# use_tls = true
+# nickname = "slopdrop"
+# channels = ["#myproject"]
 
 # ============================================================================
 # SECURITY CONFIGURATION
