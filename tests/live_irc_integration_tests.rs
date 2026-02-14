@@ -78,6 +78,7 @@ impl TestBot {
 
         // Create configs
         let server_config = ServerConfig {
+            name: None,
             hostname: "127.0.0.1".to_string(),
             port: 16667,
             use_tls: false,
@@ -104,11 +105,12 @@ impl TestBot {
         // Spawn TCL plugin
         let channel_members_clone = channel_members.clone();
         let server_config_clone = server_config.clone();
+        let network_name = server_config.network_name();
         let tcl_handle = tokio::task::spawn_blocking(move || {
             let mut tcl_plugin = match TclPlugin::new(
                 security_config,
                 tcl_config,
-                server_config_clone,
+                vec![server_config_clone],
                 PathBuf::from("/tmp/test_config.toml"),
                 channel_members_clone,
             ) {
@@ -119,18 +121,21 @@ impl TestBot {
                 }
             };
 
+            tcl_plugin.register_network("127.0.0.1".to_string(), irc_response_tx);
+
             // Create a dedicated runtime for the TCL plugin
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx, None).await {
+                if let Err(e) = tcl_plugin.run(tcl_command_rx, None).await {
                     eprintln!("TCL plugin error: {}", e);
                 }
             });
         });
 
         // Spawn IRC client
+        let net = network_name.clone();
         let irc_handle = tokio::spawn(async move {
-            match IrcClient::new(server_config, channel_members).await {
+            match IrcClient::new(server_config, net.clone(), channel_members).await {
                 Ok(irc_client) => {
                     if let Err(e) = irc_client.run(tcl_command_tx, &mut irc_response_rx).await {
                         eprintln!("IRC client error: {}", e);

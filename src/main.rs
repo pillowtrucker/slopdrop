@@ -214,14 +214,23 @@ async fn main() -> Result<()> {
     if flags.irc {
         info!("Starting IRC frontend");
 
-        // Create shared channel members tracking
+        let servers = config.get_servers();
+        if servers.is_empty() {
+            error!("No servers configured! Add [server] or [[servers]] to config.toml");
+            return Err(anyhow::anyhow!("No servers configured"));
+        }
+
+        info!("Configured {} network(s)", servers.len());
+        for srv in &servers {
+            info!("  Network '{}': {}:{} channels: {:?}",
+                srv.network_name(), srv.hostname, srv.port, srv.channels);
+        }
+
+        // Create shared channel members tracking (shared across all networks)
         let channel_members = Arc::new(RwLock::new(HashMap::new()));
 
-        // Create communication channels
+        // Create command channel: all IRC clients -> TclPlugin
         let (tcl_command_tx, tcl_command_rx) = mpsc::channel(100);
-        // Large buffer for responses to handle commands with huge output (e.g., crash)
-        // 10000 slots prevents blocking while IRC rate limiting (100ms/msg) drains the queue
-        let (irc_response_tx, irc_response_rx) = mpsc::channel(10000);
 
         // Set up file watcher for hot-reloading
         let file_change_rx = {
@@ -243,50 +252,72 @@ async fn main() -> Result<()> {
             }
         };
 
+        // Create TclPlugin (shared across all networks)
+        let security_config = config.security.clone();
+        let tcl_config = config.tcl.clone();
+        let server_configs = servers.clone();
+        let config_path_clone = std::path::PathBuf::from(&config_path);
+        let channel_members_clone = channel_members.clone();
+
+        // Create per-network response channels and spawn IRC clients
+        let mut response_txs: Vec<(String, mpsc::Sender<types::PluginCommand>)> = Vec::new();
+
+        for server_config in &servers {
+            let network_name = server_config.network_name();
+
+            // Large buffer for responses to handle commands with huge output
+            // 10000 slots prevents blocking while IRC rate limiting (100ms/msg) drains the queue
+            let (response_tx, response_rx) = mpsc::channel(10000);
+            response_txs.push((network_name.clone(), response_tx));
+
+            // Spawn IRC client for this network
+            let srv = server_config.clone();
+            let net = network_name.clone();
+            let members = channel_members.clone();
+            let cmd_tx = tcl_command_tx.clone();
+            let irc_task = tokio::spawn(async move {
+                if let Err(e) = irc_client::run_with_reconnect(
+                    srv,
+                    net.clone(),
+                    members,
+                    cmd_tx,
+                    response_rx,
+                ).await {
+                    error!("[{}] IRC client error: {}", net, e);
+                }
+            });
+            tasks.push(irc_task);
+        }
+
         // Spawn TCL plugin task
-        let tcl_handle = {
-            let security_config = config.security.clone();
-            let tcl_config = config.tcl.clone();
-            let server_config = config.server.clone();
-            let config_path_clone = std::path::PathBuf::from(&config_path);
-            let channel_members_clone = channel_members.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut tcl_plugin = match tcl_plugin::TclPlugin::new(
-                    security_config,
-                    tcl_config,
-                    server_config,
-                    config_path_clone,
-                    channel_members_clone,
-                ) {
-                    Ok(plugin) => plugin,
-                    Err(e) => {
-                        error!("Failed to create TCL plugin: {}", e);
-                        return;
-                    }
-                };
+        let tcl_handle = tokio::task::spawn_blocking(move || {
+            let mut tcl_plugin = match tcl_plugin::TclPlugin::new(
+                security_config,
+                tcl_config,
+                server_configs,
+                config_path_clone,
+                channel_members_clone,
+            ) {
+                Ok(plugin) => plugin,
+                Err(e) => {
+                    error!("Failed to create TCL plugin: {}", e);
+                    return;
+                }
+            };
 
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    if let Err(e) = tcl_plugin.run(tcl_command_rx, irc_response_tx, file_change_rx).await {
-                        error!("TCL plugin error: {}", e);
-                    }
-                });
-            })
-        };
-
-        // Create and run IRC client with automatic reconnection
-        let irc_task = tokio::spawn(async move {
-            if let Err(e) = irc_client::run_with_reconnect(
-                config.server.clone(),
-                channel_members,
-                tcl_command_tx,
-                irc_response_rx,
-            ).await {
-                error!("IRC client error: {}", e);
+            // Register all network response channels
+            for (network_name, response_tx) in response_txs {
+                tcl_plugin.register_network(network_name, response_tx);
             }
+
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                if let Err(e) = tcl_plugin.run(tcl_command_rx, file_change_rx).await {
+                    error!("TCL plugin error: {}", e);
+                }
+            });
         });
 
-        tasks.push(irc_task);
         tasks.push(tcl_handle);
     }
 

@@ -242,9 +242,11 @@ namespace eval ::linkresolver {
         # Extract title from HTML
         set title ""
         if {[regexp -nocase {<title[^>]*>([^<]+)</title>} $content -> title]} {
-            # Decode HTML entities
+            # Decode HTML entities (also normalizes unicode whitespace)
             set title [decode_html_entities $title]
-            # Clean up whitespace
+            # Strip any remaining backslash-escaped characters
+            regsub -all {\\(.)} $title {\1} title
+            # Collapse all whitespace (including decoded non-breaking spaces) to single space
             set title [regsub -all {\s+} [string trim $title] " "]
             # Truncate if too long
             if {[string length $title] > $max_title_length} {
@@ -261,12 +263,42 @@ namespace eval ::linkresolver {
         return ""
     }
 
-    # Decode common HTML entities
+    # Decode HTML entities and normalize whitespace
     proc decode_html_entities {text} {
         set entities {
-            &quot; "\"" &amp; "&" &lt; "<" &gt; ">" &nbsp; " "
-            &apos; "'" &copy; "©" &reg; "®" &trade; "™"
-            &#39; "'" &#34; "\""
+            &quot;    "\""
+            &amp;     "&"
+            &lt;      "<"
+            &gt;      ">"
+            &nbsp;    " "
+            &apos;    "'"
+            &copy;    "(c)"
+            &reg;     "(R)"
+            &trade;   "(TM)"
+            &hellip;  "..."
+            &mdash;   "--"
+            &ndash;   "-"
+            &laquo;   "<<"
+            &raquo;   ">>"
+            &middot;  "."
+            &bull;    "*"
+            &euro;    "EUR"
+            &pound;   "GBP"
+            &yen;     "JPY"
+            &cent;    "c"
+            &deg;     "deg"
+            &times;   "x"
+            &divide;  "/"
+            &lsquo;   "'"
+            &rsquo;   "'"
+            &ldquo;   "\""
+            &rdquo;   "\""
+            &shy;     ""
+            &zwj;     ""
+            &zwnj;    ""
+            &#39;     "'"
+            &#34;     "\""
+            &#160;    " "
         }
 
         set result $text
@@ -274,11 +306,35 @@ namespace eval ::linkresolver {
             set result [string map [list $entity $char] $result]
         }
 
-        # Decode numeric entities (&#NNN;)
+        # Decode numeric decimal entities (&#NNN;)
         while {[regexp {&#(\d+);} $result -> code]} {
-            set char [format %c $code]
-            regsub {&#\d+;} $result $char result
+            if {[catch {set char [format %c $code]} err]} {
+                # Invalid code point, remove the entity
+                regsub {&#\d+;} $result "" result
+            } else {
+                regsub "&#${code};" $result $char result
+            }
         }
+
+        # Decode numeric hex entities (&#xHH; or &#XHH;)
+        while {[regexp -nocase {&#x([0-9a-f]+);} $result -> hexcode]} {
+            if {[catch {
+                set code [scan $hexcode %x]
+                set char [format %c $code]
+            } err]} {
+                regsub -nocase "&#x\[0-9a-fA-F\]+;" $result "" result
+            } else {
+                regsub -nocase "&#x${hexcode};" $result $char result
+            }
+        }
+
+        # Normalize unicode whitespace characters to regular spaces:
+        # U+00A0 (non-breaking space), U+2002-U+200B (various spaces),
+        # U+202F (narrow no-break space), U+FEFF (BOM/zero-width no-break space)
+        set result [string map [list \u00A0 " " \u2002 " " \u2003 " " \u2004 " " \u2005 " " \u2006 " " \u2007 " " \u2008 " " \u2009 " " \u200A " " \u200B "" \u202F " " \uFEFF ""] $result]
+
+        # Remove stray backslashes before spaces (artifact of some HTML processors)
+        set result [string map [list "\\ " " "] $result]
 
         return $result
     }

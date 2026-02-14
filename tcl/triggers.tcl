@@ -1,11 +1,17 @@
 # Trigger/event binding system
 # Similar to eggdrop's bind command
+# Supports per-network and per-channel toggling
 
 namespace eval triggers {
     # Storage for bindings: event_type -> list of {pattern proc_name}
     # Event types: JOIN, PART, QUIT, KICK, NICK, TEXT
     variable bindings
     array set bindings {}
+
+    # Storage for disabled triggers: "network:channel" -> list of proc_names
+    # Special values: "*" matches any network/channel, "all" disables all triggers
+    variable disabled
+    array set disabled {}
 
     # Bind a proc to an event
     # Usage: triggers bind <event> <pattern> <proc>
@@ -91,10 +97,123 @@ namespace eval triggers {
         return $result
     }
 
+    # Disable a trigger proc for a specific network/channel combination
+    # Usage: triggers disable_for <network|*> <channel|*> [proc_name|all]
+    #   network: network name or "*" for all networks
+    #   channel: channel name or "*" for all channels
+    #   proc_name: proc to disable, or "all" to disable all triggers (default: "all")
+    proc disable_for {network channel {proc_name "all"}} {
+        variable disabled
+
+        set key "${network}:${channel}"
+
+        if {![info exists disabled($key)]} {
+            set disabled($key) [list]
+        }
+
+        # Check if already disabled
+        if {$proc_name in $disabled($key)} {
+            return "Already disabled: $proc_name on $key"
+        }
+
+        lappend disabled($key) $proc_name
+        return "Disabled $proc_name on $key"
+    }
+
+    # Enable (re-enable) a trigger proc for a specific network/channel combination
+    # Usage: triggers enable_for <network|*> <channel|*> [proc_name|all]
+    #   Removes the disable rule. Use proc_name "all" to remove the blanket disable.
+    proc enable_for {network channel {proc_name "all"}} {
+        variable disabled
+
+        set key "${network}:${channel}"
+
+        if {![info exists disabled($key)]} {
+            return "No disabled triggers for $key"
+        }
+
+        set new_list [list]
+        set found 0
+        foreach p $disabled($key) {
+            if {$p eq $proc_name} {
+                set found 1
+            } else {
+                lappend new_list $p
+            }
+        }
+
+        if {$found} {
+            if {[llength $new_list] == 0} {
+                unset disabled($key)
+            } else {
+                set disabled($key) $new_list
+            }
+            return "Enabled $proc_name on $key"
+        } else {
+            return "Not disabled: $proc_name on $key"
+        }
+    }
+
+    # Show current disable status
+    proc status {} {
+        variable disabled
+
+        if {[array size disabled] == 0} {
+            return "No triggers are disabled"
+        }
+
+        set result [list]
+        foreach {key procs} [array get disabled] {
+            foreach p $procs {
+                lappend result "$key -> $p"
+            }
+        }
+        return [join $result "\n"]
+    }
+
+    # Check if a proc is disabled for a given network/channel
+    proc is_disabled {proc_name network channel} {
+        variable disabled
+
+        # Check exact match: "network:channel"
+        set key "${network}:${channel}"
+        if {[info exists disabled($key)]} {
+            if {"all" in $disabled($key) || $proc_name in $disabled($key)} {
+                return 1
+            }
+        }
+
+        # Check network wildcard: "network:*"
+        set key "${network}:*"
+        if {[info exists disabled($key)]} {
+            if {"all" in $disabled($key) || $proc_name in $disabled($key)} {
+                return 1
+            }
+        }
+
+        # Check channel wildcard: "*:channel"
+        set key "*:${channel}"
+        if {[info exists disabled($key)]} {
+            if {"all" in $disabled($key) || $proc_name in $disabled($key)} {
+                return 1
+            }
+        }
+
+        # Check global wildcard: "*:*"
+        if {[info exists disabled(*:*)]} {
+            if {"all" in $disabled(*:*) || $proc_name in $disabled(*:*)} {
+                return 1
+            }
+        }
+
+        return 0
+    }
+
     # Dispatch an event to registered handlers
     # Called by Rust when an event occurs
+    # dispatch <event> <network> <args...>
     # Returns list of {channel message} pairs for responses
-    proc dispatch {event args} {
+    proc dispatch {event network args} {
         variable bindings
 
         set event [string toupper $event]
@@ -123,6 +242,11 @@ namespace eval triggers {
 
             # Check if pattern matches
             if {$pattern eq "*" || [string match -nocase $pattern $channel]} {
+                # Check if this trigger is disabled for this network/channel
+                if {[is_disabled $proc_name $network $channel]} {
+                    continue
+                }
+
                 # Call the proc
                 if {[catch {
                     set response [uplevel #0 [list $proc_name {*}$args]]
@@ -145,7 +269,7 @@ namespace eval triggers {
     }
 
     # Export commands
-    namespace export bind unbind list_bindings dispatch
+    namespace export bind unbind list_bindings dispatch disable_for enable_for status is_disabled
     namespace ensemble create
 }
 
