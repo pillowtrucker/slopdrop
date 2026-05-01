@@ -1223,3 +1223,33 @@ fn test_trigger_state_not_rewritten_when_unchanged() {
     assert_eq!(mtime1, mtime2, "triggers.tcl mtime should be unchanged when content is identical");
     let _ = SystemTime::now();
 }
+
+#[test]
+fn test_trigger_capture_survives_apply_redefinition() {
+    // Regression: user state can override common library helpers like
+    // `apply`. The trigger capture must still detect changes and not
+    // pollute $errorInfo.
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    // Override apply with a 2-arg proc that errors on the wrong shape
+    interp.eval("proc apply {cmd arg} { error \"wrong # args: should be \\\"apply cmd arg\\\"\" }").unwrap();
+
+    // Set a baseline errorInfo we'll check is preserved
+    let _ = interp.eval("catch {error baseline}");
+    let baseline = interp.eval("set ::errorInfo").unwrap().get_string();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+    interp.eval("triggers bind TEXT * marker_proc").unwrap();
+    let after = InterpreterState::capture(&interp).unwrap();
+
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+    assert!(changes.trigger_state_changed,
+            "trigger change must be detected even when `apply` is overridden");
+    assert!(changes.trigger_state_after.unwrap().contains("marker_proc"));
+
+    // errorInfo from the user's last error must not have been clobbered
+    let after_ei = interp.eval("set ::errorInfo").unwrap().get_string();
+    assert_eq!(baseline, after_ei,
+               "trigger capture must not modify user-visible errorInfo");
+}

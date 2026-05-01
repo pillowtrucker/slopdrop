@@ -65,20 +65,25 @@ impl InterpreterState {
     /// be persisted as TCL source. Returns an empty string if the namespace
     /// is not yet initialized.
     pub fn get_trigger_state(interp: &Interpreter) -> String {
-        // Run inside an apply lambda so locals (out) don't leak into globals
+        // Don't lean on commands that user code commonly redefines (e.g.
+        // `apply` is a popular library helper). The snapshot is written
+        // into a sentinel global that's already filtered out of the state
+        // diff (see `internal_vars`), and the whole thing runs inside a
+        // `catch` so a hostile or buggy override can never clobber the
+        // user's $errorInfo on the next eval.
         let script = r#"
-            apply {{} {
-                set out ""
+            set ::__slopdrop_trigger_capture ""
+            catch {
                 if {[namespace exists ::triggers]} {
                     if {[info exists ::triggers::bindings]} {
-                        append out "array set ::triggers::bindings [list [array get ::triggers::bindings]]\n"
+                        append ::__slopdrop_trigger_capture "array set ::triggers::bindings [list [array get ::triggers::bindings]]\n"
                     }
                     if {[info exists ::triggers::disabled]} {
-                        append out "array set ::triggers::disabled [list [array get ::triggers::disabled]]\n"
+                        append ::__slopdrop_trigger_capture "array set ::triggers::disabled [list [array get ::triggers::disabled]]\n"
                     }
                 }
-                return $out
-            }}
+            }
+            set ::__slopdrop_trigger_capture
         "#;
         interp.eval(script).map(|obj| obj.get_string()).unwrap_or_default()
     }
@@ -183,6 +188,7 @@ impl InterpreterState {
             "slopdrop_modified_procs",  // Proc tracking list (proc_tracking.tcl)
             "v", "p", "validated",      // Temp variables created by state capture itself
             "errorInfo", "errorCode",   // TCL built-in ephemeral error variables
+            "__slopdrop_trigger_capture", // Sentinel used by get_trigger_state
         ]
             .iter()
             .map(|s| s.to_string())
