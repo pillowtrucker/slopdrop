@@ -40,6 +40,7 @@ fn create_test_service_with_members(state_path: PathBuf, channel_members: Arc<Rw
         state_repo: None,
         ssh_key: None,
         max_output_lines: 5,  // Small for testing pagination
+        show_error_traces: false,
     };
 
     TclService::new(security_config, tcl_config, channel_members).unwrap()

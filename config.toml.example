@@ -140,6 +140,13 @@ state_path = "./state"
 # For Web: GET /api/more
 max_output_lines = 10
 
+# Whether to include the full TCL stack trace (errorInfo) in error messages
+# reported to the channel. When false (the default), only the error body is
+# shown so a stray error doesn't dump a wall of text. The errorInfo variable
+# is still populated as usual, so users can inspect the full trace via
+# `tcl puts $errorInfo`.
+# show_error_traces = false
+
 # ---- Optional Git Remote Configuration ----
 
 # Git repository URL for state synchronization (optional)

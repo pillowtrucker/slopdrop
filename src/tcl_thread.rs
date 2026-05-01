@@ -353,12 +353,13 @@ impl TclThreadWorker {
         security_config: crate::config::SecurityConfig,
         channel_members: ChannelMembers,
     ) -> Result<Self> {
-        let interp = SafeTclInterp::new(
+        let interp = SafeTclInterp::new_with_options(
             security_config.eval_timeout_ms,
             &tcl_config.state_path,
             tcl_config.state_repo.clone(),
             tcl_config.ssh_key.clone(),
             security_config.max_recursion_depth,
+            tcl_config.show_error_traces,
         )?;
 
         // Register chanlist command

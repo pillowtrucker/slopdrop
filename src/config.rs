@@ -97,4 +97,10 @@ pub struct TclConfig {
     /// Required if using SSH URLs (git@github.com:user/repo.git)
     /// Example: "/home/user/.ssh/id_rsa"
     pub ssh_key: Option<PathBuf>,
+    /// Whether to include the full TCL stack trace (errorInfo) in error
+    /// messages reported to the channel. When false, only the error body is
+    /// shown; users can inspect the full trace via `tcl puts $errorInfo`.
+    /// Default: false
+    #[serde(default)]
+    pub show_error_traces: bool,
 }

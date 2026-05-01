@@ -830,6 +830,7 @@ mod tests {
             state_repo: None,
             ssh_key: None,
             max_output_lines: 10,
+            show_error_traces: false,
         };
 
         let server_config = ServerConfig {
