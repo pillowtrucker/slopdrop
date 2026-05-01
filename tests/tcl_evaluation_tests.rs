@@ -107,6 +107,7 @@ async fn test_timeout_handling() {
         state_repo: None,
         ssh_key: None,
         max_output_lines: 10,
+        show_error_traces: false,
     };
 
     // Create empty channel members
@@ -475,4 +476,51 @@ fn test_dict_operations() {
 
     let result = interp.eval(code).unwrap();
     assert_eq!(result.trim(), "3");
+}
+
+#[test]
+fn test_error_message_excludes_trace_by_default() {
+    let (_temp, state_path) = create_temp_state();
+    // show_error_traces defaults to false
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    let result = interp.eval("error \"oh no\"");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("oh no"), "error should contain body: {}", err);
+    assert!(!err.contains("while executing"),
+            "default error should NOT include stack trace: {}", err);
+    assert!(!err.contains("invoked from within"),
+            "default error should NOT include stack trace: {}", err);
+}
+
+#[test]
+fn test_error_message_includes_trace_when_enabled() {
+    use slopdrop::tcl_wrapper::SafeTclInterp;
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new_with_options(
+        5000, &state_path, None, None, 1000, /* show_error_traces */ true,
+    ).unwrap();
+
+    // Force a multi-frame trace by erroring inside a proc
+    interp.eval("proc boom {} { error \"kaboom\" }").unwrap();
+    let result = interp.eval("boom");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("kaboom"), "error should contain body: {}", err);
+    assert!(err.contains("while executing") || err.contains("invoked from within"),
+            "error with traces enabled should include stack trace: {}", err);
+}
+
+#[test]
+fn test_error_info_var_still_accessible() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    // Trigger an error
+    let _ = interp.eval("proc bad {} { error \"specific message\" }; bad");
+
+    // Even when traces are suppressed in error output, errorInfo is still
+    // populated by TCL and can be inspected by users.
+    let info = interp.eval("set errorInfo").unwrap();
+    assert!(info.contains("specific message"),
+            "errorInfo should still be inspectable: {}", info);
 }

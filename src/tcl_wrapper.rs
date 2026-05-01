@@ -33,6 +33,7 @@ fn sanitize_error_message(error_msg: &str) -> String {
 pub struct SafeTclInterp {
     interpreter: Interpreter,
     _timeout_ms: u64,
+    show_error_traces: bool,
 }
 
 impl SafeTclInterp {
@@ -45,6 +46,18 @@ impl SafeTclInterp {
 impl SafeTclInterp {
     /// Create a new safe TCL interpreter
     pub fn new(timeout_ms: u64, state_path: &Path, state_repo: Option<String>, ssh_key: Option<PathBuf>, max_recursion_depth: u32) -> Result<Self> {
+        Self::new_with_options(timeout_ms, state_path, state_repo, ssh_key, max_recursion_depth, false)
+    }
+
+    /// Create a new safe TCL interpreter with explicit options
+    pub fn new_with_options(
+        timeout_ms: u64,
+        state_path: &Path,
+        state_repo: Option<String>,
+        ssh_key: Option<PathBuf>,
+        max_recursion_depth: u32,
+        show_error_traces: bool,
+    ) -> Result<Self> {
         // Create a new TCL interpreter (safe mode will be applied next)
         let interpreter = Interpreter::new().map_err(|e| anyhow!("Failed to create TCL interpreter: {:?}", e))?;
 
@@ -174,7 +187,13 @@ impl SafeTclInterp {
         Ok(Self {
             interpreter,
             _timeout_ms: timeout_ms,
+            show_error_traces,
         })
+    }
+
+    /// Update whether full error traces (errorInfo) are returned in error messages.
+    pub fn set_show_error_traces(&mut self, show: bool) {
+        self.show_error_traces = show;
     }
 
     /// Configure the interpreter to be safe
@@ -306,6 +325,18 @@ impl SafeTclInterp {
             }
         }
 
+        // 6. Load persisted trigger namespace state (bindings + disabled)
+        let trigger_state = state_path.join(crate::state::StatePersistence::TRIGGER_STATE_FILE);
+        if trigger_state.exists() {
+            debug!("Loading trigger state from {:?}", trigger_state);
+            let content = std::fs::read_to_string(&trigger_state)?;
+            if !content.trim().is_empty() {
+                if let Err(e) = interp.eval(content.as_str()) {
+                    debug!("Warning: Failed to load trigger state: {:?}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -320,15 +351,21 @@ impl SafeTclInterp {
                 Ok(result)
             }
             Err(e) => {
-                // Get error info
-                let error_info = self.interpreter
-                    .eval("set errorInfo")
-                    .ok()
-                    .map(|obj| obj.get_string())
-                    .unwrap_or_else(|| format!("{:?}", e));
+                // The error body is captured before any further eval, since
+                // running `set errorInfo` would clobber the interpreter result.
+                // Display impl on InterpError returns the result obj's string.
+                let body = format!("{}", e);
+
+                let raw = if self.show_error_traces {
+                    // Full stack trace from the error options dict
+                    let info = format!("{:?}", e);
+                    if info.is_empty() { body } else { info }
+                } else {
+                    body
+                };
 
                 // Sanitize error message to prevent path disclosure
-                let sanitized = sanitize_error_message(&error_info);
+                let sanitized = sanitize_error_message(&raw);
 
                 Err(anyhow!("TCL Error: {}", sanitized))
             }

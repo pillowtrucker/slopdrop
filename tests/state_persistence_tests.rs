@@ -365,21 +365,21 @@ fn test_user_info_to_signature() {
 
 #[test]
 fn test_state_changes_has_changes() {
-    let mut changes = StateChanges { new_procs: vec![], deleted_procs: vec![], new_vars: vec![], deleted_vars: vec![] };
+    let mut changes = StateChanges::default();
     assert!(!changes.has_changes());
 
     changes.new_procs.push("test".to_string());
     assert!(changes.has_changes());
 
-    changes = StateChanges { new_procs: vec![], deleted_procs: vec![], new_vars: vec![], deleted_vars: vec![] };
+    changes = StateChanges::default();
     changes.deleted_procs.push("test".to_string());
     assert!(changes.has_changes());
 
-    changes = StateChanges { new_procs: vec![], deleted_procs: vec![], new_vars: vec![], deleted_vars: vec![] };
+    changes = StateChanges::default();
     changes.new_vars.push("test".to_string());
     assert!(changes.has_changes());
 
-    changes = StateChanges { new_procs: vec![], deleted_procs: vec![], new_vars: vec![], deleted_vars: vec![] };
+    changes = StateChanges::default();
     changes.deleted_vars.push("test".to_string());
     assert!(changes.has_changes());
 }
@@ -1120,4 +1120,136 @@ fn test_multiple_array_elements_single_tracking() {
     // Should only appear once even though multiple elements were modified
     assert_eq!(modified.iter().filter(|v| *v == "data").count(), 1,
                "Array should only appear once in modified list");
+}
+
+// =============================================================================
+// Trigger State Persistence Tests
+// =============================================================================
+
+#[test]
+fn test_trigger_state_change_detected() {
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+
+    // Add a trigger binding (mutates ::triggers::bindings)
+    interp.eval("triggers bind TEXT * myproc").unwrap();
+
+    let after = InterpreterState::capture(&interp).unwrap();
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+
+    assert!(changes.has_changes(), "trigger bind should be detected as a change");
+    assert!(changes.trigger_state_changed, "trigger_state_changed should be true");
+    assert!(changes.trigger_state_after.is_some(), "trigger_state_after should be Some");
+
+    let snapshot = changes.trigger_state_after.unwrap();
+    assert!(snapshot.contains("array set ::triggers::bindings"),
+            "snapshot should contain bindings array set: {}", snapshot);
+    assert!(snapshot.contains("myproc"),
+            "snapshot should contain bound proc name: {}", snapshot);
+}
+
+#[test]
+fn test_trigger_state_unchanged_when_no_bindings() {
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+    interp.eval("set unrelated_var hi").unwrap();
+    let after = InterpreterState::capture(&interp).unwrap();
+
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+    assert!(!changes.trigger_state_changed,
+            "no trigger changes should yield trigger_state_changed=false");
+}
+
+#[test]
+fn test_trigger_state_persisted_to_disk() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+    interp.eval("triggers bind JOIN * greet_user").unwrap();
+    interp.eval("triggers disable_for libera #spam all").unwrap();
+    let after = InterpreterState::capture(&interp).unwrap();
+
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+    assert!(changes.trigger_state_changed);
+
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    let user = UserInfo::new("tester".into(), "test.host".into());
+    persistence.save_changes(&interp, &changes, &user, "triggers bind ...").unwrap();
+
+    let trigger_file = state_path.join("triggers.tcl");
+    assert!(trigger_file.exists(), "triggers.tcl should be written to state dir");
+    let contents = fs::read_to_string(&trigger_file).unwrap();
+    assert!(contents.contains("greet_user"));
+    assert!(contents.contains("libera:#spam"));
+}
+
+#[test]
+fn test_trigger_state_not_rewritten_when_unchanged() {
+    use std::time::SystemTime;
+
+    let (_temp, state_path) = create_temp_state();
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    interp.eval("triggers bind TEXT * foo").unwrap();
+    let after = InterpreterState::capture(&interp).unwrap();
+
+    let mut changes = StateChanges::default();
+    changes.trigger_state_changed = true;
+    changes.trigger_state_after = Some(after.trigger_state.clone());
+
+    let persistence = StatePersistence::with_repo(state_path.clone(), None, None);
+    let user = UserInfo::new("tester".into(), "test.host".into());
+    persistence.save_changes(&interp, &changes, &user, "init").unwrap();
+
+    let trigger_file = state_path.join("triggers.tcl");
+    let mtime1 = fs::metadata(&trigger_file).unwrap().modified().unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Save again with identical content; file should not be rewritten
+    let mut changes2 = StateChanges::default();
+    changes2.trigger_state_changed = true;
+    changes2.trigger_state_after = Some(after.trigger_state.clone());
+    persistence.save_changes(&interp, &changes2, &user, "noop").unwrap();
+
+    let mtime2 = fs::metadata(&trigger_file).unwrap().modified().unwrap();
+    assert_eq!(mtime1, mtime2, "triggers.tcl mtime should be unchanged when content is identical");
+    let _ = SystemTime::now();
+}
+
+#[test]
+fn test_trigger_capture_survives_apply_redefinition() {
+    // Regression: user state can override common library helpers like
+    // `apply`. The trigger capture must still detect changes and not
+    // pollute $errorInfo.
+    let interp = create_test_interp();
+    interp.eval(smeggdrop_commands::trigger_commands().as_str()).unwrap();
+
+    // Override apply with a 2-arg proc that errors on the wrong shape
+    interp.eval("proc apply {cmd arg} { error \"wrong # args: should be \\\"apply cmd arg\\\"\" }").unwrap();
+
+    // Set a baseline errorInfo we'll check is preserved
+    let _ = interp.eval("catch {error baseline}");
+    let baseline = interp.eval("set ::errorInfo").unwrap().get_string();
+
+    let before = InterpreterState::capture(&interp).unwrap();
+    interp.eval("triggers bind TEXT * marker_proc").unwrap();
+    let after = InterpreterState::capture(&interp).unwrap();
+
+    let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
+    assert!(changes.trigger_state_changed,
+            "trigger change must be detected even when `apply` is overridden");
+    assert!(changes.trigger_state_after.unwrap().contains("marker_proc"));
+
+    // errorInfo from the user's last error must not have been clobbered
+    let after_ei = interp.eval("set ::errorInfo").unwrap().get_string();
+    assert_eq!(baseline, after_ei,
+               "trigger capture must not modify user-visible errorInfo");
 }

@@ -41,10 +41,14 @@ impl UserInfo {
 }
 
 /// Represents the state of procs and vars in the interpreter
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InterpreterState {
     pub procs: HashSet<String>,
     pub vars: HashSet<String>,
+    /// Serialized snapshot of the trigger module's namespace arrays
+    /// (`::triggers::bindings` and `::triggers::disabled`). Used for change
+    /// detection so trigger settings can be persisted across restarts.
+    pub trigger_state: String,
 }
 
 impl InterpreterState {
@@ -52,8 +56,36 @@ impl InterpreterState {
     pub fn capture(interp: &Interpreter) -> Result<Self> {
         let procs = Self::get_procs(interp)?;
         let vars = Self::get_vars(interp)?;
+        let trigger_state = Self::get_trigger_state(interp);
 
-        Ok(Self { procs, vars })
+        Ok(Self { procs, vars, trigger_state })
+    }
+
+    /// Serialize the trigger namespace arrays into a stable string that can
+    /// be persisted as TCL source. Returns an empty string if the namespace
+    /// is not yet initialized.
+    pub fn get_trigger_state(interp: &Interpreter) -> String {
+        // Don't lean on commands that user code commonly redefines (e.g.
+        // `apply` is a popular library helper). The snapshot is written
+        // into a sentinel global that's already filtered out of the state
+        // diff (see `internal_vars`), and the whole thing runs inside a
+        // `catch` so a hostile or buggy override can never clobber the
+        // user's $errorInfo on the next eval.
+        let script = r#"
+            set ::__slopdrop_trigger_capture ""
+            catch {
+                if {[namespace exists ::triggers]} {
+                    if {[info exists ::triggers::bindings]} {
+                        append ::__slopdrop_trigger_capture "array set ::triggers::bindings [list [array get ::triggers::bindings]]\n"
+                    }
+                    if {[info exists ::triggers::disabled]} {
+                        append ::__slopdrop_trigger_capture "array set ::triggers::disabled [list [array get ::triggers::disabled]]\n"
+                    }
+                }
+            }
+            set ::__slopdrop_trigger_capture
+        "#;
+        interp.eval(script).map(|obj| obj.get_string()).unwrap_or_default()
     }
 
     fn get_procs(interp: &Interpreter) -> Result<HashSet<String>> {
@@ -156,6 +188,7 @@ impl InterpreterState {
             "slopdrop_modified_procs",  // Proc tracking list (proc_tracking.tcl)
             "v", "p", "validated",      // Temp variables created by state capture itself
             "errorInfo", "errorCode",   // TCL built-in ephemeral error variables
+            "__slopdrop_trigger_capture", // Sentinel used by get_trigger_state
         ]
             .iter()
             .map(|s| s.to_string())
@@ -208,11 +241,19 @@ impl InterpreterState {
             .cloned()
             .collect();
 
+        let trigger_state_changed = self.trigger_state != other.trigger_state;
+
         StateChanges {
             new_procs: new_or_modified_procs,
             deleted_procs,
             new_vars: new_or_modified_vars,
             deleted_vars,
+            trigger_state_changed,
+            trigger_state_after: if trigger_state_changed {
+                Some(other.trigger_state.clone())
+            } else {
+                None
+            },
         }
     }
 
@@ -235,12 +276,16 @@ impl InterpreterState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StateChanges {
     pub new_procs: Vec<String>,
     pub deleted_procs: Vec<String>,
     pub new_vars: Vec<String>,
     pub deleted_vars: Vec<String>,
+    /// Whether the trigger module's bindings/disabled arrays changed.
+    pub trigger_state_changed: bool,
+    /// Serialized trigger state to persist when `trigger_state_changed` is true.
+    pub trigger_state_after: Option<String>,
 }
 
 impl StateChanges {
@@ -249,6 +294,7 @@ impl StateChanges {
             || !self.deleted_procs.is_empty()
             || !self.new_vars.is_empty()
             || !self.deleted_vars.is_empty()
+            || self.trigger_state_changed
     }
 
     /// Generate a human-readable summary of changes
@@ -266,6 +312,9 @@ impl StateChanges {
         }
         if !self.deleted_vars.is_empty() {
             parts.push(format!("-var: {}", self.deleted_vars.join(", ")));
+        }
+        if self.trigger_state_changed {
+            parts.push("triggers: updated".to_string());
         }
 
         if parts.is_empty() {
@@ -389,6 +438,15 @@ impl StatePersistence {
         for var_name in &changes.deleted_vars {
             if let Err(e) = self.delete_var(var_name) {
                 warn!("Failed to delete var {}: {}", var_name, e);
+            }
+        }
+
+        // Persist trigger namespace state if it changed
+        if changes.trigger_state_changed {
+            if let Some(ref trigger_state) = changes.trigger_state_after {
+                if let Err(e) = self.save_trigger_state(trigger_state) {
+                    warn!("Failed to save trigger state: {}", e);
+                }
             }
         }
 
@@ -576,6 +634,14 @@ impl StatePersistence {
             index.add_all(["vars/*"].iter(), IndexAddOption::DEFAULT, None)?;
         }
 
+        // Add trigger state file when it changed
+        if changes.trigger_state_changed {
+            let trigger_path = std::path::Path::new(Self::TRIGGER_STATE_FILE);
+            if self.state_path.join(trigger_path).exists() {
+                index.add_path(trigger_path)?;
+            }
+        }
+
         index.write()?;
 
         // Create commit message
@@ -749,6 +815,24 @@ impl StatePersistence {
         self.update_var_index(var_name, &hash)?;
 
         debug!("Saved var {} to {}", var_name, hash);
+        Ok(())
+    }
+
+    /// Filename used to persist trigger namespace state in the state directory.
+    pub const TRIGGER_STATE_FILE: &'static str = "triggers.tcl";
+
+    /// Write the serialized trigger state to disk if it has changed.
+    fn save_trigger_state(&self, trigger_state: &str) -> Result<()> {
+        let path = self.state_path.join(Self::TRIGGER_STATE_FILE);
+        // Avoid rewriting if content is identical
+        if let Ok(existing) = fs::read_to_string(&path) {
+            if existing == trigger_state {
+                return Ok(());
+            }
+        }
+        fs::create_dir_all(&self.state_path)?;
+        fs::write(&path, trigger_state)?;
+        debug!("Saved trigger state to {:?}", path);
         Ok(())
     }
 
@@ -956,6 +1040,7 @@ mod tests {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            ..Default::default()
         };
 
         // Create an "after" state that includes ephemeral error variables
@@ -973,6 +1058,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            ..Default::default()
         };
 
         // Simulate modified vars tracking
@@ -1031,12 +1117,14 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            ..Default::default()
         };
 
         // Create an "after" state where they're gone
         let after = InterpreterState {
             procs: HashSet::new(),
             vars: ["myvar"].iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         };
 
         // Compute diff
@@ -1067,6 +1155,7 @@ mod tests {
         let before = InterpreterState {
             procs: HashSet::new(),
             vars: ["myvar"].iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         };
 
         let after = InterpreterState {
@@ -1080,6 +1169,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            ..Default::default()
         };
 
         let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
@@ -1098,6 +1188,7 @@ mod tests {
         let before = InterpreterState {
             procs: HashSet::new(),
             vars: HashSet::new(),
+            ..Default::default()
         };
 
         let after = InterpreterState {
@@ -1111,6 +1202,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            ..Default::default()
         };
 
         let changes = before.diff(&after, &HashSet::new(), &HashSet::new());
