@@ -483,6 +483,7 @@ impl TclPlugin {
             message.author.nick.clone(),
             full_host,
             message.author.channel.clone(),
+            message.author.network.clone(),
         ).await?;
 
         debug!("TCL eval completed, output length: {} bytes", result.output.len());

@@ -46,6 +46,7 @@ pub struct EvalRequest {
     pub nick: String,
     pub host: String,
     pub channel: String,
+    pub network: String,
     pub response_tx: oneshot::Sender<EvalResult>,
 }
 
@@ -182,6 +183,7 @@ impl TclThreadHandle {
         nick: String,
         host: String,
         channel: String,
+        network: String,
     ) -> Result<EvalResult> {
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -191,6 +193,7 @@ impl TclThreadHandle {
             nick,
             host,
             channel,
+            network,
             response_tx,
         };
 
@@ -275,6 +278,7 @@ impl TclThreadHandle {
             false,
             "system".to_string(),
             "system@bot".to_string(),
+            "system".to_string(),
             "system".to_string(),
         ).await?;
 
@@ -381,17 +385,26 @@ impl TclThreadWorker {
         interp: &tcl::Interpreter,
         _channel_members: ChannelMembers,
     ) -> Result<()> {
-        // Create a proc that reads from the ::slopdrop_channel_members array
-        // This array is synced before each eval by sync_channel_members()
+        // Create a proc that reads from the ::slopdrop_channel_members array.
+        // The array is synced before each eval by sync_channel_members() and is
+        // keyed by composite "network:#channel" since channel members are tracked
+        // per-network. The proc looks up the current network from ::network and
+        // falls back to a bare channel-name lookup for callers that pre-built
+        // the composite key themselves.
         interp.eval(r#"
             # chanlist command - returns list of nicks in a channel
             # Reads from ::slopdrop_channel_members which is synced before each eval
             proc chanlist {channel} {
+                if {[info exists ::network] && $::network ne ""} {
+                    set key "${::network}:${channel}"
+                    if {[info exists ::slopdrop_channel_members($key)]} {
+                        return $::slopdrop_channel_members($key)
+                    }
+                }
                 if {[info exists ::slopdrop_channel_members($channel)]} {
                     return $::slopdrop_channel_members($channel)
-                } else {
-                    return ""
                 }
+                return ""
             }
         "#).map_err(|e| anyhow::anyhow!("Failed to register chanlist command: {:?}", e))?;
 
@@ -599,6 +612,11 @@ impl TclThreadWorker {
         // Set HTTP context variables (for rate limiting)
         let set_channel = format!("set ::nick_channel {{{}}}", request.channel);
         let _ = self.interp.interpreter().eval(set_channel.as_str());
+
+        // Set the active network so chanlist can build the network:channel
+        // composite key used by sync_channel_members()
+        let set_network = format!("set ::network {{{}}}", request.network);
+        let _ = self.interp.interpreter().eval(set_network.as_str());
 
         // Set stock context for rate limiting
         crate::stock_commands::set_stock_context(request.nick.clone(), eval_count);
@@ -869,10 +887,17 @@ impl TclThreadWorker {
             return;
         }
 
-        // Read from shared channel members
+        // Read from shared channel members. The map is keyed by the composite
+        // "network:#channel" so we have to build the same key from the request.
+        // Fall back to a bare channel-name lookup so callers that already
+        // supplied a composite key (e.g. tests) keep working.
+        let composite_key = format!("{}:{}", request.network, channel);
         match self.channel_members.read() {
             Ok(members) => {
-                if let Some(nicks) = members.get(channel) {
+                let lookup = members
+                    .get(&composite_key)
+                    .or_else(|| members.get(channel));
+                if let Some(nicks) = lookup {
                     if nicks.is_empty() {
                         let _ = request.response_tx.send(EvalResult {
                             output: String::new(),
