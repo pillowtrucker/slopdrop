@@ -181,7 +181,7 @@ impl InterpreterState {
         // Internal context variables that should not be tracked as state changes
         // These are set by eval_with_context for each command, or are system arrays
         let internal_vars: HashSet<String> = [
-            "nick", "channel", "mask",  // Context variables set per-eval
+            "nick", "channel", "mask", "network",  // Context variables set per-eval
             "slopdrop_channel_members", // Channel member lists synced before each eval
             "slopdrop_log_lines",       // Message log array
             "nick_channel",             // HTTP rate limiting context

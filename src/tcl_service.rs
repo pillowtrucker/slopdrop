@@ -26,6 +26,8 @@ pub struct EvalContext {
     pub host: String,
     /// Optional channel/room identifier
     pub channel: Option<String>,
+    /// Network identifier (used to disambiguate channels across networks)
+    pub network: String,
     /// Whether the user has admin privileges
     pub is_admin: bool,
 }
@@ -36,6 +38,7 @@ impl EvalContext {
             user,
             host,
             channel: None,
+            network: "default".to_string(),
             is_admin: false,
         }
     }
@@ -45,6 +48,13 @@ impl EvalContext {
     #[allow(dead_code)]
     pub fn with_channel(mut self, channel: String) -> Self {
         self.channel = Some(channel);
+        self
+    }
+
+    /// Builder pattern to set network
+    #[allow(dead_code)]
+    pub fn with_network(mut self, network: String) -> Self {
+        self.network = network;
         self
     }
 
@@ -111,6 +121,7 @@ impl TclService {
             ctx.user.clone(),
             ctx.host.clone(),
             channel.clone(),
+            ctx.network.clone(),
         ).await?;
 
         // Split output into lines

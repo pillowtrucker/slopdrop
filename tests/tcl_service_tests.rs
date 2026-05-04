@@ -476,27 +476,33 @@ async fn test_concurrent_users() {
 async fn test_chanlist_command() {
     let (_temp, state_path) = create_temp_state();
 
-    // Create channel members
+    // Channel members are tracked per-network using a composite "network:#channel" key.
     let channel_members = Arc::new(RwLock::new(HashMap::new()));
     {
         let mut members = channel_members.write().unwrap();
-        members.insert("#test".to_string(), HashSet::from([
+        members.insert("libera:#test".to_string(), HashSet::from([
             "user1".to_string(),
             "user2".to_string(),
             "user3".to_string(),
         ]));
-        members.insert("#other".to_string(), HashSet::from([
+        members.insert("libera:#other".to_string(), HashSet::from([
             "alice".to_string(),
             "bob".to_string(),
+        ]));
+        // Same channel name on a different network with different members,
+        // to make sure we never mix lists across networks.
+        members.insert("oftc:#test".to_string(), HashSet::from([
+            "ofuser".to_string(),
         ]));
     }
 
     let mut service = create_test_service_with_members(state_path, channel_members);
 
     let ctx = EvalContext::new("testuser".to_string(), "testhost".to_string())
-        .with_channel("#test".to_string());
+        .with_channel("#test".to_string())
+        .with_network("libera".to_string());
 
-    // Test chanlist for #test
+    // Top-level "chanlist <chan>" invocation (intercepted in tcl_thread)
     let response = service.eval("chanlist #test", ctx.clone()).await.unwrap();
     assert!(!response.is_error);
     assert_eq!(response.output.len(), 1);
@@ -504,21 +510,49 @@ async fn test_chanlist_command() {
     assert!(output.contains("user1"), "Should contain user1: {}", output);
     assert!(output.contains("user2"), "Should contain user2: {}", output);
     assert!(output.contains("user3"), "Should contain user3: {}", output);
+    assert!(!output.contains("ofuser"), "Must not leak from oftc:#test: {}", output);
 
-    // Test chanlist for #other
     let response = service.eval("chanlist #other", ctx.clone()).await.unwrap();
     assert!(!response.is_error);
     let output = &response.output[0];
     assert!(output.contains("alice"), "Should contain alice: {}", output);
     assert!(output.contains("bob"), "Should contain bob: {}", output);
 
-    // Test chanlist for non-existent channel
-    let response = service.eval("chanlist #nonexistent", ctx).await.unwrap();
+    // chanlist for a non-existent channel should produce empty output.
+    let response = service.eval("chanlist #nonexistent", ctx.clone()).await.unwrap();
     assert!(!response.is_error);
-    // Should return empty list (no output) or empty string
     if !response.output.is_empty() {
         assert!(response.output[0].is_empty() || response.output[0].contains("No members"));
     }
+
+    // Calling chanlist from inside a TCL proc has to go through the registered
+    // proc (not the top-level intercept), so this exercises the codepath that
+    // `names` / `name` / user-defined helpers actually use.
+    let response = service
+        .eval("set r [chanlist #test]; lsort $r", ctx.clone())
+        .await
+        .unwrap();
+    assert!(!response.is_error);
+    let output = &response.output[0];
+    assert!(output.contains("user1") && output.contains("user2") && output.contains("user3"),
+        "chanlist proc should resolve current network: {}", output);
+
+    // names returns the membership of the current channel
+    let response = service.eval("lsort [names]", ctx.clone()).await.unwrap();
+    assert!(!response.is_error);
+    let output = &response.output[0];
+    assert!(output.contains("user1") && output.contains("user2") && output.contains("user3"),
+        "names should return current channel members: {}", output);
+
+    // Switching networks must give the other network's members
+    let oftc_ctx = EvalContext::new("testuser".to_string(), "testhost".to_string())
+        .with_channel("#test".to_string())
+        .with_network("oftc".to_string());
+    let response = service.eval("lsort [names]", oftc_ctx).await.unwrap();
+    assert!(!response.is_error);
+    let output = &response.output[0];
+    assert!(output.contains("ofuser"), "Should resolve oftc network: {}", output);
+    assert!(!output.contains("user1"), "Must not leak from libera: {}", output);
 
     service.shutdown();
 }

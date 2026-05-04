@@ -235,6 +235,10 @@ impl SafeTclInterp {
         let _ = interp.eval("proc nick {} {return $::nick}");
         let _ = interp.eval("proc channel {} {return $::channel}");
         let _ = interp.eval("proc mask {} {return $::mask}");
+        let _ = interp.eval("proc network {} {return $::network}");
+        // Default ::network to empty so [info exists] checks behave for any
+        // pre-eval code that runs before handle_eval sets it (e.g. state load)
+        let _ = interp.eval("set ::network {}");
 
         debug!("Safe TCL interpreter configured");
         Ok(())
