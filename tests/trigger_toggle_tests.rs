@@ -190,10 +190,6 @@ fn test_trigger_status_empty() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
-    // Re-enable TIMTOM's default-disabled triggers so the status is empty.
-    interp.eval("triggers enable_for \"*\" \"*\" timtom_text_handler").unwrap();
-    interp.eval("triggers enable_for \"*\" \"*\" timtom_welcome").unwrap();
-
     let result = interp.eval("triggers status").unwrap();
     assert!(result.contains("No triggers are disabled"));
 }

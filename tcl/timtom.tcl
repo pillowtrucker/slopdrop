@@ -2064,21 +2064,14 @@ catch {triggers unbind TEXT * timtom_text_handler}
 bind JOIN * timtom_welcome
 bind TEXT * timtom_text_handler
 
-# TIMTOM auto-replies to bare-word commands (e.g. "money", "blackjack",
-# "spin") and welcomes joiners with "WELCOME TO TABLE, $nick". These can be
-# noisy in mixed-purpose channels, so they ship disabled. Channel ops opt in
-# via the existing trigger toggle:
+# Both auto-fire by default. Channels that don't want TIMTOM's bare-word
+# replies or "WELCOME TO TABLE" greeting can opt out per network/channel
+# using the existing trigger toggle:
 #
-#   tcl triggers enable_for <network> <channel> timtom_text_handler
-#   tcl triggers enable_for <network> <channel> timtom_welcome
+#   tcl triggers disable_for <network> <channel> timtom_text_handler
+#   tcl triggers disable_for <network> <channel> timtom_welcome
 #
-# To turn TIMTOM on across every channel/network, use the global wildcard:
-#
-#   tcl triggers enable_for "*" "*" timtom_text_handler
-#   tcl triggers enable_for "*" "*" timtom_welcome
-#
-# `tcl triggers status` shows which networks/channels they are disabled on.
-catch {triggers disable_for "*" "*" timtom_text_handler}
-catch {triggers disable_for "*" "*" timtom_welcome}
+# Re-enable with `triggers enable_for ...` at the same scope, or check
+# current state with `tcl triggers status`.
 
 
