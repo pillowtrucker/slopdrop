@@ -2043,7 +2043,21 @@ namespace eval timtom {
 proc timtom_welcome {nick mask channel} {
     set bots [list "ChanServ" "NickServ" "MemoServ" "BotServ" "OperServ"]
     if {$nick in $bots} { return "" }
-    return "WELCOME TO TABLE, [string toupper $nick]"
+    set up [string toupper $nick]
+    # gamme's original mIRC line plus the prior port's quirky variants —
+    # rotated through at random so TIMTOM keeps a bit of his character.
+    set greetings [list \
+        "\0034,11WELCOME TO TABLE, $up\003" \
+        "\0034,11WELCOME TO $channel, $nick! Kick off your shoes, relax, and enjoy your stay.\003" \
+        "\0033,8Hello $nick! Welcome to $channel! TIMTOM is here to serve you.\003" \
+        "\0036,11Greetings $nick! You have entered $channel. May your stay be filled with wonder.\003" \
+        "\0032,10Welcome $nick! $channel welcomes you with open arms and unlimited soup.\003" \
+        "\0038,2Hey $nick! Glad you could join us in $channel! Type 'tcl timtom help' to see what I can do.\003" \
+        "\0031,12Salutations, $nick! You have arrived at $channel. The internet cannot hurt you now.\003" \
+        "\0037,5Welcome to the party, $nick! $channel is better with you here.\003" \
+        "\00311,1$nick has graced $channel with their presence! Welcome, friend!\003" \
+    ]
+    return [lindex $greetings [expr {int(rand() * [llength $greetings])}]]
 }
 
 # TEXT trigger entry point. Sets the per-call context globals and dispatches
@@ -2056,17 +2070,29 @@ proc timtom_text_handler {nick mask channel text} {
     return [timtom::handle $text $nick]
 }
 
-# Register the JOIN welcome handler (kept at the same global name as
-# previously, because the test suite asserts on it). The TEXT dispatcher is
-# registered fresh.
-catch {triggers unbind JOIN * timtom_welcome}
-catch {triggers unbind TEXT * timtom_text_handler}
-bind JOIN * timtom_welcome
-bind TEXT * timtom_text_handler
+# Idempotent helper: ensure TIMTOM's TEXT and JOIN handlers are bound.
+# State files saved before these handlers existed (or with a stale
+# snapshot of the bindings array) overwrite the bind calls below when
+# replayed. The Rust loader calls this proc again after `load_state` to
+# put them back. Re-adding only happens when missing, so existing
+# `triggers disable_for ...` rules are not undone.
+proc timtom_ensure_bindings {} {
+    foreach pair {{JOIN timtom_welcome} {TEXT timtom_text_handler}} {
+        lassign $pair event proc_name
+        set already 0
+        if {[info exists ::triggers::bindings($event)]} {
+            foreach b $::triggers::bindings($event) {
+                if {[lindex $b 1] eq $proc_name} { set already 1; break }
+            }
+        }
+        if {!$already} { bind $event * $proc_name }
+    }
+}
+timtom_ensure_bindings
 
 # Both auto-fire by default. Channels that don't want TIMTOM's bare-word
-# replies or "WELCOME TO TABLE" greeting can opt out per network/channel
-# using the existing trigger toggle:
+# replies or join greeting can opt out per network/channel using the
+# existing trigger toggle:
 #
 #   tcl triggers disable_for <network> <channel> timtom_text_handler
 #   tcl triggers disable_for <network> <channel> timtom_welcome

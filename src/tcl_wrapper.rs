@@ -176,6 +176,16 @@ impl SafeTclInterp {
             debug!("Loading TCL state from {:?}", state_path);
             Self::load_state(&interpreter, state_path)?;
 
+            // The persisted trigger state replays
+            // `array set ::triggers::bindings ...`, which clobbers any
+            // bindings that the freshly-loaded TCL modules registered (e.g.
+            // timtom_text_handler may not be in older state snapshots, so
+            // it ends up unbound after replay). Ask each module that owns
+            // default bindings to re-apply them; the helpers are idempotent
+            // and only re-add their own pair, so user-managed disables
+            // and other code-bound handlers (linkresolver) survive.
+            let _ = interpreter.eval("if {[llength [info procs timtom_ensure_bindings]]} { timtom_ensure_bindings }");
+
             // Clear the modified procs/vars list after loading state
             // State loading triggers the proc wrapper, but these are initialization procs
             // not actual modifications, so we clear the tracking lists
