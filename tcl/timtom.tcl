@@ -1586,16 +1586,16 @@ namespace eval timtom {
         set state [get_stat $nick blackjack]
         if {$state != 2} { return "" }
         if {[string match "*.*" $amount]} {
-            return "Please, $nick, only whole dollar bets."
+            return "\0034,11Please, $nick, only whole dollar bets.\003"
         }
         if {![string is integer -strict $amount]} {
-            return "Please, $nick, only whole dollar bets."
+            return "\0034,11Please, $nick, only whole dollar bets.\003"
         }
         if {$amount < 5000 || $amount > 20000} {
-            return "$nick, the min bet is \$5,000 and the max bet is \$20,000."
+            return "\0034,11$nick, the min bet is \0034,11\$5,000 and the max bet is \0034,11\$20,000.\003"
         }
         if {[get_money $nick] < $amount} {
-            return "Sorry, $nick, but you don't have enough to bet that much.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough to bet that much.  :(\003"
         }
         add_money $nick [expr {-$amount}]
         set_stat $nick bet $amount
@@ -1626,7 +1626,7 @@ namespace eval timtom {
                 append bonus_lines "\n[_unicorn_message $nick]"
             }
             _bj_clear $nick
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 21!  YOU GOT BLACKJACK!!!!  Congratulations $nick!  Dealer pays \$[format_with_commas $amount] and you also receive 35 bonus UNICORNS!!!!! YAY!!!!$bonus_lines"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 21!  YOU GOT \003\0034,11BLACKJACK\003\0035,7!!!!  Congratulations $nick!  Dealer pays \0035,7\$[format_with_commas $amount] and you also receive 35 bonus \0030,2UNICORNS!!!!! \0034,11YAY!!!!\003$bonus_lines"
         }
 
         # Two aces.
@@ -1634,7 +1634,7 @@ namespace eval timtom {
             set_stat $nick total 12
             set_stat $nick ttotal 2
             add_stat $nick blackjack 1
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 2 or 12.  Do you want to hit or stand?"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 2 or 12.  Do you want to hit or stand?\003"
         }
 
         # One ace.
@@ -1642,11 +1642,11 @@ namespace eval timtom {
             set tt [expr {$total - 10}]
             set_stat $nick ttotal $tt
             add_stat $nick blackjack 1
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $tt or $total.  Do you want to hit or stand?"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $tt or $total.  Do you want to hit or stand?\003"
         }
 
         add_stat $nick blackjack 1
-        return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $total.  Do you want to hit or stand?"
+        return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $total.  Do you want to hit or stand?\003"
     }
 
     proc _bj_clear {nick} {
@@ -1676,16 +1676,16 @@ namespace eval timtom {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            return "Ok, $nick, you got $cn.  This gives you $new_total.  Sorry $nick :( :(  You busted.  Dealer puts \$[format_with_commas $bet] into the pot.  Better luck next game."
+            return "\0031,13Ok, $nick, you got $cn.  This gives you $new_total.  Sorry $nick :( :(  You busted.  Dealer puts \0031,13\$[format_with_commas $bet] into the pot.  Better luck next game.\003"
         }
         set_stat $nick total $new_total
         add_stat $nick blackjack 1
         if {$cv == 11 && $new_total <= 21} {
             set tt [expr {$new_total - 10}]
             set_stat $nick ttotal $tt
-            return "Ok, $nick, you got $cn.  This gives you $tt or $new_total.  Do you wish to hit or stand?"
+            return "\0031,13Ok, $nick, you got $cn.  This gives you $tt or $new_total.  Do you wish to hit or stand?\003"
         }
-        return "Ok, $nick, you got $cn.  This gives you $new_total.  Do you wish to hit or stand?"
+        return "\0031,13Ok, $nick, you got $cn.  This gives you $new_total.  Do you wish to hit or stand?\003"
     }
 
     proc blackjack_stand {{nick ""}} {
@@ -1699,7 +1699,7 @@ namespace eval timtom {
         set d2n [get_stat $nick ddealer2]
         set total [get_stat $nick total]
         set dealer_total [expr {$d1 + $d2}]
-        set lines [list "Alright-o, $nick!  Dealer has $d1n and $d2n."]
+        set lines [list "\00311,2Alright-o, $nick!  Dealer has $d1n and $d2n.\003"]
 
         # Dealer blackjack.
         if {($d1 == 11 && $d2 == 10) || ($d1 == 10 && $d2 == 11)} {
@@ -1707,8 +1707,8 @@ namespace eval timtom {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            lappend lines "Awww, shucks, I got blackjack.  I'm sorry.  Dealer puts \$[format_with_commas $bet] into the pot.  Ya know what, though, here's 1 bonus PONY since I feel so bad about the whole thing."
-            lappend lines "Finally, $nick gets a pony."
+            lappend lines "\00311,2Awww, shucks, I got blackjack.  I'm sorry.  Dealer puts \00311,2\$[format_with_commas $bet] into the pot.  Ya know what, though, here's 1 bonus \0037,10PONY \00311,2since I feel so bad about the whole thing.\003"
+            lappend lines "\0037,10Finally, $nick gets a pony.\003"
             return [join $lines "\n"]
         }
 
@@ -1722,28 +1722,28 @@ namespace eval timtom {
                 set dealer_total [expr {$dealer_total - 10}]
                 set has_ace 0
             }
-            lappend lines "Dealer gets $cn."
+            lappend lines "\00311,2Dealer gets $cn.\003"
         }
-        lappend lines "So that's $dealer_total."
+        lappend lines "\00311,2So that's $dealer_total.\003"
 
         if {$dealer_total > 21} {
             add_money $nick [expr {$bet * 2}]
             _bj_clear $nick
-            lappend lines "WHOOPS!!  I busted!  LOL  :D :D  Dealer pays \$[format_with_commas $bet].  Congratulations $nick!"
+            lappend lines "\00311,2WHOOPS!!  I busted!  LOL  :D :D  Dealer pays \00311,2\$[format_with_commas $bet].  Congratulations $nick!\003"
         } elseif {$dealer_total > $total} {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            lappend lines "Ah well, I won.  I hate to have to do it to you, $nick, but I'm going to have to take \$[format_with_commas $bet] from you and put it into the pot.  :(  I hope you play again sometime and have better luck."
+            lappend lines "\0038,5Ah well, I won.  I hate to have to do it to you, $nick, but I'm going to have to take \0038,5\$[format_with_commas $bet] from you and put it into the pot.  :(  I hope you play again sometime and have better luck.\003"
         } elseif {$dealer_total < $total} {
             add_money $nick [expr {$bet * 2}]
             _bj_clear $nick
-            lappend lines "Look's like you beat me, $nick!  Awesome game!  Dealer pays \$[format_with_commas $bet].  You play again soon, now, ya hear?"
+            lappend lines "\0038,5Look's like you beat me, $nick!  Awesome game!  Dealer pays \0038,5\$[format_with_commas $bet].  You play again soon, now, ya hear?\003"
         } else {
             add_money $nick $bet
             add_stat $nick unicorn 1
             _bj_clear $nick
-            lappend lines "Wow that's a push!  Ya know what, I'm going to give you 1 bonus UNICORN anyways just because I want to.  <3  Good luck!  Play again soon, $nick!!!"
+            lappend lines "\0038,5Wow that's a push!  Ya know what, I'm going to give you 1 bonus \0030,2UNICORN\0038,5 anyways just because I want to.  <3  Good luck!  Play again soon, $nick!!!\003"
             lappend lines [_unicorn_message $nick]
         }
         return [join $lines "\n"]
