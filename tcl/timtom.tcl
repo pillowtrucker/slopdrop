@@ -419,10 +419,10 @@ namespace eval timtom {
         set nick [whoami $nick]
         # mIRC: "Please, $nick, only whole dollar transfers." if "." isin \$3
         if {[string match "*.*" $amount]} {
-            return "Please, $nick, only whole dollar transfers."
+            return "\0034,11Please, $nick, only whole dollar transfers.\003"
         }
         if {![string is integer -strict $amount]} {
-            return "Please, $nick, only whole dollar transfers."
+            return "\0034,11Please, $nick, only whole dollar transfers.\003"
         }
         if {$amount < 0} { return "" }
         set cur [get_money $nick]
@@ -433,7 +433,7 @@ namespace eval timtom {
         add_stat $nick pot 2
         inc_state pot 2
         add_money $target $amount
-        return "HELLO!  HELLO!  TIMTOM here!  Why sure, $nick, I'll transfer \$[format_with_commas $amount] over to ${target}'s account.  We also deduct a \$2 transfer fee that will be added to the pot.  Thank you for banking with TIMTOM!"
+        return "\0038,6HELLO!  HELLO!  TIMTOM here!  Why sure, $nick, I'll transfer \0038,6\$[format_with_commas $amount] over to ${target}'s account.  We also deduct a \0038,6\$2 transfer fee that will be added to the pot.  Thank you for banking with TIMTOM!\003"
     }
 
     # ========================================================================
@@ -511,7 +511,7 @@ namespace eval timtom {
     proc flip {{nick ""}} {
         set nick [whoami $nick]
         if {![stat_allows $nick flip]} {
-            return "$nick, you got your million.  Please let someone else flip now."
+            return "\0034,11$nick, you got your million.  Please let someone else flip now.\003"
         }
         if {[random_int 1 2] == 1} {
             set h [add_stat $nick heads 1]
@@ -522,9 +522,9 @@ namespace eval timtom {
                 set_stat $nick heads 0
                 set_stat $nick flip 0
                 set_state ok 1
-                return "$nick flips HEADS.\nWow $nick!!  You got 7 heads in a row!  Here's \$1,000,000!"
+                return "\0038,7$nick flips HEADS.\003\n\0038,7Wow $nick!!  You got 7 heads in a row!  Here's \0038,7\$1,000,000!\003"
             }
-            return "$nick flips HEADS."
+            return "\0038,7$nick flips HEADS.\003"
         } else {
             set t [add_stat $nick tails 1]
             set_stat $nick heads 0
@@ -534,9 +534,9 @@ namespace eval timtom {
                 set_stat $nick tails 0
                 set_stat $nick flip 0
                 set_state ok 1
-                return "$nick flips TAILS.\nWow $nick!!  You got 7 tails in a row!  Here's \$1,000,000!"
+                return "\00311,6$nick flips TAILS.\003\n\00311,6Wow $nick!!  You got 7 tails in a row!  Here's \00311,6\$1,000,000!\003"
             }
-            return "$nick flips TAILS."
+            return "\00311,6$nick flips TAILS.\003"
         }
     }
 
@@ -667,7 +667,7 @@ namespace eval timtom {
     proc drink {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2} {
-            return "Sorry, $nick, you don't have enough money to buy a drink."
+            return "\0034,11Sorry, $nick, you don't have enough money to buy a drink.\003"
         }
         add_money $nick -2
         return [_drink_msg $nick [random_int 1 11]]
@@ -676,7 +676,7 @@ namespace eval timtom {
     proc drink_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2} {
-            return "Sorry, $nick, you don't have enough money to buy a drink."
+            return "\0034,11Sorry, $nick, you don't have enough money to buy a drink.\003"
         }
         add_money $nick -2
         return [_drink_for_msg $nick $target [random_int 1 11]]
@@ -689,7 +689,7 @@ namespace eval timtom {
     proc crab {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 5} {
-            return "Sorry, $nick, you don't have enough money to buy a crab dinner."
+            return "\0034,11Sorry, $nick, you don't have enough money to buy a crab dinner.\003"
         }
         add_money $nick -5
         switch -- [random_int 1 7] {
@@ -707,7 +707,7 @@ namespace eval timtom {
     proc crab_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 5} {
-            return "Sorry, $nick, you don't have enough money to buy a crab dinner."
+            return "\0034,11Sorry, $nick, you don't have enough money to buy a crab dinner.\003"
         }
         add_money $nick -5
         switch -- [random_int 1 7] {
@@ -729,7 +729,7 @@ namespace eval timtom {
     proc cake {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 1.95} {
-            return "Sorry, $nick, but you don't have enough for a piece of cake.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough for a piece of cake.  :(\003"
         }
         add_money $nick -1.95
         switch -- [random_int 1 10] {
@@ -750,7 +750,7 @@ namespace eval timtom {
     proc cake_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 1.95} {
-            return "Sorry, $nick, but you don't have enough for a piece of cake.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough for a piece of cake.  :(\003"
         }
         add_money $nick -1.95
         switch -- [random_int 1 10] {
@@ -771,7 +771,7 @@ namespace eval timtom {
     proc pizza {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2.22} {
-            return "Sorry, $nick, but you don't have enough for a slice of pizza.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough for a slice of pizza.  :(\003"
         }
         add_money $nick -2.22
         switch -- [random_int 1 8] {
@@ -790,7 +790,7 @@ namespace eval timtom {
     proc pizza_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2.22} {
-            return "Sorry, $nick, but you don't have enough for a slice of pizza.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough for a slice of pizza.  :(\003"
         }
         add_money $nick -2.22
         switch -- [random_int 1 8] {
@@ -845,7 +845,7 @@ namespace eval timtom {
     proc sauce {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 0.25} {
-            return "Sorry, $nick, but you don't even have enough to buy sauce.  I'm so sorry. :("
+            return "\0034,11Sorry, $nick, but you don't even have enough to buy sauce.  I'm so sorry. :(\003"
         }
         add_money $nick -0.25
         switch -- [random_int 1 4] {
@@ -860,7 +860,7 @@ namespace eval timtom {
     proc sauce_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 0.25} {
-            return "Sorry, $nick, but you don't even have enough to buy sauce.  I'm so sorry. :("
+            return "\0034,11Sorry, $nick, but you don't even have enough to buy sauce.  I'm so sorry. :(\003"
         }
         add_money $nick -0.25
         switch -- [random_int 1 4] {
@@ -1053,7 +1053,7 @@ namespace eval timtom {
             3 { return "0,12Here comes your very own unicorn, ${nick}! 11,11.4,4.7,7.6,6.3,3.10,10.8,8.2,2.6,6.11,11.7,7.9,9." }
             4 { return "0,2Hmmm...how about....a.....UNICORN??!! 12,12.3,3.4,4.5,5.6,6.11,11.7,7.6,6.3,3.10,10.8,8.2,2.4,4." }
         }
-        return "Here comes your very own unicorn, $nick!"
+        return "\0030,12Here comes your very own unicorn, $nick!\003"
     }
 
     proc prices {{nick ""}} {
@@ -1111,59 +1111,59 @@ namespace eval timtom {
         set nick [whoami $nick]
         set count [get_stat $nick pony]
         if {$count == 0} {
-            return "HELLO HELLO HELLO HELLO $nick!  Right now you don't have any ponies.  I really want you to get one though!!"
+            return "\0038,12HELLO HELLO HELLO HELLO $nick!  Right now you don't have any ponies.  I really want you to get one though!!\003"
         } elseif {$count == 1} {
-            return "HELLO HELLO HELLO HELLO $nick!  Currently you have 1 pony.  Do you love your pony?"
+            return "\0038,12HELLO HELLO HELLO HELLO $nick!  Currently you have 1 pony.  Do you love your pony?\003"
         }
-        return "HELLO HELLO HELLO HELLO $nick!  Currently you have [format_with_commas $count] ponies."
+        return "\0038,12HELLO HELLO HELLO HELLO $nick!  Currently you have [format_with_commas $count] ponies.\003"
     }
 
     proc my_unicorns {{nick ""}} {
         set nick [whoami $nick]
         set count [get_stat $nick unicorn]
         if {$count == 0} {
-            return "Hey $nick.  Right now you don't have any unicorns.  :(  Keep saving up!  Unicorns are well worth the wait."
+            return "\0030,2Hey $nick.  Right now you don't have any unicorns.  :(  Keep saving up!  Unicorns are well worth the wait.\003"
         } elseif {$count == 1} {
             if {[random_int 1 2] == 1} {
-                return "Hey $nick.  Currently you have 1 unicorn.  And what a beautiful horn she has!"
+                return "\0030,2Hey $nick.  Currently you have 1 unicorn.  And what a beautiful horn she has!\003"
             }
-            return "Hey $nick.  Currently you have 1 unicorn.  And what a beautiful horn he has!"
+            return "\0030,2Hey $nick.  Currently you have 1 unicorn.  And what a beautiful horn he has!\003"
         }
-        return "Hey $nick.  Currently you have [format_with_commas $count] unicorns."
+        return "\0030,2Hey $nick.  Currently you have [format_with_commas $count] unicorns.\003"
     }
 
     proc check_others_ponies {target {nick ""}} {
         set nick [whoami $nick]
         set count [get_stat $target pony]
         if {$count == 0} {
-            return "HELLO HELLO HELLO HELLO $nick!  Right now $target doesn't have any ponies.  We're all pulling for $target right now!!"
+            return "\0038,12HELLO HELLO HELLO HELLO $nick!  Right now $target doesn't have any ponies.  We're all pulling for $target right now!!\003"
         } elseif {$count == 1} {
-            return "HELLO HELLO HELLO HELLO $nick!  Currently $target has 1 pony.  What a cute little pony!"
+            return "\0038,12HELLO HELLO HELLO HELLO $nick!  Currently $target has 1 pony.  What a cute little pony!\003"
         }
-        return "HELLO HELLO HELLO HELLO $nick!  Currently $target has [format_with_commas $count] ponies."
+        return "\0038,12HELLO HELLO HELLO HELLO $nick!  Currently $target has [format_with_commas $count] ponies.\003"
     }
 
     proc check_others_unicorns {target {nick ""}} {
         set nick [whoami $nick]
         set count [get_stat $target unicorn]
         if {$count == 0} {
-            return "Hey $nick.  Right now, $target doesn't have any unicorns.  :("
+            return "\0030,2Hey $nick.  Right now, $target doesn't have any unicorns.  :(\003"
         } elseif {$count == 1} {
             if {[random_int 1 2] == 1} {
-                return "Currently $target has 1 unicorn.  And what a beautiful horn she has!"
+                return "\0030,2Currently $target has 1 unicorn.  And what a beautiful horn she has!\003"
             }
-            return "Currently $target has 1 unicorn.  And what a beautiful horn he has!"
+            return "\0030,2Currently $target has 1 unicorn.  And what a beautiful horn he has!\003"
         }
-        return "Currently $target has [format_with_commas $count] unicorns."
+        return "\0030,2Currently $target has [format_with_commas $count] unicorns.\003"
     }
 
     proc check_others_money {target {nick ""}} {
         set nick [whoami $nick]
         set amount [get_money $target]
         if {$amount == 0} {
-            return "HELLO $nick! Right now $target doesn't have any money. We're all pulling for $target right now!!"
+            return "\0038,6HELLO $nick! Right now $target doesn't have any money. We're all pulling for $target right now!!\003"
         }
-        return "HELLO $nick! Currently $target has [format_money $amount]."
+        return "\0038,6HELLO $nick! Currently $target has [format_money $amount].\003"
     }
 
     proc buy_pony {{nick ""}} {
@@ -1262,15 +1262,15 @@ namespace eval timtom {
     proc bong {{nick ""}} {
         set nick [whoami $nick]
         if {![is_stoner $nick]} {
-            return "Sorry, $nick, you are not allowed to touch the bong."
+            return "\0033,8Sorry, $nick, you are not allowed to touch the bong.\003"
         }
-        return "TIMTOM passes the bong to $nick.  Enjoy friend."
+        return "\0039,3TIMTOM passes the bong to $nick.  Enjoy friend.\003"
     }
 
     proc bong_for {target {nick ""}} {
         set nick [whoami $nick]
         if {![is_stoner $nick]} {
-            return "Sorry, $nick, you are not allowed to touch the bong."
+            return "\0033,8Sorry, $nick, you are not allowed to touch the bong.\003"
         }
         return "$nick passes the bong to $target."
     }
@@ -1278,9 +1278,9 @@ namespace eval timtom {
     proc clean_bong {{nick ""}} {
         set nick [whoami $nick]
         if {![is_stoner $nick]} {
-            return "Sorry, $nick, you are not allowed to touch the bong."
+            return "\0033,8Sorry, $nick, you are not allowed to touch the bong.\003"
         }
-        return "TIMTOM HERE!  That water's looking pretty nasty.  Let me change that for you."
+        return "\0030,7TIMTOM HERE!  That water's looking pretty nasty.  Let me change that for you.\003"
     }
 
     proc is_stoner {nick} {
@@ -1303,9 +1303,9 @@ namespace eval timtom {
         set s [get_state story]
         inc_state story 1
         if {$s eq "1"} {
-            return "Once upon a time there lived a lucky little boy named Lucky.  His favorite thing to do was to collect springs.  If you want to hear more of the story type \"more\"."
+            return "\0032,7Once upon a time there lived a lucky little boy named Lucky.  His favorite thing to do was to collect springs.  If you want to hear more of the story type \"more\".\003"
         }
-        return "Sorry, friend, you must be in storytime mode to use that command. :("
+        return "\0034,11Sorry, friend, you must be in storytime mode to use that command. :(\003"
     }
 
     proc story_more {{nick ""}} {
@@ -1313,11 +1313,11 @@ namespace eval timtom {
         set s [get_state story]
         inc_state story 1
         switch -- $s {
-            2 { return "He was a very good boy and always listened to his mommy and daddy.  If you want to hear more of the story type \"more\"." }
-            3 { return "One day he decided to go for a walk by the Happy Boy Tree.  If you want to hear more of the story type \"more\"." }
-            4 { return "The tree was very big and full of so many leaves.  If you want to hear more of the story type \"more\"." }
+            2 { return "\0032,7He was a very good boy and always listened to his mommy and daddy.  If you want to hear more of the story type \"more\".\003" }
+            3 { return "\0032,7One day he decided to go for a walk by the Happy Boy Tree.  If you want to hear more of the story type \"more\".\003" }
+            4 { return "\0032,7The tree was very big and full of so many leaves.  If you want to hear more of the story type \"more\".\003" }
         }
-        return "Sorry, friend, you must be in storytime mode to use that command. :("
+        return "\0034,11Sorry, friend, you must be in storytime mode to use that command. :(\003"
     }
 
     # ========================================================================
@@ -1335,9 +1335,9 @@ namespace eval timtom {
         set_state stoner 2
         if {$s eq "1"} {
             set_stat $nick stoner 1
-            return "You are now a member of the Official #gamme Stoners' Club."
+            return "\0034,11You are now a member of the Official #gamme Stoners' Club.\003"
         }
-        return "scalar piegs"
+        return "\0031,4scalar piegs\003"
     }
 
     proc no_cmd {{nick ""}} {
@@ -1346,9 +1346,9 @@ namespace eval timtom {
         set_state stoner 2
         if {$s eq "1"} {
             set_stat $nick stoner 0
-            return "You are not a member of the Official #gamme Stoners' Club."
+            return "\0034,11You are \0031,4not\0034,11 a member of the Official #gamme Stoners' Club.\003"
         }
-        return "bufferlo piegs"
+        return "\0031,4bufferlo piegs\003"
     }
 
     # ========================================================================
@@ -1375,16 +1375,16 @@ namespace eval timtom {
     proc check_others_pot {target {nick ""}} {
         set nick [whoami $nick]
         set p [get_state pot]
-        if {$p eq "" || $p == 0} { return "The pot is currently empty." }
+        if {$p eq "" || $p == 0} { return "\0034,11The pot is currently empty.\003" }
         set theirs [get_stat $target pot]
         if {$theirs == 0} {
-            return "How are you doing, $nick?  Currently, $target hasn't contributed anything to the pot."
+            return "\0037,2How are you doing, $nick?  Currently, $target hasn't contributed anything to the pot.\003"
         }
         if {$theirs == $p} {
-            return "What's up, $nick?  Right now the entire pot has come from $target. lol."
+            return "\0031,4What's up, $nick?  Right now the entire pot has come from $target. lol.\003"
         }
         set pct [expr {round(double($theirs) / double($p) * 10000.0) / 100.0}]
-        return "Howdy $nick.  At the moment, approximately ${pct}% of the pot has come from $target."
+        return "\0037,2Howdy $nick.  At the moment, approximately ${pct}% of the pot has come from $target.\003"
     }
 
     # ========================================================================
@@ -1409,7 +1409,7 @@ namespace eval timtom {
             return ""
         }
         if {[get_stat $nick out] == 1} {
-            return "Sorry, $nick, you're out for this game."
+            return "\0034,11Sorry, $nick, you're out for this game.\003"
         }
         set k [nick_count]
         if {$k < 1} { set k 1 }
@@ -1479,18 +1479,18 @@ namespace eval timtom {
         if {$p eq ""} { set p 0 }
         set mine [get_stat $nick pot]
         if {[get_stat $nick eguess] == 1} {
-            return "Sorry, $nick, you need to finish the game you started. >:D"
+            return "\0034,11Sorry, $nick, you need to finish the game you started. >:D\003"
         }
         if {$p > 0 && $mine == $p} {
-            return "Sorry, $nick, but all of the pot has come from you.  Try winning the pot at another time, when other people have contributed as well."
+            return "\0031,4Sorry, $nick, but all of the pot has come from you.  Try winning the pot at another time, when other people have contributed as well.\003"
         }
         if {$p > 0 && double($mine) / double($p) > 0.75} {
             set pct [expr {round(double($mine) / double($p) * 10000.0) / 100.0}]
-            return "Sorry, $nick, but approximately ${pct}% of the pot is yours.  That's a bit too much.  Try winning the pot at another time, when the money is more evenly distributed."
+            return "\0031,4Sorry, $nick, but approximately ${pct}% of the pot is yours.  That's a bit too much.  Try winning the pot at another time, when the money is more evenly distributed.\003"
         }
         set_stat $nick guess 1
         set_stat $nick number [random_int 1 20]
-        return "Hey $nick.  I'm thinking of a number between 1 and 20.  You have 5 tries to guess it.  Figure it out and you win THE POT!!!!!  Miss it, and you're BANKRUPT!!!!!"
+        return "\00313,2Hey $nick.  I'm thinking of a number between 1 and 20.  You have 5 tries to guess it.  Figure it out and you win THE POT!!!!!  Miss it, and you're \00311,6BANKRUPT!!!!!\003"
     }
 
     proc guess_attempt {number {nick ""}} {
@@ -1525,29 +1525,29 @@ namespace eval timtom {
                 _clear_guess_state $nick
                 if {$p > 0} {
                     add_money $nick $p
-                    return "Yep, it was $number.  Congratulations $nick.  You win the pot!"
+                    return "\0038,3Yep, it was $number.  Congratulations $nick.  You win the pot!\003"
                 }
                 add_stat $nick pony 1
-                return "Yep, it was $number.  Congratulations $nick.  Since the pot is empty, here's a pony. ;)\nFinally, $nick gets a pony."
+                return "\0038,3Yep, it was $number.  Congratulations $nick.  Since the pot is empty, here's a pony. ;)\003\n\0037,10Finally, $nick gets a pony.\003"
             } else {
                 _clear_guess_state $nick
                 if {$p > 0} {
                     add_money $nick $p
-                    return "Yep, you got it, it was $number.  And on your last guess - phew!  Congrats $nick.  You win the pot!"
+                    return "\0038,3Yep, you got it, it was $number.  And on your last guess - phew!  Congrats $nick.  You win the pot!\003"
                 }
                 add_stat $nick pony 1
-                return "Yep, you got it, it was $number.  And on your last guess - phew!  Congrats $nick.  Since the pot is empty, please accept this pony as a consolation prize.\nFinally, $nick gets a pony."
+                return "\0038,3Yep, you got it, it was $number.  And on your last guess - phew!  Congrats $nick.  Since the pot is empty, please accept this pony as a consolation prize.\003\n\0037,10Finally, $nick gets a pony.\003"
             }
         }
         # Wrong guess
         if {$g < 5} {
             add_stat $nick guess 1
             set_stat $nick eguess 1
-            return "Sorry, $nick, that's not it.  Keep guessing."
+            return "\0038,3Sorry, $nick, that's not it.  Keep guessing.\003"
         }
         set_money $nick 0
         _clear_guess_state $nick
-        return "Sorry, $nick, that's not it.  The correct number is $secret :( :(  I hate to do it to you, but you're BANKRUPT!  I'm sooooo sorry!!!"
+        return "\0038,3Sorry, $nick, that's not it.  The correct number is $secret :( :(  I hate to do it to you, but you're \00311,6BANKRUPT!\0038,3  I'm sooooo sorry!!!\003"
     }
 
     proc _clear_guess_state {nick} {
@@ -1586,16 +1586,16 @@ namespace eval timtom {
         set state [get_stat $nick blackjack]
         if {$state != 2} { return "" }
         if {[string match "*.*" $amount]} {
-            return "Please, $nick, only whole dollar bets."
+            return "\0034,11Please, $nick, only whole dollar bets.\003"
         }
         if {![string is integer -strict $amount]} {
-            return "Please, $nick, only whole dollar bets."
+            return "\0034,11Please, $nick, only whole dollar bets.\003"
         }
         if {$amount < 5000 || $amount > 20000} {
-            return "$nick, the min bet is \$5,000 and the max bet is \$20,000."
+            return "\0034,11$nick, the min bet is \0034,11\$5,000 and the max bet is \0034,11\$20,000.\003"
         }
         if {[get_money $nick] < $amount} {
-            return "Sorry, $nick, but you don't have enough to bet that much.  :("
+            return "\0034,11Sorry, $nick, but you don't have enough to bet that much.  :(\003"
         }
         add_money $nick [expr {-$amount}]
         set_stat $nick bet $amount
@@ -1626,7 +1626,7 @@ namespace eval timtom {
                 append bonus_lines "\n[_unicorn_message $nick]"
             }
             _bj_clear $nick
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 21!  YOU GOT BLACKJACK!!!!  Congratulations $nick!  Dealer pays \$[format_with_commas $amount] and you also receive 35 bonus UNICORNS!!!!! YAY!!!!$bonus_lines"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 21!  YOU GOT \003\0034,11BLACKJACK\003\0035,7!!!!  Congratulations $nick!  Dealer pays \0035,7\$[format_with_commas $amount] and you also receive 35 bonus \0030,2UNICORNS!!!!! \0034,11YAY!!!!\003$bonus_lines"
         }
 
         # Two aces.
@@ -1634,7 +1634,7 @@ namespace eval timtom {
             set_stat $nick total 12
             set_stat $nick ttotal 2
             add_stat $nick blackjack 1
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 2 or 12.  Do you want to hit or stand?"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you 2 or 12.  Do you want to hit or stand?\003"
         }
 
         # One ace.
@@ -1642,11 +1642,11 @@ namespace eval timtom {
             set tt [expr {$total - 10}]
             set_stat $nick ttotal $tt
             add_stat $nick blackjack 1
-            return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $tt or $total.  Do you want to hit or stand?"
+            return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $tt or $total.  Do you want to hit or stand?\003"
         }
 
         add_stat $nick blackjack 1
-        return "Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $total.  Do you want to hit or stand?"
+        return "\0035,7Ok, great, let's get started then, $nick!  I'll deal out the cards.  Dealer shows $d1n.  You've got $c1n and $c2n.  This gives you $total.  Do you want to hit or stand?\003"
     }
 
     proc _bj_clear {nick} {
@@ -1676,16 +1676,16 @@ namespace eval timtom {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            return "Ok, $nick, you got $cn.  This gives you $new_total.  Sorry $nick :( :(  You busted.  Dealer puts \$[format_with_commas $bet] into the pot.  Better luck next game."
+            return "\0031,13Ok, $nick, you got $cn.  This gives you $new_total.  Sorry $nick :( :(  You busted.  Dealer puts \0031,13\$[format_with_commas $bet] into the pot.  Better luck next game.\003"
         }
         set_stat $nick total $new_total
         add_stat $nick blackjack 1
         if {$cv == 11 && $new_total <= 21} {
             set tt [expr {$new_total - 10}]
             set_stat $nick ttotal $tt
-            return "Ok, $nick, you got $cn.  This gives you $tt or $new_total.  Do you wish to hit or stand?"
+            return "\0031,13Ok, $nick, you got $cn.  This gives you $tt or $new_total.  Do you wish to hit or stand?\003"
         }
-        return "Ok, $nick, you got $cn.  This gives you $new_total.  Do you wish to hit or stand?"
+        return "\0031,13Ok, $nick, you got $cn.  This gives you $new_total.  Do you wish to hit or stand?\003"
     }
 
     proc blackjack_stand {{nick ""}} {
@@ -1699,7 +1699,7 @@ namespace eval timtom {
         set d2n [get_stat $nick ddealer2]
         set total [get_stat $nick total]
         set dealer_total [expr {$d1 + $d2}]
-        set lines [list "Alright-o, $nick!  Dealer has $d1n and $d2n."]
+        set lines [list "\00311,2Alright-o, $nick!  Dealer has $d1n and $d2n.\003"]
 
         # Dealer blackjack.
         if {($d1 == 11 && $d2 == 10) || ($d1 == 10 && $d2 == 11)} {
@@ -1707,8 +1707,8 @@ namespace eval timtom {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            lappend lines "Awww, shucks, I got blackjack.  I'm sorry.  Dealer puts \$[format_with_commas $bet] into the pot.  Ya know what, though, here's 1 bonus PONY since I feel so bad about the whole thing."
-            lappend lines "Finally, $nick gets a pony."
+            lappend lines "\00311,2Awww, shucks, I got blackjack.  I'm sorry.  Dealer puts \00311,2\$[format_with_commas $bet] into the pot.  Ya know what, though, here's 1 bonus \0037,10PONY \00311,2since I feel so bad about the whole thing.\003"
+            lappend lines "\0037,10Finally, $nick gets a pony.\003"
             return [join $lines "\n"]
         }
 
@@ -1722,28 +1722,28 @@ namespace eval timtom {
                 set dealer_total [expr {$dealer_total - 10}]
                 set has_ace 0
             }
-            lappend lines "Dealer gets $cn."
+            lappend lines "\00311,2Dealer gets $cn.\003"
         }
-        lappend lines "So that's $dealer_total."
+        lappend lines "\00311,2So that's $dealer_total.\003"
 
         if {$dealer_total > 21} {
             add_money $nick [expr {$bet * 2}]
             _bj_clear $nick
-            lappend lines "WHOOPS!!  I busted!  LOL  :D :D  Dealer pays \$[format_with_commas $bet].  Congratulations $nick!"
+            lappend lines "\00311,2WHOOPS!!  I busted!  LOL  :D :D  Dealer pays \00311,2\$[format_with_commas $bet].  Congratulations $nick!\003"
         } elseif {$dealer_total > $total} {
             add_stat $nick pot $bet
             inc_state pot $bet
             _bj_clear $nick
-            lappend lines "Ah well, I won.  I hate to have to do it to you, $nick, but I'm going to have to take \$[format_with_commas $bet] from you and put it into the pot.  :(  I hope you play again sometime and have better luck."
+            lappend lines "\0038,5Ah well, I won.  I hate to have to do it to you, $nick, but I'm going to have to take \0038,5\$[format_with_commas $bet] from you and put it into the pot.  :(  I hope you play again sometime and have better luck.\003"
         } elseif {$dealer_total < $total} {
             add_money $nick [expr {$bet * 2}]
             _bj_clear $nick
-            lappend lines "Look's like you beat me, $nick!  Awesome game!  Dealer pays \$[format_with_commas $bet].  You play again soon, now, ya hear?"
+            lappend lines "\0038,5Look's like you beat me, $nick!  Awesome game!  Dealer pays \0038,5\$[format_with_commas $bet].  You play again soon, now, ya hear?\003"
         } else {
             add_money $nick $bet
             add_stat $nick unicorn 1
             _bj_clear $nick
-            lappend lines "Wow that's a push!  Ya know what, I'm going to give you 1 bonus UNICORN anyways just because I want to.  <3  Good luck!  Play again soon, $nick!!!"
+            lappend lines "\0038,5Wow that's a push!  Ya know what, I'm going to give you 1 bonus \0030,2UNICORN\0038,5 anyways just because I want to.  <3  Good luck!  Play again soon, $nick!!!\003"
             lappend lines [_unicorn_message $nick]
         }
         return [join $lines "\n"]
