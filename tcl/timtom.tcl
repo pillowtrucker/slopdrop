@@ -401,7 +401,7 @@ namespace eval timtom {
 
     proc give {target amount {nick ""}} {
         set nick [whoami $nick]
-        # mIRC: "Please, $nick, only whole dollar transfers." if "." isin $3
+        # mIRC: "Please, $nick, only whole dollar transfers." if "." isin \$3
         if {[string match "*.*" $amount]} {
             return "Please, $nick, only whole dollar transfers."
         }
@@ -411,7 +411,7 @@ namespace eval timtom {
         if {$amount < 0} { return "" }
         set cur [get_money $nick]
         if {$cur < $amount} { return "" }
-        # Transfer with $2 fee that goes into the pot.
+        # Transfer with \$2 fee that goes into the pot.
         add_money $nick [expr {-$amount}]
         add_money $nick -2
         add_stat $nick pot 2
@@ -438,31 +438,31 @@ namespace eval timtom {
                 set_stat $nick spin 0
                 set msg "\0034,11${nick}, you get a BANKRUPT!!!\003"
             }
-            2 { add_money $nick 500; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12$500\003" }
-            3 { add_money $nick 400; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$400\003" }
-            5 { add_money $nick 5000; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4$5000!!!\00311,6 WOW!!!\003" }
-            6 { add_money $nick 250; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$250\003" }
-            7 { add_money $nick 800; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$800\003" }
-            8 { add_money $nick 666; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$666.  That's scary business.\003" }
-            11 { add_money $nick 47; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4$47.  That's ok, it's better than nothing.\003" }
-            12 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9$900\003" }
-            15 { add_money $nick 251; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10$251\003" }
-            16 { add_money $nick 300; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$300\003" }
-            17 { add_money $nick 450; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$450\003" }
-            18 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14$9000.  That's a nice hefty amount.\003" }
+            2 { add_money $nick 500; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12\$500\003" }
+            3 { add_money $nick 400; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7\$400\003" }
+            5 { add_money $nick 5000; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4\$5000!!!\00311,6 WOW!!!\003" }
+            6 { add_money $nick 250; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7\$250\003" }
+            7 { add_money $nick 800; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1\$800\003" }
+            8 { add_money $nick 666; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7\$666.  That's scary business.\003" }
+            11 { add_money $nick 47; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4\$47.  That's ok, it's better than nothing.\003" }
+            12 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9\$900\003" }
+            15 { add_money $nick 251; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10\$251\003" }
+            16 { add_money $nick 300; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7\$300\003" }
+            17 { add_money $nick 450; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1\$450\003" }
+            18 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14\$9000.  That's a nice hefty amount.\003" }
             21 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0034,11${nick}, you win a trip to Detroit, Michigan!  Good for you!\003" }
-            22 { add_money $nick 11000; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12$11,000\003" }
+            22 { add_money $nick 11000; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12\$11,000\003" }
             23 { add_money $nick 50; clear_glob "spin_*"; set msg "\0031,7${nick}, you get fifty dollars.\003" }
-            25 { add_money $nick 999.99; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4$999.99!!!\00311,6 WOW!!!\003" }
+            25 { add_money $nick 999.99; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4\$999.99!!!\00311,6 WOW!!!\003" }
             26 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0033,7${nick}, you win a trip to Kenya, Africa.\003" }
-            27 { add_money $nick 700; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$700\003" }
-            28 { add_money $nick 100; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$100.  Maybe you can buy us all tacos later.\003" }
-            31 { add_money $nick 680; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4$680.  Do you remember the time you got a million?  That was crazy.  Not this time though.\003" }
-            32 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9$900\003" }
+            27 { add_money $nick 700; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1\$700\003" }
+            28 { add_money $nick 100; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7\$100.  Maybe you can buy us all tacos later.\003" }
+            31 { add_money $nick 680; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4\$680.  Do you remember the time you got a million?  That was crazy.  Not this time though.\003" }
+            32 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9\$900\003" }
             33 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0035,7${nick}, you win a trip to Hawaii!!!!\003" }
-            35 { add_money $nick 255; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10$255\003" }
-            36 { add_money $nick 390; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$390\003" }
-            38 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14$9000.  That's a nice HEEEEFTY amount.\003" }
+            35 { add_money $nick 255; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10\$255\003" }
+            36 { add_money $nick 390; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7\$390\003" }
+            38 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14\$9000.  That's a nice HEEEEFTY amount.\003" }
             4 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Sorry about that.\003" }
             9 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Sorry about that.\003" }
             14 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Still better than bankrupt.\003" }
@@ -477,7 +477,7 @@ namespace eval timtom {
                 set_state ok 1
                 set msg "\0035,7${nick}, you get \0035,7$who,000,000!!! THAT'S AMAZING!!!\003"
             }
-            37 { clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$000. LOL.\003" }
+            37 { clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1\$000. LOL.\003" }
             default { set msg "" }
         }
         return $msg
@@ -529,7 +529,7 @@ namespace eval timtom {
         if {[get_state ok] eq "1"} {
             add_money $nick 5000
             set_state ok 0
-            return "\0030,13OK [string toupper $nick], HERE'S \0030,13$5000\003"
+            return "\0030,13OK [string toupper $nick], HERE'S \0030,13\$5000\003"
         }
         return ""
     }
@@ -913,7 +913,7 @@ namespace eval timtom {
     proc prices {{nick ""}} {
         set nick [whoami $nick]
         set ch [current_channel]
-        return "\0035,10Hello ${nick}!  These are the current market prices in ${ch}:  drinks are \0035,10$2 a piece, cake is \0035,10$who.95 a piece, and pizza is \0035,10$2.22 a slice.  Homemade lasagna is \0035,10$2.50.  Tacos are \0035,10$.79 \0035,10/ person (all non-ops served), and sauce is \0035,10$.25 extra.  A Nachos Fun Pack costs \0035,10$3.95.  A pony will cost you \0035,10$1000 and a unicorn will cost you \0035,10$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!\003"
+        return "\0035,10Hello ${nick}!  These are the current market prices in ${ch}:  drinks are \0035,10\$2 a piece, cake is \0035,10$who.95 a piece, and pizza is \0035,10\$2.22 a slice.  Homemade lasagna is \0035,10\$2.50.  Tacos are \0035,10$.79 \0035,10/ person (all non-ops served), and sauce is \0035,10$.25 extra.  A Nachos Fun Pack costs \0035,10\$3.95.  A pony will cost you \0035,10\$1000 and a unicorn will cost you \0035,10\$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!\003"
     }
 
     proc hedges {{nick ""}} {
@@ -1421,7 +1421,7 @@ namespace eval timtom {
         set nick [whoami $nick]
         set_stat $nick blackjack 2
         del_stat $nick ttotal
-        return "\0031,8WELCOME TO \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 [string toupper $nick]!  I'm your dealer TIMTOM.  My goal is to give you an enjoyable \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 experience.  Drinks and tacos and everything else are right here - just ask, silly!  Now please place your bet and we'll get started.  The min bet is \0031,8$5000 and the max bet is \0031,8$20,000.  Please keep the bets in whole dollar amounts, no small change in this casino.  Good luck!\003"
+        return "\0031,8WELCOME TO \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 [string toupper $nick]!  I'm your dealer TIMTOM.  My goal is to give you an enjoyable \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 experience.  Drinks and tacos and everything else are right here - just ask, silly!  Now please place your bet and we'll get started.  The min bet is \0031,8\$5000 and the max bet is \0031,8\$20,000.  Please keep the bets in whole dollar amounts, no small change in this casino.  Good luck!\003"
     }
 
     proc _card_value {raw} {
@@ -1637,7 +1637,7 @@ namespace eval timtom {
     }
 
     # ========================================================================
-    # Shoutouts (each command produces a fixed canned message; "$1" is the
+    # Shoutouts (each command produces a fixed canned message; "\$1" is the
     # matched word from the trigger so we accept it as an explicit arg)
     # ========================================================================
 
@@ -1687,7 +1687,7 @@ namespace eval timtom {
     }
 
     proc shoutout {key {nick ""}} {
-        # The trigger word itself is the subject of the shoutout (mIRC $1).
+        # The trigger word itself is the subject of the shoutout (mIRC \$1).
         return [_shoutout_msg $key $key]
     }
 
