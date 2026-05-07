@@ -15,6 +15,15 @@ namespace eval timtom {
     # Helpers - identity, formatting, state access
     # ========================================================================
 
+    # IRC colour escape (mIRC palette). Both args are decimal in 0..15.
+    # Use one-arg form for foreground only.
+    # Implemented inline in messages as bare \003FG,BG sequences when there's
+    # only one colour in the line; this helper is for procedurally-built ones.
+    proc clr {fg {bg ""}} {
+        if {$bg eq ""} { return "\003$fg" }
+        return "\003$fg,$bg"
+    }
+
     proc whoami {nick} {
         # Resolve implicit nick to caller, falling back to $::nick when unset.
         if {$nick ne ""} { return $nick }
@@ -195,64 +204,80 @@ namespace eval timtom {
 
     proc greet {{nick ""}} {
         set nick [whoami $nick]
-        return "$nick, this is TIMTOM. How may I serve you?"
+        return "\0034,13${nick}, this is TIMTOM. How may I serve you?\003"
     }
 
     proc sex {{nick ""}} {
         set nick [whoami $nick]
         if {[random_int 1 68] == 41} {
-            return "ok, $nick, I will have sex with you now."
+            return "\0034,12ok, ${nick}, I will have sex with you now.\003"
         }
-        return "$nick, I cannot perform sex on you at this moment."
+        return "\0037,12${nick}, I cannot perform sex on you at this moment.\003"
     }
 
     proc horses {{nick ""}} {
         set nick [whoami $nick]
-        return "$nick, I like horses too."
+        return "\0033,8${nick}, I like horses too.\003"
     }
 
     proc jesus {{nick ""}} {
         set nick [whoami $nick]
         set ch [current_channel]
-        return "$nick, Jesus loves you more than $ch.  I'm sorry.  $ch just doesn't compare."
+        return "\0033,8${nick}, Jesus loves you more than ${ch}.  I'm sorry.  $ch just doesn't compare.\003"
     }
 
     proc wheel {{nick ""}} {
         set nick [whoami $nick]
         if {[stat_allows $nick spin]} {
-            return "I think it would be a good idea if $nick would spin the wheel."
+            return "\00311,1I think it would be a good idea if $nick would spin the wheel.\003"
         }
-        return "$nick, please let someone else spin."
+        return "\0034,11${nick}, please let someone else spin.\003"
     }
 
-    proc more_soup    {{nick ""}} { set n [whoami $nick]; return "Sorry, $n, here's some more soup." }
-    proc more_tea     {{nick ""}} { set n [whoami $nick]; return "Sorry, $n, here's some more tea." }
-    proc more_coffee  {{nick ""}} { set n [whoami $nick]; return "Sorry, $n, here's some more coffee." }
+    proc more_soup {{nick ""}} {
+        set n [whoami $nick]
+        return "\00310,4Sorry, ${nick}, here's some more soup.\003"
+    }
+    proc more_tea {{nick ""}} {
+        set n [whoami $nick]
+        return "\0031,12Sorry, ${nick}, here's some more tea.\003"
+    }
+    proc more_coffee {{nick ""}} {
+        set n [whoami $nick]
+        return "\00310,8Sorry, ${nick}, here's some more coffee.\003"
+    }
 
     proc admissions {} {
-        return "Download the Hertford College Admissions iPhone app here: http://itunes.apple.com/us/app/hertford-college-admissions/id382253306?mt=8"
+        return "\0031,8Download the Hertford College Admissions iPhone app here: \003\0034,11http://itunes.apple.com/us/app/hertford-college-admissions/id382253306?mt=8\003"
     }
 
     proc whats_new {} {
-        return "Hey all!  It's been a joy serving you these past few days.  Though we've lost a bit of ground in terms of new memberships, we've all become closer and better good friends and that's what counts here. The wheel is still #1 as it should be.\nSome of our newest features include: death!  life!  piegs!  and after a great deal of fighting, we've finally decided to allow our members to use the word \"buffelo\".  However, one must include the phrase \"msl strip_buf\" somewhere in his message in order for TIMTOM to agree.  Enjoy friends."
+        return "\0034,11Hey all!  It's been a joy serving you these past few days.  Though we've lost a bit of ground in terms of new memberships, we've all become closer and better good friends and that's what counts here. The wheel is still #1 as it should be.\003\n\0035,11Some of our newest features include: \003\0031,13death!\003\0035,11  \003\0030,3life!\003\0035,11  \003\0031,7piegs!\003\0035,11  and after a great deal of fighting, we've finally decided to allow our members to use the word \"buffelo\".  However, one must include the phrase \"msl strip_buf\" somewhere in his message in order for TIMTOM to agree.  Enjoy friends.\003"
     }
 
     proc help_cmd {} {
-        set ch [current_channel]
-        return "Hi, how are you doing?  My name is TIMTOM and you are in $ch.  I am a servant to the people, and like to fancy myself as quite the capable gentleman.  If there's anything you need don't hesitate to ask.  Everyone has a voice here and we treat everyone with love and kindness.\nSome of our popular features include hot soup and hot tea, horses, and NEVER FEAR: we offer the sacrament of marriage and also deal in divorces, and Wheel of Fortune is always on.  Kick off your shoes, relax, and don't worry about a thing.  The internet cannot hurt you now.  You are in $ch."
+        return "\0037,10Hi, how are you doing?  My name is TIMTOM and you are in ${ch}.  I am a servant to the people, and like to fancy myself as quite the capable gentleman.  If there's anything you need don't hesitate to ask.  Everyone has a voice here and we treat everyone with love and kindness.\003\n\0034,11Some of our popular features include hot soup and hot tea, horses, and NEVER FEAR: we offer the sacrament of marriage and also deal in divorces, and Wheel of Fortune is always on.  Kick off your shoes, relax, and don't worry about a thing.  The internet cannot hurt you now.  You are in ${ch}.\003"
     }
 
     # Broadcast servings: list nicks (or non-ops) and serve them.
     proc _serve_broadcast {item color_intro} {
         set ns [channel_nicks]
-        if {[llength $ns] == 0} { return "TIMTOM brings out the $item.  Enjoy friends." }
-        return "$color_intro [join $ns " "]  Enjoy friends."
+        if {[llength $ns] == 0} { return "${color_intro}.  Enjoy friends.\003" }
+        return "${color_intro} [join $ns " "]  Enjoy friends.\003"
     }
 
-    proc soup   {} { _serve_broadcast soup   "TIMTOM brings out the hot soup for" }
-    proc tea    {} { _serve_broadcast tea    "TIMTOM brings out the hot tea for" }
-    proc coffee {} { _serve_broadcast coffee "TIMTOM brings out the hot coffee for" }
-    proc rings  {} { _serve_broadcast rings  "TIMTOM brings out the rings for" }
+    proc soup {} {
+        _serve_broadcast soup "\0038,6TIMTOM brings out the hot soup for"
+    }
+    proc tea {} {
+        _serve_broadcast tea "\0034,12TIMTOM brings out the hot tea for"
+    }
+    proc coffee {} {
+        _serve_broadcast coffee "\0032,7TIMTOM brings out the hot coffee for"
+    }
+    proc rings {} {
+        _serve_broadcast rings "\0038,6TIMTOM brings out the rings for"
+    }
 
     # ========================================================================
     # State / country trivia (single fixed messages)
@@ -264,61 +289,61 @@ namespace eval timtom {
         set ch [current_channel]
         set t [string tolower $text]
         set states [dict create \
-            "alabama"        "Alabama eats my children." \
-            "alaska"         "Alaska is a cotton gin." \
-            "arizona"        "Arizona is the land of the forsaken bee hives." \
-            "arkansas"       "Arkansas is a potato rally." \
-            "california"     "The capital of California is Los Angeles." \
-            "colorado"       "Colorado was the missing egg in the blue carton." \
-            "connecticut"    "Connecticut is a wild stallion." \
-            "delaware"       "Delaware is a label-making compartment of beauty." \
-            "florida"        "The capital of Florida is Disney World." \
-            "georgia"        "Georgia plates early, makes space for Willy." \
-            "hawaii"         "The capital of Hawaii is dog." \
-            "idaho"          "Idaho is a flowing mountain." \
-            "illinois"       "The capital of Illinois is Deal Or No Deal." \
-            "indiana"        "Indiana rests softly in my left breast pocket sandwich player machine box heavy." \
-            "iowa"           "Friends make pottery in Iowa." \
-            "kansas"         "Kansas is a candy cane land in $ch." \
-            "kentucky"       "The capital of Kentucky is horse." \
-            "louisiana"      "Louisiana is a bubble paper pepper boy." \
-            "maine"          "Maine is the capital of France." \
-            "maryland"       "The capital of Maryland is inside the fried pickled answering machine tape." \
-            "massachusetts"  "Massachusettes is the capital of Happy time." \
-            "michigan"       "$nick I love you more than the sun and the sky.  I want you to be my forever." \
-            "minnesota"      "Minnesota, will you be my road puppy?" \
-            "mississippi"    "Glad tidings to you, $nick, wherever you are." \
-            "missouri"       "The fly sunk to the bottom of the jar of oil.  The fly's name was Montel." \
-            "montana"        "You didn't press enter hard enough." \
-            "nebraska"       "Spinning sunflower wreath, you come in the morning and leave by nightfall." \
-            "nevada"         "Nevada is first in my peeegy back machine-eeeeeeeeeeee-ooooooooooo." \
-            "new hampshire"  "I hear shovels.  Lock the doors. NOW NOOOOWWWW NOOOOOOOOOWWWWWWWWWWWWWWWWWWWWWWWW!!!!!!!!" \
-            "new jersey"     "We all eat pots and pans." \
-            "new mexico"     "Thunder, ice, and twins joined at the hip, make my day a solid whip?  Whippie!" \
-            "new york"       "The capital of New York is New York City." \
-            "north carolina" "North Carolina makes $ch a happy land for you." \
-            "north dakota"   "I am the willing partner in your N. Dakota movement." \
-            "ohio"           "Ohio is diabetes." \
-            "oklahoma"       "Oklahoma is my tea set." \
-            "oregon"         "There's plenty of lightbulbs in the furnace." \
-            "pennsylvania"   "The capital of Pennsylvania is cheddar." \
-            "rhode island"   "How could I forget you, Rhode Island?  You are a gentle beauty." \
-            "south carolina" "South Carolina is poppy." \
-            "south dakota"   "Do you really think you own me, $nick?" \
-            "tennessee"      "Tennessee is a puppy cage." \
-            "texas"          "Feast on these berries.  They were created through honor, diligence, and musk." \
-            "utah"           "The little pieces of paper need to be evaluated." \
-            "vermont"        "Vermont is a picnic tree." \
-            "virginia"       "Virginia is a glue cow." \
-            "washington"     "Let's roll up another traffic ordinance and place it beneath the Bubber Tree." \
-            "west virginia"  "Them tree trunks look like legs." \
-            "wisconsin"      "If we connect the brown pipe to the gray pipe we make famous grandwich butter spread." \
-            "wyoming"        "Claw me to death with pear skins." \
-            "africa"         "Africa is a lollipop for you." \
-            "canada"         "Canada is made of copper and sand." \
-            "china"          "Thank you for relaxing in $ch.  China." \
-            "france"         "France is a boat." \
-            "sweden"         "The capital of Sweden is pah-pah." \
+            "alabama" "3,8Alabama eats my children." \
+            "alaska" "3,8Alaska is a cotton gin." \
+            "arizona" "3,8Arizona is the land of the forsaken bee hives." \
+            "arkansas" "3,8Arkansas is a potato rally." \
+            "california" "3,8The capital of California is Los Angeles." \
+            "colorado" "3,8Colorado was the missing egg in the blue carton." \
+            "connecticut" "3,8Connecticut is a wild stallion." \
+            "delaware" "3,8Delaware is a label-making compartment of beauty." \
+            "florida" "3,8The capital of Florida is Disney World." \
+            "georgia" "3,8Georgia plates early, makes space for Willy." \
+            "hawaii" "3,8The capital of Hawaii is dog." \
+            "idaho" "3,8Idaho is a flowing mountain." \
+            "illinois" "3,8The capital of Illinois is Deal Or No Deal." \
+            "indiana" "3,8Indiana rests softly in my left breast pocket sandwich player machine box heavy." \
+            "iowa" "3,8Friends make pottery in Iowa." \
+            "kansas" "3,8Kansas is a candy cane land in ${ch}." \
+            "kentucky" "3,8The capital of Kentucky is horse." \
+            "louisiana" "3,8Louisiana is a bubble paper pepper boy." \
+            "maine" "3,8Maine is the capital of France." \
+            "maryland" "3,8The capital of Maryland is inside the fried pickled answering machine tape." \
+            "massachusetts" "3,8Massachusettes is the capital of Happy time." \
+            "michigan" "3,8$nick I love you more than the sun and the sky.  I want you to be my forever." \
+            "minnesota" "3,8Minnesota, will you be my road puppy?" \
+            "mississippi" "3,8Glad tidings to you, ${nick}, wherever you are." \
+            "missouri" "3,8The fly sunk to the bottom of the jar of oil.  The fly's name was Montel." \
+            "montana" "7,10You didn't press enter hard enough." \
+            "nebraska" "3,8Spinning sunflower wreath, you come in the morning and leave by nightfall." \
+            "nevada" "3,8Nevada is first in my peeegy back machine-eeeeeeeeeeee-ooooooooooo." \
+            "new hampshire" "3,8I hear shovels.  Lock the doors. NOW NOOOOWWWW 1,4NOOOOOOOOOWWWWWWWWWWWWWWWWWWWWWWWW!!!!!!!!" \
+            "new jersey" "3,8We all eat pots and pans." \
+            "new mexico" "3,8Thunder, ice, and twins joined at the hip, make my day a solid whip?  Whippie!" \
+            "new york" "3,8The capital of New York is New York City." \
+            "north carolina" "3,8North Carolina makes $ch a happy land for you." \
+            "north dakota" "3,8I am the willing partner in your N. Dakota movement." \
+            "ohio" "3,8Ohio is diabetes." \
+            "oklahoma" "3,8Oklahoma is my tea set." \
+            "oregon" "3,8There's plenty of lightbulbs in the furnace." \
+            "pennsylvania" "3,8The capital of Pennsylvania is cheddar." \
+            "rhode island" "3,8How could I forget you, Rhode Island?  You are a gentle beauty." \
+            "south carolina" "3,8South Carolina is poppy." \
+            "south dakota" "3,11Do you really think you own me, ${nick}?" \
+            "tennessee" "3,8Tennessee is a puppy cage." \
+            "texas" "3,8Feast on these berries.  They were created through honor, diligence, and musk." \
+            "utah" "3,8The little pieces of paper need to be evaluated." \
+            "vermont" "3,8Vermont is a picnic tree." \
+            "virginia" "3,8Virginia is a glue cow." \
+            "washington" "3,8Let's roll up another traffic ordinance and place it beneath the Bubber Tree." \
+            "west virginia" "3,8Them tree trunks look like legs." \
+            "wisconsin" "3,8If we connect the brown pipe to the gray pipe we make famous grandwich butter spread." \
+            "wyoming" "3,8Claw me to death with pear skins." \
+            "africa" "3,8Africa is a lollipop for you." \
+            "canada" "3,8Canada is made of copper and sand." \
+            "china" "3,8Thank you for relaxing in ${ch}.  China." \
+            "france" "3,8France is a boat." \
+            "sweden" "3,8The capital of Sweden is pah-pah."
         ]
 
         if {[dict exists $states $t]} {
@@ -344,33 +369,31 @@ namespace eval timtom {
         set formatted [format_money $amount]
         set r [random_int 1 10]
         set upper [string toupper $nick]
-
-        # Random message templates (use $X placeholder for $formatted).
         if {$amount == 0} {
             switch -- $r {
-                1  { return "Hey, how are you doing, $nick?  It's TIMTOM.  You currently have \$0.  Sorry about that." }
-                2  { return "TIMTOM here!  Are you having fun yet, $nick?  I sure hope you are.  You currently have \$0.  :(" }
-                3  { return "What's the good word, there, $nick?  It's TIMTOM.  You currently have \$0.  I'm so sorry." }
-                4  { return "Howdy Doodie $nick!  You currently have \$0.  That's too bad." }
-                5  { return "TIMTOM here!  Responding to the one and only $nick.  You currently have \$0.  Ah well." }
-                6  { return "IT'S SO NICE TO HEAR FROM YOU, $upper!  You want to know about your money, eh, $nick?  Well, you've got \$0.  Let's hope you do better." }
-                7  { return "TIMTOM here!  Reporting for duty.  $nick, you currently have \$0.  Uh oh!" }
-                8  { return "Hello! Hello!  You've got \$0, $nick.  You can do better than that!" }
-                9  { return "Hey, how are you doing, $nick?  It's TIMTOM.  You currently have \$0.  Sorry.  :(" }
-                10 { return "TIMTOM here with your bank statement.  You currently have \$0.  :(  Good day, $nick." }
+                1  { return "\0031,7Hey, how are you doing, ${nick}?  It's TIMTOM.  You currently have \0031,7\$0.  Sorry about that.\003" }
+                2  { return "\0033,8TIMTOM here!  Are you having fun yet, ${nick}?  I sure hope you are.  You currently have \0033,8\$0.  :(\003" }
+                3  { return "\0032,10What's the good word, there, ${nick}?  It's TIMTOM.  You currently have \0032,10\$0.  I'm so sorry.\003" }
+                4  { return "\0036,9Howdy Doodie ${nick}!  You currently have \0036,9\$0.  That's too bad.\003" }
+                5  { return "\00311,7TIMTOM here!  Responding to the one and only ${nick}.  You currently have \00311,7\$0.  Ah well.\003" }
+                6  { return "\0033,5IT'S SO NICE TO HEAR FROM YOU, ${upper}!  You want to know about your money, eh, ${nick}?  Well, you've got \0033,5\$0.  Let's hope you do better.\003" }
+                7  { return "\0038,12TIMTOM here!  Reporting for duty.  ${nick}, you currently have \0038,12\$0.  Uh oh!\003" }
+                8  { return "\0031,4Hello! Hello!  You've got \0031,4\$0, ${nick}.  You can do better than that!\003" }
+                9  { return "\0031,7Hey, how are you doing, ${nick}?  It's TIMTOM.  You currently have \0031,7\$0.  Sorry.  :(\003" }
+                10 { return "\00310,5TIMTOM here with your bank statement.  You currently have \00310,5\$0.  :(  Good day, ${nick}.\003" }
             }
         } else {
             switch -- $r {
-                1  { return "Hey, how are you doing, $nick?  It's TIMTOM.  You currently have $formatted.  Good luck!" }
-                2  { return "TIMTOM here!  Are you having fun yet, $nick?  I sure hope you are.  You currently have $formatted." }
-                3  { return "What's the good word, there, $nick?  It's TIMTOM.  You currently have $formatted.  Use it wisely." }
-                4  { return "Howdy Doodie $nick!  You currently have $formatted." }
-                5  { return "TIMTOM here!  Responding to the one and only $nick.  You currently have $formatted." }
-                6  { return "IT'S SO NICE TO HEAR FROM YOU, $upper!  You want to know about your money, eh, $nick?  Well, you've got $formatted." }
-                7  { return "TIMTOM here!  Reporting for duty.  $nick, you currently have $formatted.  Be good." }
-                8  { return "Hello! Hello!  You've got $formatted, $nick.  Very well then!" }
-                9  { return "Hey, how are you doing, $nick?  It's TIMTOM.  You currently have $formatted.  Have a good day." }
-                10 { return "TIMTOM here with your bank statement.  You currently have $formatted.  Good day, $nick." }
+                1  { return "\0031,7Hey, how are you doing, ${nick}?  It's TIMTOM.  You currently have \0031,7${formatted}.  Good luck!\003" }
+                2  { return "\0033,8TIMTOM here!  Are you having fun yet, ${nick}?  I sure hope you are.  You currently have \0033,8${formatted}.\003" }
+                3  { return "\0032,10What's the good word, there, ${nick}?  It's TIMTOM.  You currently have \0032,10${formatted}.  Use it wisely.\003" }
+                4  { return "\0036,9Howdy Doodie ${nick}!  You currently have \0036,9${formatted}.\003" }
+                5  { return "\00311,7TIMTOM here!  Responding to the one and only ${nick}.  You currently have \00311,7${formatted}.\003" }
+                6  { return "\0033,5IT'S SO NICE TO HEAR FROM YOU, ${upper}!  You want to know about your money, eh, ${nick}?  Well, you've got \0033,5${formatted}.\003" }
+                7  { return "\0038,12TIMTOM here!  Reporting for duty.  ${nick}, you currently have \0038,12${formatted}.  Be good.\003" }
+                8  { return "\0031,4Hello! Hello!  You've got \0031,4${formatted}, ${nick}.  Very well then!\003" }
+                9  { return "\0031,7Hey, how are you doing, ${nick}?  It's TIMTOM.  You currently have \0031,7${formatted}.  Have a good day.\003" }
+                10 { return "\00310,5TIMTOM here with your bank statement.  You currently have \00310,5${formatted}.  Good day, ${nick}.\003" }
             }
         }
         return ""
@@ -404,58 +427,58 @@ namespace eval timtom {
     proc spin {{nick ""}} {
         set nick [whoami $nick]
         if {![stat_allows $nick spin]} {
-            return "$nick, please let someone else spin."
+            return "\0034,11${nick}, please let someone else spin.\003"
         }
         set r [random_int 1 40]
         set msg ""
-        # Many outcomes: clear all spin perms then maybe set this nick=0.
         switch -- $r {
             1 - 10 - 20 - 30 - 40 {
                 set_money $nick 0
                 clear_glob "spin_*"
                 set_stat $nick spin 0
-                set msg "$nick, you get a BANKRUPT!!!"
+                set msg "\0034,11${nick}, you get a BANKRUPT!!!\003"
             }
-            2  { add_money $nick 500;     clear_glob "spin_*"; set msg "$nick, you get \$500" }
-            3  { add_money $nick 400;     clear_glob "spin_*"; set msg "$nick, you get \$400" }
-            4  { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Sorry about that." }
-            5  { add_money $nick 5000;    clear_glob "spin_*"; set msg "$nick, you get \$5000!!!  WOW!!!" }
-            6  { add_money $nick 250;     clear_glob "spin_*"; set msg "$nick, you get \$250" }
-            7  { add_money $nick 800;     clear_glob "spin_*"; set msg "$nick, you get \$800" }
-            8  { add_money $nick 666;     clear_glob "spin_*"; set msg "$nick, you get \$666.  That's scary business." }
-            9  { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Sorry about that." }
-            11 { add_money $nick 47;      clear_glob "spin_*"; set msg "$nick, you get \$47.  That's ok, it's better than nothing." }
-            12 - 32 { add_money $nick 900; clear_glob "spin_*"; set msg "$nick, you get \$900" }
+            2 { add_money $nick 500; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12$500\003" }
+            3 { add_money $nick 400; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$400\003" }
+            5 { add_money $nick 5000; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4$5000!!!\00311,6 WOW!!!\003" }
+            6 { add_money $nick 250; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$250\003" }
+            7 { add_money $nick 800; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$800\003" }
+            8 { add_money $nick 666; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$666.  That's scary business.\003" }
+            11 { add_money $nick 47; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4$47.  That's ok, it's better than nothing.\003" }
+            12 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9$900\003" }
+            15 { add_money $nick 251; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10$251\003" }
+            16 { add_money $nick 300; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$300\003" }
+            17 { add_money $nick 450; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$450\003" }
+            18 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14$9000.  That's a nice hefty amount.\003" }
+            21 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0034,11${nick}, you win a trip to Detroit, Michigan!  Good for you!\003" }
+            22 { add_money $nick 11000; clear_glob "spin_*"; set msg "\0035,12${nick}, you get \0035,12$11,000\003" }
+            23 { add_money $nick 50; clear_glob "spin_*"; set msg "\0031,7${nick}, you get fifty dollars.\003" }
+            25 { add_money $nick 999.99; clear_glob "spin_*"; set msg "\00311,6${nick}, you get \0038,4$999.99!!!\00311,6 WOW!!!\003" }
+            26 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0033,7${nick}, you win a trip to Kenya, Africa.\003" }
+            27 { add_money $nick 700; clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$700\003" }
+            28 { add_money $nick 100; clear_glob "spin_*"; set msg "\0031,7${nick}, you get \0031,7$100.  Maybe you can buy us all tacos later.\003" }
+            31 { add_money $nick 680; clear_glob "spin_*"; set msg "\00314,4${nick}, you get \00314,4$680.  Do you remember the time you got a million?  That was crazy.  Not this time though.\003" }
+            32 { add_money $nick 900; clear_glob "spin_*"; set msg "\0038,9${nick}, you get \0038,9$900\003" }
+            33 { add_money $nick 5000; clear_glob "spin_*"; set msg "\0035,7${nick}, you win a trip to Hawaii!!!!\003" }
+            35 { add_money $nick 255; clear_glob "spin_*"; set msg "\00311,10${nick}, you get \00311,10$255\003" }
+            36 { add_money $nick 390; clear_glob "spin_*"; set msg "\0033,7${nick}, you get \0033,7$390\003" }
+            38 { add_money $nick 9000; clear_glob "spin_*"; set msg "\0034,14${nick}, you get \0034,14$9000.  That's a nice HEEEEFTY amount.\003" }
+            4 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Sorry about that.\003" }
+            9 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Sorry about that.\003" }
+            14 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Still better than bankrupt.\003" }
+            19 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\00311,6${nick}, you get LOSE A TURN!!  Whoops, I guess the wheel is rigged.\003" }
+            24 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Let your secret crush spin next.\003" }
+            29 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  I'm \00311,6 NOT \003\0038,4sorry about that.\003" }
+            34 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\0038,4${nick}, you get LOSE A TURN!!  Sorry.\003" }
+            39 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "\00311,6${nick}, you get LOSE A TURN!!  Whoops, I guess the wheel is rigged.\003" }
             13 {
                 add_money $nick 1000000
                 clear_glob "spin_*"
                 set_state ok 1
-                set msg "$nick, you get \$1,000,000!!! THAT'S AMAZING!!!"
+                set msg "\0035,7${nick}, you get \0035,7$who,000,000!!! THAT'S AMAZING!!!\003"
             }
-            14 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Still better than bankrupt." }
-            15 { add_money $nick 251;     clear_glob "spin_*"; set msg "$nick, you get \$251" }
-            16 { add_money $nick 300;     clear_glob "spin_*"; set msg "$nick, you get \$300" }
-            17 { add_money $nick 450;     clear_glob "spin_*"; set msg "$nick, you get \$450" }
-            18 { add_money $nick 9000;    clear_glob "spin_*"; set msg "$nick, you get \$9000.  That's a nice hefty amount." }
-            19 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Whoops, I guess the wheel is rigged." }
-            21 { add_money $nick 5000;    clear_glob "spin_*"; set msg "$nick, you win a trip to Detroit, Michigan!  Good for you!" }
-            22 { add_money $nick 11000;   clear_glob "spin_*"; set msg "$nick, you get \$11,000" }
-            23 { add_money $nick 50;      clear_glob "spin_*"; set msg "$nick, you get fifty dollars." }
-            24 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Let your secret crush spin next." }
-            25 { add_money $nick 999.99;  clear_glob "spin_*"; set msg "$nick, you get \$999.99!!!  WOW!!!" }
-            26 { add_money $nick 5000;    clear_glob "spin_*"; set msg "$nick, you win a trip to Kenya, Africa." }
-            27 { add_money $nick 700;     clear_glob "spin_*"; set msg "$nick, you get \$700" }
-            28 { add_money $nick 100;     clear_glob "spin_*"; set msg "$nick, you get \$100.  Maybe you can buy us all tacos later." }
-            29 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  I'm NOT sorry about that." }
-            31 { add_money $nick 680;     clear_glob "spin_*"; set msg "$nick, you get \$680.  Do you remember the time you got a million?  That was crazy.  Not this time though." }
-            33 { add_money $nick 5000;    clear_glob "spin_*"; set msg "$nick, you win a trip to Hawaii!!!!" }
-            34 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Sorry." }
-            35 { add_money $nick 255;     clear_glob "spin_*"; set msg "$nick, you get \$255" }
-            36 { add_money $nick 390;     clear_glob "spin_*"; set msg "$nick, you get \$390" }
-            37 { clear_glob "spin_*"; set msg "$nick, you get \$000. LOL." }
-            38 { add_money $nick 9000;    clear_glob "spin_*"; set msg "$nick, you get \$9000.  That's a nice HEEEEFTY amount." }
-            39 { clear_glob "spin_*"; set_stat $nick spin 0; set msg "$nick, you get LOSE A TURN!!  Whoops, I guess the wheel is rigged." }
-            default { set msg "$nick, you get \$0. The wheel jammed." }
+            37 { clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1$000. LOL.\003" }
+            default { set msg "" }
         }
         return $msg
     }
@@ -506,7 +529,7 @@ namespace eval timtom {
         if {[get_state ok] eq "1"} {
             add_money $nick 5000
             set_state ok 0
-            return "OK [string toupper $nick], HERE'S \$5000"
+            return "\0030,13OK [string toupper $nick], HERE'S \0030,13$5000\003"
         }
         return ""
     }
@@ -517,72 +540,71 @@ namespace eval timtom {
 
     proc keek {{nick ""}} {
         set nick [whoami $nick]
-        set ketchup_line "Your name is $nick, KETCHUP AND MUSTARD ::::: MUSTARD AND MAYONAISE"
         set msgs [list \
-            "Your name is $nick.  My life is a life of horse castles." \
-            "Your name is $nick.  Party favorites go well with wiggly fins." \
-            "Your name is $nick.  We force scarecrows into the space behind cotton pilgrims." \
-            "Your name is $nick.  Do your feet make flat Rothchilds?" \
-            "Your name is $nick.  Skeleton handlebars are fastly becoming bacon tin cup freedom tunics." \
-            "timtom eats a pine tree." \
-            "timtom likes working in his railroad pants." \
-            "timtom gives a toy truck to his neighbor Santa." \
-            "All the fat young giraffes are gathered for a bag-off." \
-            "Your name is $nick and my name is Geoffrey Giraffee." \
-            "Your name is $nick.  All the piglets are crying over their nose bleeds." \
-            "Your name is $nick.  Cold bowls of rice are waiting just above the paint can rim." \
-            "timtom made a cloth figurine symbolizing the process of mitosis." \
-            "timtom spends his Saturdays reading hot sauce packets." \
-            "TIMTOM HERE!  We make Ronald McDonald bibs for sailors." \
-            "Will you place your gentle fingers on my spikey larva?" \
-            "Your name is $nick and I just made frosted egg whites." \
-            "TIMTOM HERE!  The chocolate monsignor is signing autographs in the vestibule." \
-            "TIMTOM HERE!  The current weather in Austria-Hungary is 11." \
-            "TIMTOM HERE!  When the toilet paper rolls first came out I was skeptical too." \
-            "TIMTOM HERE!  GARBAGE! GARBAGE! GARBAGE! JASJAJFADSJFSDFDSBFSDHFSDHFSDHFSHJSFDHJDFSJHFSDHJSDHJSDHJFSDHFSNVNVDSNSUFEYFENDSNJVVllllllllllllllllllllllllllllllll" \
-            "TIMTOM HERE!  These are the days when wine smells like sweet roses." \
-            "TIMTOM HERE!  The horrible elevator is next to the unhorrible escalator (in happy candy)." \
-            "TIMTOM HERE!  Elton is a pride." \
-            "TIMTOM HERE!  Cheese can be white, yellow, or orange and your fingers eat themselves dry as a bone my flakiest one." \
-            "TIMTOM HERE!  O the bells go snap with a white lion cap and the chins of the thrills of kooray.  Take your belt on feet let it pick up the meat and spatula stands for a maid.  O the bells go snap with a white lion cap!" \
-            "TIMTOM HERE!  We make honky horns." \
-            "Your name is $nick.  We all grew up over the icing truck." \
-            "Your name is $nick.  Forget what the sunbirds told you during spanking weather." \
-            "Your name is $nick.  Flowing monster eat my daddy, pull my ribbons over my webbing.  Polar monster they call Vaxmonsky, tear me down from this wall of rabbit bark." \
-            "timtom discovered that jeans can be used to make paper." \
-            "timtom spends his Saturdays reading fiction." \
-            "TIMTOM HERE!  The glass is always perched on a ledge near Franklin's Gower." \
-            "Ah, the salty bells are ringing again.  Time to waste another helium balloon." \
-            "Your name is $nick and everyone wants to climb on you." \
-            "TIMTOM HERE!  LET'S PUT SOME TABLECLOTH ON TOP OF THE PIANO!" \
-            "TIMTOM HERE!  FROZEN HOTDOGS MAKE THE FUNNEST FUNNEL CAKES SINCE I DON'T KNOW NEXT TUESDAY!" \
-            "TIMTOM HERE!  HOSE DOWN THE GARBAGE CAN LID BEFORE WE GET ICY." \
-            "TIMTOM HERE!  THESE SMALL PARASITES ARE NAMED AFTER ZONING BOARD NOBLEMEN." \
-            "TIMTOM HERE!  WITHOUT YELLOW LEGS THE SUN WOULD ONLY PROTECT THE 8 PERCENT OF THE POPULATION THAT ACTUALLY TAKES THE TIME TO BREATHE IN THE CHICKEN POX VACCINE THAT WAS STUMBLING EYESHADOW." \
-            "TIMTOM HERE!  IT'S HARD FOR HITCHHIKERS TO GET PICKED UP ANYMORE." \
-            "Every hooved animal with pink flesh has a soda function." \
-            "Your name is $nick, and it's no wonder that the wooden play pieces are so smooth." \
-            "Your name is $nick, do you know where the wires to the cabinet are?" \
-            $ketchup_line \
-            "TIMTOM HERE!  I THINK WE ALL LOOK GOOD IN OUR TREEHOUSES." \
-            "TIMTOM HERE!  QUESTIONS OF SKY AND SEA ARE NOT TO BE ADDRESSED BEFORE MORNING TEA." \
-            "TIMTON HERE!  EGG YOLKS AND EGG WHITES, JUST SNIFFIN'." \
-            "Your name is $nick, and I do believe you've perfected the leap year." \
-            "timtom wants a cleaner bathtub for Halloween this year." \
-            "timtom holds a piglet zygote in the palm of his aqua marine green handshire." \
-            "timtom rides the lightning bolt upwards." \
-            "timtom likes when palm readers dictate." \
-            "TIMTOM HERE!  HOW'S THE CONCRETE STATUE COMING?" \
-            "Your name is $nick, and every tungsten tooth will be grinded accordingly." \
-            "timtom needs a fireproof tee shirt." \
-            "Your name is $nick, $nick the quick.  Welcome to Quackers." \
-            "timtom eats a bell." \
-            "timtom eats a bulb." \
-            "timtom eats a bolt." \
-            "timtom eats a beet." \
-            $ketchup_line \
-            $ketchup_line \
-            $ketchup_line \
+            "\0034,11Your name is ${nick}.  My life is a life of horse castles.\003" \
+            "\0038,2Your name is ${nick}.  Party favorites go well with wiggly fins.\003" \
+            "\0038,1Your name is ${nick}.  We force scarecrows into the space behind cotton pilgrims.\003" \
+            "\0037,5Your name is ${nick}.  Do your feet make flat Rothchilds?\003" \
+            "\0033,8Your name is ${nick}.  Skeleton handlebars are fastly becoming bacon tin cup freedom tunics.\003" \
+            "\0038,2timtom eats a pine tree.\003" \
+            "\0036,11timtom likes working in his railroad pants.\003" \
+            "\0032,10timtom gives a toy truck to his neighbor Santa.\003" \
+            "\0034,11All the fat young giraffes are gathered for a bag-off.\003" \
+            "\0031,12Your name is $nick and my name is Geoffrey Giraffee.\003" \
+            "\0037,5Your name is ${nick}.  All the piglets are crying over their nose bleeds.\003" \
+            "\0033,8Your name is ${nick}.  Cold bowls of rice are waiting just above the paint can rim.\003" \
+            "\0038,2timtom made a cloth figurine symbolizing the process of mitosis.\003" \
+            "\0036,11timtom spends his Saturdays reading hot sauce packets.\003" \
+            "\0032,10TIMTOM HERE!  We make Ronald McDonald bibs for sailors.\003" \
+            "\0034,11Will you place your gentle fingers on my spikey larva?\003" \
+            "\0031,12Your name is $nick and I just made frosted egg whites.\003" \
+            "\0032,10TIMTOM HERE!  The chocolate monsignor is signing autographs in the vestibule.\003" \
+            "\0032,10TIMTOM HERE!  The current weather in Austria-Hungary is 11.\003" \
+            "\0032,10TIMTOM HERE!  When the toilet paper rolls first came out I was skeptical too.\003" \
+            "\0032,10TIMTOM HERE!  GARBAGE! GARBAGE! GARBAGE! JASJAJFADSJFSDFDSBFSDHFSDHFSDHFSHJSFDHJDFSJHFSDHJSDHJSDHJFSDHFSNVNVDSNSUFEYFENDSNJVVllllllllllllllllllllllllllllllll\003" \
+            "\0032,10TIMTOM HERE!  These are the days when wine smells like sweet roses.\003" \
+            "\0032,10TIMTOM HERE!  The horrible elevator is next to the unhorrible escalator (in happy candy).\003" \
+            "\0032,10TIMTOM HERE!  Elton is a pride.\003" \
+            "\0032,10TIMTOM HERE!  Cheese can be white, yellow, or orange and your fingers eat themselves dry as a bone my flakiest one.\003" \
+            "\0032,10TIMTOM HERE!  O the bells go snap with a white lion cap and the chins of the thrills of kooray.  Take your belt on feet let it pick up the meat and spatula stands for a maid.  O the bells go snap with a white lion cap!\003" \
+            "\0032,10TIMTOM HERE!  We make honky horns.\003" \
+            "\0031,12Your name is ${nick}.  We all grew up over the icing truck.\003" \
+            "\0037,5Your name is ${nick}.  Forget what the sunbirds told you during spanking weather.\003" \
+            "\0033,8Your name is ${nick}.  Flowing monster eat my daddy, pull my ribbons over my webbing.  Polar monster they call Vaxmonsky, tear me down from this wall of rabbit bark.\003" \
+            "\0038,2timtom discovered that jeans can be used to make paper.\003" \
+            "\0036,11timtom spends his Saturdays reading fiction.\003" \
+            "\0032,10TIMTOM HERE!  The glass is always perched on a ledge near Franklin's Gower.\003" \
+            "\0034,11Ah, the salty bells are ringing again.  Time to waste another helium balloon.\003" \
+            "\0031,12Your name is $nick and everyone wants to climb on you.\003" \
+            "\0032,10TIMTOM HERE!  LET'S PUT SOME TABLECLOTH ON TOP OF THE PIANO!\003" \
+            "\0032,10TIMTOM HERE!  FROZEN HOTDOGS MAKE THE FUNNEST FUNNEL CAKES SINCE I DON'T KNOW NEXT TUESDAY!\003" \
+            "\0032,10TIMTOM HERE!  HOSE DOWN THE GARBAGE CAN LID BEFORE WE GET ICY.\003" \
+            "\0032,10TIMTOM HERE!  THESE SMALL PARASITES ARE NAMED AFTER ZONING BOARD NOBLEMEN.\003" \
+            "\0032,10TIMTOM HERE!  WITHOUT YELLOW LEGS THE SUN WOULD ONLY PROTECT THE 8 PERCENT OF THE POPULATION THAT ACTUALLY TAKES THE TIME TO BREATHE IN THE CHICKEN POX VACCINE THAT WAS STUMBLING EYESHADOW.\003" \
+            "\0032,10TIMTOM HERE!  IT'S HARD FOR HITCHHIKERS TO GET PICKED UP ANYMORE.\003" \
+            "\0037,2Every hooved animal with pink flesh has a soda function.\003" \
+            "\0036,11Your name is ${nick}, and it's no wonder that the wooden play pieces are so smooth.\003" \
+            "\0032,4Your name is ${nick}, do you know where the wires to the cabinet are?\003" \
+            "\0034,11Your name is ${nick}, \003\0034,1KETCHUP\003\0034,11 AND \003\0038,1MUSTARD\003\0034,11 ::::: \003\0038,1MUSTARD\003\0034,11 AND \003\0037,1MAYONAISE\003" \
+            "\0032,10TIMTOM HERE!  I THINK WE ALL LOOK GOOD IN OUR TREEHOUSES.\003" \
+            "\0032,10TIMTOM HERE!  QUESTIONS OF SKY AND SEA ARE NOT TO BE ADDRESSED BEFORE MORNING TEA.\003" \
+            "\0032,10TIMTON HERE!  EGG YOLKS AND EGG WHITES, JUST SNIFFIN'.\003" \
+            "\0033,8Your name is ${nick}, and I do believe you've perfected the leap year.\003" \
+            "\0034,2timtom wants a cleaner bathtub for Halloween this year.\003" \
+            "\0032,4timtom holds a piglet zygote in the palm of his aqua marine green handshire.\003" \
+            "\0034,2timtom rides the lightning bolt upwards.\003" \
+            "\0038,2timtom likes when palm readers dictate.\003" \
+            "\0032,6TIMTOM HERE!  HOW'S THE CONCRETE STATUE COMING?\003" \
+            "\00311,1Your name is ${nick}, and every tungsten tooth will be grinded accordingly.\003" \
+            "\0034,11timtom needs a fireproof tee shirt.\003" \
+            "\0035,9Your name is ${nick}, $nick the quick.  Welcome to Quackers.\003" \
+            "\0038,2timtom eats a bell.\003" \
+            "\0038,2timtom eats a bulb.\003" \
+            "\0038,2timtom eats a bolt.\003" \
+            "\0038,2timtom eats a beet.\003" \
+            "\0034,11Your name is ${nick}, \003\0031,4KETCHUP\003\0034,11 AND \003\0031,8MUSTARD\003\0034,11 ::::: \003\0038,1MUSTARD\003\0034,11 AND \003\0037,1MAYONAISE\003" \
+            "\0034,11Your name is ${nick}, \003\0034,1KETCHUP\003\0034,11 AND \003\0031,8MUSTARD\003\0034,11 ::::: \003\0031,8MUSTARD\003\0034,11 AND \003\0037,1MAYONAISE\003" \
+            "\0034,11Your name is ${nick}, \003\0031,4KETCHUP\003\0034,11 AND \003\0038,1MUSTARD\003\0034,11 ::::: \003\0031,8MUSTARD\003\0034,11 AND \003\0031,7MAYONAISE\003"
         ]
         # 64 entries: index 0..63
         return [lindex $msgs [random_int 0 63]]
@@ -594,34 +616,34 @@ namespace eval timtom {
 
     proc _drink_msg {nick r} {
         switch -- $r {
-            1  { return "timtom brings an ice cold beer for $nick" }
-            2  { return "timtom pours $nick a shot of whiskey" }
-            3  { return "timtom pours $nick a shot of bourbon" }
-            4  { return "timtom pours $nick a glass of lemonade" }
-            5  { return "timtom brings a bloody mary out for $nick" }
-            6  { return "timtom pours $nick a glass of milk" }
-            7  { return "timtom pours $nick a shot of vodka" }
-            8  { return "timtom gives $nick a sip from his beer" }
-            9  { return "timtom pours $nick a shot of Robitussin" }
-            10 { return "timtom brings $nick a tall glass of water" }
-            11 { return "timtom administers a few droplets of GHB to $nick" }
+            1  { return "4,11timtom brings an ice cold beer for ${nick}" }
+            2  { return "8,2timtom pours $nick a shot of whiskey" }
+            3  { return "8,1timtom pours $nick a shot of bourbon" }
+            4  { return "7,5timtom pours $nick a glass of lemonade" }
+            5  { return "3,8timtom brings a bloody mary out for ${nick}" }
+            6  { return "8,2timtom pours $nick a glass of milk" }
+            7  { return "6,11timtom pours $nick a shot of vodka" }
+            8  { return "2,10timtom gives $nick a sip from his beer" }
+            9  { return "4,11timtom pours $nick a shot of Robitussin" }
+            10 { return "1,12timtom brings $nick a tall glass of water" }
+            11 { return "2,7timtom administers a few droplets of GHB to ${target}" }
         }
         return ""
     }
 
     proc _drink_for_msg {nick target r} {
         switch -- $r {
-            1  { return "timtom brings an ice cold beer for $target.  You can thank $nick down there." }
-            2  { return "timtom pours $target a shot of whiskey.  It's on $nick." }
-            3  { return "timtom pours $target a shot of bourbon.  This one's on $nick." }
-            4  { return "timtom pours $target a glass of lemonade" }
-            5  { return "timtom brings a bloody mary out for $target" }
-            6  { return "timtom pours $target a glass of milk" }
-            7  { return "timtom pours $target a shot of vodka.  $nick sent it over, by the way." }
-            8  { return "timtom gives $target a sip from his beer" }
-            9  { return "timtom pours $target a shot of Robitussin" }
-            10 { return "timtom brings $target a tall glass of water" }
-            11 { return "timtom administers a few droplets of GHB to $target." }
+            1  { return "4,11timtom brings an ice cold beer for ${target}.  You can thank $nick down there." }
+            2  { return "8,2timtom pours $target a shot of whiskey.  It's on ${nick}." }
+            3  { return "8,1timtom pours $target a shot of bourbon.  This one's on ${nick}." }
+            4  { return "7,5timtom pours $target a glass of lemonade" }
+            5  { return "3,8timtom brings a bloody mary out for ${target}" }
+            6  { return "8,2timtom pours $target a glass of milk" }
+            7  { return "6,11timtom pours $target a shot of vodka.  $nick sent it over, by the way." }
+            8  { return "2,10timtom gives $target a sip from his beer" }
+            9  { return "4,11timtom pours $target a shot of Robitussin" }
+            10 { return "1,12timtom brings $target a tall glass of water" }
+            11 { return "2,7timtom administers a few droplets of GHB to ${target}." }
         }
         return ""
     }
@@ -655,13 +677,13 @@ namespace eval timtom {
         }
         add_money $nick -5
         switch -- [random_int 1 7] {
-            1 { return "timtom ushers out a steaming plate of crab legs for $nick." }
-            2 { return "timtom hands $nick a crab rangoon." }
-            3 { return "timtom cracks open some crawdads for $nick." }
-            4 { return "timtom is here with the crab chowda for $nick." }
-            5 { return "timtom dollops out a healthy serving of crab dip for $nick." }
-            6 { return "timtom sprinkles some Old Bay seasoning on a plate of trash fische for $nick." }
-            7 { return "timtom gives $nick some spicy crab fries.  YUUUUMMMMMMMMMMM." }
+            1 { return "4,11timtom ushers out a steaming plate of crab legs for ${nick}." }
+            2 { return "8,2timtom hands $nick a crab rangoon." }
+            3 { return "8,1timtom cracks open some crawdads for ${nick}." }
+            4 { return "7,5timtom is here with the crab chowda for ${nick}." }
+            5 { return "3,8timtom dollops out a healthy serving of crab dip for ${nick}." }
+            6 { return "8,2timtom sprinkles some Old Bay seasoning on a plate of trash fische for ${nick}." }
+            7 { return "2,10timtom gives $nick some spicy crab fries.  YUUUUMMMMMMMMMMM." }
         }
         return ""
     }
@@ -673,13 +695,13 @@ namespace eval timtom {
         }
         add_money $nick -5
         switch -- [random_int 1 7] {
-            1 { return "timtom ushers out a steaming plate of crab legs for $target. You can thank $nick down there." }
-            2 { return "timtom hands $target a crab rangoon.  It's on $nick." }
-            3 { return "timtom cracks open some crawdads for $target. This one's on $nick." }
-            4 { return "timtom is here with the crab chowda for $target." }
-            5 { return "timtom dollops out a healthy serving of crab dip for $target." }
-            6 { return "timtom sprinkles some Old Bay seasoning on a plate of trash fische for $target. You can high five $nick down there." }
-            7 { return "timtom gives $target some spicy crab fries.  YUUUUMMMMMMMMMMM." }
+            1 { return "4,11timtom ushers out a steaming plate of crab legs for ${target}. You can thank $nick down there." }
+            2 { return "8,2timtom hands $target a crab rangoon.  It's on ${nick}." }
+            3 { return "8,1timtom cracks open some crawdads for ${target}. This one's on ${nick}." }
+            4 { return "7,5timtom is here with the crab chowda for ${target}." }
+            5 { return "3,8timtom dollops out a healthy serving of crab dip for ${target}. " }
+            6 { return "8,2timtom sprinkles some Old Bay seasoning on a plate of trash fische for ${target}. You can high five $nick down there. " }
+            7 { return "2,10timtom gives $target some spicy crab fries.  YUUUUMMMMMMMMMMM." }
         }
         return ""
     }
@@ -695,16 +717,16 @@ namespace eval timtom {
         }
         add_money $nick -1.95
         switch -- [random_int 1 10] {
-            1  { return "TIMTOM brings $nick some chocolate cake." }
-            2  { return "TIMTOM brings $nick some vanilla cake." }
-            3  { return "TIMTOM brings $nick some strawberry shortcake." }
-            4  { return "Since $nick has been such an angel, TIMTOM brings $nick some angel food cake." }
-            5  { return "TIMTOM brings $nick some banana cake." }
-            6  { return "TIMTOM brings $nick a bunt cake." }
-            7  { return "TIMTOM brings $nick some delicious cheesecake." }
-            8  { return "TIMTOM hands $nick a strawberry cupcake.  Enjoy!" }
-            9  { return "Since $nick has been such a little devil, TIMTOM brings $nick some devil's food cake." }
-            10 { return "TIMTOM brings $nick a beautiful slice of marble cake." }
+            1 { return "5,11TIMTOM brings $nick some chocolate cake." }
+            2 { return "1,8TIMTOM brings $nick some vanilla cake." }
+            3 { return "8,1TIMTOM brings $nick some strawberry shortcake." }
+            4 { return "1,10Since $nick has been such an angel, TIMTOM brings $nick some angel food cake." }
+            5 { return "8,4TIMTOM brings $nick some banana cake." }
+            6 { return "8,2TIMTOM brings $nick a bunt cake." }
+            7 { return "6,11TIMTOM brings $nick some delicious cheesecake." }
+            8 { return "2,10TIMTOM hands $nick a strawberry cupcake.  Enjoy!" }
+            9 { return "1,4Since $nick has been such a little devil, TIMTOM brings $nick some devil's food cake." }
+            10 { return "4,12TIMTOM brings $nick a beautiful slice of marble cake." }
         }
         return ""
     }
@@ -716,16 +738,16 @@ namespace eval timtom {
         }
         add_money $nick -1.95
         switch -- [random_int 1 10] {
-            1  { return "TIMTOM brings $target some chocolate cake, courtesy of $nick." }
-            2  { return "TIMTOM brings $target some vanilla cake, courtesy of $nick." }
-            3  { return "TIMTOM brings $target some strawberry shortcake, courtesy of $nick." }
-            4  { return "Since $target has been such an angel, TIMTOM brings $target some angel food cake; courtesy of $nick." }
-            5  { return "TIMTOM brings $target some banana cake, courtesy of $nick." }
-            6  { return "TIMTOM brings $target a bunt cake, courtesy of $nick." }
-            7  { return "TIMTOM brings $target some delicious cheesecake, courtesy of $nick." }
-            8  { return "TIMTOM hands $target a strawberry cupcake, courtesy of $nick.  Enjoy!" }
-            9  { return "Since $target has been such a little devil, TIMTOM brings $target some devil's food cake; courtesy of $nick." }
-            10 { return "TIMTOM brings $target a beautiful slice of marble cake, courtesy of $nick." }
+            1 { return "5,11TIMTOM brings $target some chocolate cake, courtesy of ${nick}." }
+            2 { return "1,8TIMTOM brings $target some vanilla cake, courtesy of ${nick}." }
+            3 { return "8,1TIMTOM brings $target some strawberry shortcake, courtesy of ${nick}." }
+            4 { return "1,10Since $target has been such an angel, TIMTOM brings $target some angel food cake; courtesy of ${nick}." }
+            5 { return "8,4TIMTOM brings $target some banana cake, courtesy of ${nick}." }
+            6 { return "8,2TIMTOM brings $target a bunt cake, courtesy of ${nick}." }
+            7 { return "6,11TIMTOM brings $target some delicious cheesecake, courtesy of ${nick}." }
+            8 { return "2,10TIMTOM hands $target a strawberry cupcake, courtesy of ${nick}.  Enjoy!" }
+            9 { return "1,4Since $target has been such a little devil, TIMTOM brings $target some devil's food cake; courtesy of ${nick}." }
+            10 { return "4,12TIMTOM brings $target a beautiful slice of marble cake, courtesy of ${nick}." }
         }
         return ""
     }
@@ -737,14 +759,14 @@ namespace eval timtom {
         }
         add_money $nick -2.22
         switch -- [random_int 1 8] {
-            1 { return "TIMTOM hands $nick a slice of cheese pizza." }
-            2 { return "TIMTOM hands $nick a slice of pepperoni pizza." }
-            3 { return "TIMTOM hands $nick a slice of sausage pizza." }
-            4 { return "TIMTOM hands $nick a slice of ham and pineapple pizza." }
-            5 { return "TIMTOM hands $nick a slice of anchovy pizza." }
-            6 { return "TIMTOM hands $nick a slice of bacon and black olive pizza." }
-            7 { return "TIMTOM hands $nick a slice of extra cheese pizza.  Enjoy!" }
-            8 { return "TIMTOM hands $nick a slice of white pizza.  Mangia!" }
+            1 { return "5,11TIMTOM hands $nick a slice of cheese pizza." }
+            2 { return "1,8TIMTOM hands $nick a slice of pepperoni pizza." }
+            3 { return "8,1TIMTOM hands $nick a slice of sausage pizza." }
+            4 { return "8,4TIMTOM hands $nick a slice of ham and pineapple pizza." }
+            5 { return "1,13TIMTOM hands $nick a slice of anchovy pizza." }
+            6 { return "6,11TIMTOM hands $nick a slice of bacon and black olive pizza." }
+            7 { return "2,10TIMTOM hands $nick a slice of extra cheese pizza.  Enjoy!" }
+            8 { return "4,12TIMTOM hands $nick a slice of white pizza.  Mangia!" }
         }
         return ""
     }
@@ -756,14 +778,14 @@ namespace eval timtom {
         }
         add_money $nick -2.22
         switch -- [random_int 1 8] {
-            1 { return "TIMTOM hands $target a slice of cheese pizza, courtesy of $nick." }
-            2 { return "TIMTOM hands $target a slice of pepperoni pizza, courtesy of $nick." }
-            3 { return "TIMTOM hands $target a slice of sausage pizza, courtesy of $nick." }
-            4 { return "TIMTOM hands $target a slice of ham and pineapple pizza, courtesy of $nick." }
-            5 { return "TIMTOM hands $target a slice of anchovy pizza, courtesy of $nick." }
-            6 { return "TIMTOM hands $target a slice of bacon and black olive pizza, courtesy of $nick." }
-            7 { return "TIMTOM hands $target a slice of extra cheese pizza, courtesy of $nick.  Enjoy!" }
-            8 { return "TIMTOM hands $target a slice of white pizza, courtesy of $nick.  Mangia!" }
+            1 { return "5,11TIMTOM hands $target a slice of cheese pizza, courtesy of ${nick}." }
+            2 { return "1,8TIMTOM hands $target a slice of pepperoni pizza, courtesy of ${nick}." }
+            3 { return "8,1TIMTOM hands $target a slice of sausage pizza, courtesy of ${nick}." }
+            4 { return "8,4TIMTOM hands $target a slice of ham and pineapple pizza, courtesy of ${nick}." }
+            5 { return "1,13TIMTOM hands $target a slice of anchovy pizza, courtesy of ${nick}." }
+            6 { return "6,11TIMTOM hands $target a slice of bacon and black olive pizza, courtesy of ${nick}." }
+            7 { return "2,10TIMTOM hands $target a slice of extra cheese pizza, courtesy of ${nick}.  Enjoy!" }
+            8 { return "4,12TIMTOM hands $target a slice of white pizza, courtesy of ${nick}.  Mangia!" }
         }
         return ""
     }
@@ -771,37 +793,37 @@ namespace eval timtom {
     proc nachos {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 3.95} {
-            return "Sorry, $nick, but you don't have enough for a Nachos Fun Pack."
+            return "\0034,11Sorry, ${nick}, but you don't have enough for a Nachos Fun Pack.\003"
         }
         add_money $nick -3.95
-        return "TIMTOM tosses $nick a Nachos Fun Pack, complete with hot cheese sauce.  Please enjoy!"
+        return "\0031,8TIMTOM tosses $nick a Nachos Fun Pack, complete with hot cheese sauce.  Please enjoy!\003"
     }
 
     proc nachos_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 3.95} {
-            return "Sorry, $nick, but you don't have enough for a Nachos Fun Pack."
+            return "\0034,11Sorry, ${nick}, but you don't have enough for a Nachos Fun Pack.\003"
         }
         add_money $nick -3.95
-        return "TIMTOM tosses $target a Nachos Fun Pack, complete with hot cheese sauce; courtesy of $nick.  Please enjoy!"
+        return "\0031,8TIMTOM tosses $target a Nachos Fun Pack, complete with hot cheese sauce; courtesy of ${nick}.  Please enjoy!\003"
     }
 
     proc lasagna {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2.50} {
-            return "Sorry, $nick, but you don't have enough for lasagna."
+            return "\0034,11Sorry, ${nick}, but you don't have enough for lasagna.\003"
         }
         add_money $nick -2.50
-        return "TIMTOM brings out a delicious slice of homemade lasagna for $nick.  Bon appetit!"
+        return "\0038,4TIMTOM brings out a delicious slice of homemade lasagna for ${nick}.  Bon appetit!\003"
     }
 
     proc lasagna_for {target {nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 2.50} {
-            return "Sorry, $nick, but you don't have enough for lasagna"
+            return "\0034,11Sorry, ${nick}, but you don't have enough for lasagna\003"
         }
         add_money $nick -2.50
-        return "TIMTOM brings out a delicious slice of homemade lasagna for $target, courtesy of $nick.  Bon appetit!"
+        return "\0038,4TIMTOM brings out a delicious slice of homemade lasagna for ${target}, courtesy of ${nick}.  Bon appetit!\003"
     }
 
     proc sauce {{nick ""}} {
@@ -811,10 +833,10 @@ namespace eval timtom {
         }
         add_money $nick -0.25
         switch -- [random_int 1 4] {
-            1 { return "TIMTOM hands $nick a packet of MILD sauce." }
-            2 { return "TIMTOM hands $nick a packet of HOT sauce." }
-            3 { return "TIMTOM hands $nick a packet of FIRE sauce." }
-            4 { return "TIMTOM places a dollop of SOUR CREAM on ${nick}'s taco." }
+            1 { return "0,12TIMTOM hands $nick a packet of 1,8MILD0,12 sauce." }
+            2 { return "0,12TIMTOM hands $nick a packet of 1,7HOT0,12 sauce." }
+            3 { return "0,12TIMTOM hands $nick a packet of 1,4FIRE0,12 sauce." }
+            4 { return "0,12TIMTOM places a dollop of 1,3SOUR CREAM0,12 on ${nick}'s taco." }
         }
         return ""
     }
@@ -826,10 +848,10 @@ namespace eval timtom {
         }
         add_money $nick -0.25
         switch -- [random_int 1 4] {
-            1 { return "TIMTOM hands $target a packet of MILD sauce." }
-            2 { return "TIMTOM hands $target a packet of HOT sauce." }
-            3 { return "TIMTOM hands $target a packet of FIRE sauce." }
-            4 { return "TIMTOM places a dollop of SOUR CREAM on ${target}'s taco." }
+            1 { return "0,12TIMTOM hands $target a packet of 1,8MILD0,12 sauce." }
+            2 { return "0,12TIMTOM hands $target a packet of 1,7HOT0,12 sauce." }
+            3 { return "0,12TIMTOM hands $target a packet of 1,4FIRE0,12 sauce." }
+            4 { return "0,12TIMTOM places a dollop of 1,3SOUR CREAM0,12 on ${target}'s taco." }
         }
         return ""
     }
@@ -841,14 +863,14 @@ namespace eval timtom {
         if {$count == 0} { set count 1 }
         set cost [expr {$count * 0.79}]
         if {[get_money $nick] < $cost} {
-            return "Sorry, $nick, but you don't have enough to buy tacos for everyone.  It was noble of you to be thinking of everyone though.  Maybe try your luck on the wheel?"
+            return "\0034,11Sorry, ${nick}, but you don't have enough to buy tacos for everyone.  It was noble of you to be thinking of everyone though.  Maybe try your luck on the wheel?\003"
         }
         add_money $nick [expr {-$cost}]
         set who [join $ns " "]
         if {[random_int 1 2] == 1} {
-            return "TIMTOM brings out the crunchy tacos for $who  Buen provecho, amigos!"
+            return "\0037,5TIMTOM brings out the crunchy tacos for $who¡Buen provecho, amigos!"
         }
-        return "TIMTOM brings out the soft tacos for $who  Buen provecho, amigos!"
+        return "\0037,5TIMTOM brings out the soft tacos for $who¡Buen provecho, amigos!"
     }
 
     proc empanadas {{nick ""}} {
@@ -858,17 +880,20 @@ namespace eval timtom {
         if {$count == 0} { set count 1 }
         set cost [expr {$count * 0.89}]
         if {[get_money $nick] < $cost} {
-            return "Sorry, $nick, but you don't have enough to buy empanadas for everyone.  It was noble of you to be thinking of everyone though.  Maybe try your luck on the wheel?"
+            return "\0034,11Sorry, ${nick}, but you don't have enough to buy empanadas for everyone.  It was noble of you to be thinking of everyone though.  Maybe try your luck on the wheel?\003"
         }
         add_money $nick [expr {-$cost}]
         set who [join $ns " "]
-        return "TIMTOM brings out the EMPANADAS for $who  Buen provecho, amigos!"
+        if {[random_int 1 2] == 1} {
+            return "\0037,5TIMTOM brings out the \003\0032,9EMPANADAS\003\0037,5 for $who¡Buen provecho, amigos!"
+        }
+        return "\0037,5TIMTOM brings out the \003\00311,3EMPANADAS\003\0037,5 for $who¡Buen provecho, amigos!"
     }
 
     proc unicorn_buy {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 5000} {
-            return "Sorry, $nick, but you don't have enough right now for a unicorn.  I know, unicorns are expensive, but they are well worth it in the end.  Hopefully you'll have enough to buy one soon."
+            return "\0034,11Sorry, ${nick}, but you don't have enough right now for a unicorn.  I know, unicorns are expensive, but they are well worth it in the end.  Hopefully you'll have enough to buy one soon.\003"
         }
         add_money $nick -5000
         add_stat $nick unicorn 1
@@ -877,10 +902,10 @@ namespace eval timtom {
 
     proc _unicorn_message {nick} {
         switch -- [random_int 1 4] {
-            1 { return "Suddenly, out pops a beautiful unicorn for $nick. ............................" }
-            2 { return "Flying through the sky is a magical unicorn for $nick. ............................" }
-            3 { return "Here comes your very own unicorn, $nick! ............................" }
-            4 { return "Hmmm...how about....a.....UNICORN??!! ............................" }
+            1 { return "0,2Suddenly, out pops a beautiful unicorn for ${nick}. 4,4.8,8.12,12.2,2.9,9.6,6.4,4.5,5.11,11.6,6.7,7.11,11.2,2." }
+            2 { return "0,2Flying through the sky is a magical unicorn for ${nick}. 4,4.6,6.7,7.11,11.2,2.10,10.9,9.3,3.12,12.5,5.6,6.11,11." }
+            3 { return "0,12Here comes your very own unicorn, ${nick}! 11,11.4,4.7,7.6,6.3,3.10,10.8,8.2,2.6,6.11,11.7,7.9,9." }
+            4 { return "0,2Hmmm...how about....a.....UNICORN??!! 12,12.3,3.4,4.5,5.6,6.11,11.7,7.6,6.3,3.10,10.8,8.2,2.4,4." }
         }
         return "Here comes your very own unicorn, $nick!"
     }
@@ -888,39 +913,39 @@ namespace eval timtom {
     proc prices {{nick ""}} {
         set nick [whoami $nick]
         set ch [current_channel]
-        return "Hello $nick!  These are the current market prices in $ch:  drinks are \$2 a piece, cake is \$1.95 a piece, and pizza is \$2.22 a slice.  Homemade lasagna is \$2.50.  Tacos are \$.79 / person (all non-ops served), and sauce is \$.25 extra.  A Nachos Fun Pack costs \$3.95.  A pony will cost you \$1000 and a unicorn will cost you \$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!"
+        return "\0035,10Hello ${nick}!  These are the current market prices in ${ch}:  drinks are \0035,10$2 a piece, cake is \0035,10$who.95 a piece, and pizza is \0035,10$2.22 a slice.  Homemade lasagna is \0035,10$2.50.  Tacos are \0035,10$.79 \0035,10/ person (all non-ops served), and sauce is \0035,10$.25 extra.  A Nachos Fun Pack costs \0035,10$3.95.  A pony will cost you \0035,10$1000 and a unicorn will cost you \0035,10$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!\003"
     }
 
     proc hedges {{nick ""}} {
         set nick [whoami $nick]
         set u [string toupper $nick]
         switch -- [random_int 1 3] {
-            1 { return "THE HEDGES ARE HIGH TODAY, $u.  I'LL GO AHEAD AND TRIM THEM THEN." }
-            2 { return "THE HEDGES ARE LOOKIN' A BIT LOW TODAY, $u.  I'D BETTER WATER THEM SOME." }
-            3 { return "THE HEDGES ARE JUST FINE TODAY, $u.  SUCH BEAUTIFUL HEDGES WE HAVE." }
+            1 { return "0,3THE HEDGES ARE HIGH TODAY, [string toupper $nick].  I'LL GO AHEAD AND TRIM THEM THEN." }
+            2 { return "0,3THE HEDGES ARE LOOKIN' A BIT LOW TODAY, [string toupper $nick].  I'D BETTER WATER THEM SOME." }
+            3 { return "0,3THE HEDGES ARE JUST FINE TODAY, [string toupper $nick].  SUCH BEAUTIFUL HEDGES WE HAVE." }
         }
         return ""
     }
 
     proc end_msg {} {
         switch -- [random_int 1 17] {
-            1  { return "Yes is no." }
-            2  { return "The truth is a lie." }
-            3  { return "Black is white." }
-            4  { return "Weak is strong." }
-            5  { return "Love is hate." }
-            6  { return "Life is death." }
-            7  { return "To win is to lose." }
-            8  { return "The beginning is the end." }
-            9  { return "First is last." }
-            10 { return "All are none." }
-            11 { return "Slavery is freedom." }
-            12 { return "To be blind is to see." }
-            13 { return "Everything is nothing." }
-            14 { return "Night is day." }
-            15 { return "Day is night." }
-            16 { return "Pain is pleasure." }
-            17 { return "The best is the worst." }
+            1 { return "4,11Yes is no." }
+            2 { return "8,2The truth is a lie." }
+            3 { return "8,1Black is white." }
+            4 { return "7,5Weak is strong." }
+            5 { return "3,8Love is hate." }
+            6 { return "8,2Life is death." }
+            7 { return "6,11To win is to lose." }
+            8 { return "2,10The beginning is the end." }
+            9 { return "4,11First is last." }
+            10 { return "1,12All are none." }
+            11 { return "7,5Slavery is freedom." }
+            12 { return "3,8To be blind is to see." }
+            13 { return "8,2Everything is nothing." }
+            14 { return "6,11Night is day." }
+            15 { return "2,10Day is night." }
+            16 { return "4,11Pain is pleasure." }
+            17 { return "1,12The best is the worst." }
         }
         return ""
     }
@@ -998,19 +1023,19 @@ namespace eval timtom {
     proc buy_pony {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 1000} {
-            return "Sorry, $nick, but you don't have enough for a pony.  I really want you to have one, though.  Try your luck at the wheel!"
+            return "\0034,11Sorry, ${nick}, but you don't have enough for a pony.  I really want you to have one, though.  Try your luck at the wheel!\003"
         }
         add_money $nick -1000
         add_stat $nick pony 1
-        return "Finally, $nick gets a pony."
+        return "\0037,10Finally, $nick gets a pony.\003"
     }
 
     proc timtom_unicorns {{nick ""}} {
-        return "timtom always has 8 unicorns.  Never fear!"
+        return "\0030,2$who always has 8 unicorns.  Never fear!\003"
     }
     proc timtom_pony {{nick ""}} {
         set nick [whoami $nick]
-        return "HELLO HELLO HELLO HELLO $nick!  Don't you know that timtom always has 8 ponies?  That's why he gives so many away."
+        return "\0033,11HELLO HELLO HELLO HELLO ${nick}!  Don't you know that $who always has 8 ponies?  That's why he gives so many away.\003"
     }
 
     # ========================================================================
@@ -1024,17 +1049,21 @@ namespace eval timtom {
         set j [expr {$k + 2}]
         set i [expr {$k + 1}]
         set r [random_int 1 $j]
-        if {$r == $j} { return "$nick marries the Dark Lord Satan" }
-        if {$r == $i} { return "$nick marries a garbage can" }
+        if {$r == $j} { return "\0038,4${nick} marries the Dark Lord Satan\003" }
+        if {$r == $i} { return "\0034,1${nick} marries a garbage can\003" }
         set partner [random_other_nick $nick]
         if {$partner eq ""} { set partner [random_chan_nick] }
         if {$partner eq ""} { set partner "themselves" }
-        return "$nick marries $partner"
+        set colors [list "4,8" "5,11" "9,13" "2,8" "8,1" "2,10" "6,9" "1,12" "4,11" "8,6"]
+        set color [lindex $colors [expr {int(rand() * [llength $colors])}]]
+        return "\003${color}${nick} marries ${partner}\003"
     }
 
     proc marry_target {target {nick ""}} {
         set nick [whoami $nick]
-        return "$nick marries $target"
+        set colors [list "4,8" "5,11" "9,13" "2,8" "8,1" "2,10" "6,9" "1,12" "4,11" "8,6"]
+        set color [lindex $colors [expr {int(rand() * [llength $colors])}]]
+        return "\003${color}${nick} marries ${target}\003"
     }
 
     proc divorce {{nick ""}} {
@@ -1044,17 +1073,21 @@ namespace eval timtom {
         set j [expr {$k + 2}]
         set i [expr {$k + 1}]
         set r [random_int 1 $j]
-        if {$r == $j} { return "$nick divorces Satan, Master of Darkness" }
-        if {$r == $i} { return "$nick divorces a wet samburger" }
+        if {$r == $j} { return "\0038,4${nick} divorces Satan, Master of Darkness\003" }
+        if {$r == $i} { return "\0034,2${nick} divorces a wet samburger\003" }
         set partner [random_other_nick $nick]
         if {$partner eq ""} { set partner [random_chan_nick] }
         if {$partner eq ""} { set partner "themselves" }
-        return "$nick divorces $partner"
+        set colors [list "9,3" "8,5" "9,14" "2,8" "8,4" "7,10" "6,9" "1,12" "12,11" "8,3"]
+        set color [lindex $colors [expr {int(rand() * [llength $colors])}]]
+        return "\003${color}${nick} divorces ${partner}\003"
     }
 
     proc divorce_target {target {nick ""}} {
         set nick [whoami $nick]
-        return "$nick divorces $target"
+        set colors [list "9,3" "8,5" "9,14" "2,8" "8,4" "7,10" "6,9" "1,12" "12,11" "8,3"]
+        set color [lindex $colors [expr {int(rand() * [llength $colors])}]]
+        return "\003${color}${nick} divorces ${target}\003"
     }
 
     # ========================================================================
@@ -1116,7 +1149,7 @@ namespace eval timtom {
     proc story_start {{nick ""}} {
         set nick [whoami $nick]
         set_state story 1
-        return "Hello, $nick, I understand that you would like to hear a story now.  This would be my utmost pleasure.  To begin the story please type \"begin\"."
+        return "\0031,11Hello, ${nick}, I understand that you would like to hear a story now.  This would be my utmost pleasure.  To begin the story please type \"begin\".\003"
     }
 
     proc story_begin {{nick ""}} {
@@ -1147,7 +1180,7 @@ namespace eval timtom {
 
     proc stoners {{nick ""}} {
         set_state stoner 1
-        return "Why hello there good friend!  Thanks for inquiring about the Official #gamme Stoners' Club.  If you would like to become a member please type \"yes\".  If you do not wish to become a member, or if you are currently a member but no longer want to be one, please type \"no\".  Only members of the Official #gamme Stoners' Club are allowed to touch the bong."
+        return "\0039,3Why hello there good friend!  Thanks for inquiring about the Official #gamme Stoners' Club.  If you would like to become a member please type \"\003\0031,8yes\003\0039,3\".  If you do not wish to become a member, or if you are currently a member but no longer want to be one, please type \"\003\0031,8no\003\0039,3\".  Only members of the Official #gamme Stoners' Club are allowed to touch the bong.\003"
     }
 
     proc yes_cmd {{nick ""}} {
@@ -1178,23 +1211,19 @@ namespace eval timtom {
 
     proc pot_show {{nick ""}} {
         set p [get_state pot]
-        if {$p eq "" || $p == 0} { return "The pot is currently empty." }
-        return "The pot is currently at \$[format_with_commas $p].  Somebody better win it soon!"
+        if {$p eq "" || $p == 0} { return "\0034,11The pot is currently empty.\003" }
+        return "\0034,11The pot is currently at \0034,11$[format_with_commas $p].  Somebody better win it soon!\003"
     }
 
     proc my_pot {{nick ""}} {
         set nick [whoami $nick]
         set p [get_state pot]
-        if {$p eq "" || $p == 0} { return "The pot is currently empty." }
+        if {$p eq "" || $p == 0} { return "\0034,11The pot is currently empty.\003" }
         set mine [get_stat $nick pot]
-        if {$mine == 0} {
-            return "How are you doing, $nick?  Currently, none of the pot has come out of your pockets!"
-        }
-        if {$mine == $p} {
-            return "Would you look at that, $nick!!  The current pot has come from you and you alone!"
-        }
+        if {$mine == 0} { return "\0037,2How are you doing, ${nick}?  Currently, none of the pot has come out of your pockets!\003" }
+        if {$mine == $p} { return "\0031,4Would you look at that, ${nick}!!  The current pot has come from you and you alone!\003" }
         set pct [expr {round(double($mine) / double($p) * 10000.0) / 100.0}]
-        return "Howdy $nick.  At the moment, approximately ${pct}% of the pot is yours."
+        return "\0037,2Howdy ${nick}.  At the moment, approximately ${pct}*100),2)\0037,2% of the pot is yours.\003"
     }
 
     proc check_others_pot {target {nick ""}} {
@@ -1225,7 +1254,7 @@ namespace eval timtom {
         clear_glob "bblue_*"
         clear_glob "mayo_*"
         clear_glob "out_*"
-        return "TIMTOM has lost control of his 5 favorite colors:  .......... , .......... , .......... , .......... , and ...........  They've gone and hid on everyone in $ch!  We need to find them quick!"
+        return "\0031,13TIMTOM has lost control of his 5 favorite colors:\003  \0034,4..........\003 , \00311,11..........\003 , \0038,8..........\003 , \00312,12..........\003 , and \0037,7..........\003.  \0031,13They've gone and hid on everyone in ${ch}!  We need to find them quick!\003"
     }
 
     proc seek {{nick ""}} {
@@ -1392,7 +1421,7 @@ namespace eval timtom {
         set nick [whoami $nick]
         set_stat $nick blackjack 2
         del_stat $nick ttotal
-        return "WELCOME TO BLACK JACK [string toupper $nick]!  I'm your dealer TIMTOM.  My goal is to give you an enjoyable BLACK JACK experience.  Drinks and tacos and everything else are right here - just ask, silly!  Now please place your bet and we'll get started.  The min bet is \$5000 and the max bet is \$20,000.  Please keep the bets in whole dollar amounts, no small change in this casino.  Good luck!"
+        return "\0031,8WELCOME TO \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 [string toupper $nick]!  I'm your dealer TIMTOM.  My goal is to give you an enjoyable \003\0034,0BLACK\003\0031,8 \003\0031,0JACK\003\0031,8 experience.  Drinks and tacos and everything else are right here - just ask, silly!  Now please place your bet and we'll get started.  The min bet is \0031,8$5000 and the max bet is \0031,8$20,000.  Please keep the bets in whole dollar amounts, no small change in this casino.  Good luck!\003"
     }
 
     proc _card_value {raw} {
@@ -1578,8 +1607,14 @@ namespace eval timtom {
     # Misc one-shot triggers
     # ========================================================================
 
-    proc msl_strip_buf {{nick ""}}         { return "piegs bifferlo" }
-    proc msl_strip_buf_buffelo {{nick ""}} { return "scalar piegs" }
+    proc msl_strip_buf {{nick ""}} {
+        set n [whoami $nick]
+        return "\0031,4piegs\003 \0031,4bifferlo\003"
+    }
+    proc msl_strip_buf_buffelo {{nick ""}} {
+        set n [whoami $nick]
+        return "\0031,4scalar piegs\003"
+    }
     proc msl_strip_buf_strip {text}        {
         # Removes "buffelo", "msl", "strip_buf" tokens from a free-form message.
         set out $text
@@ -1588,9 +1623,18 @@ namespace eval timtom {
         }
         return [string trim $out]
     }
-    proc crab_substring {{nick ""}}    { return "Raise hands!" }
-    proc buffelo_substring {{nick ""}} { return "I WARNED YOU." }
-    proc pieg_substring {{nick ""}}    { return "scalar piegs" }
+    proc crab_substring {{nick ""}} {
+        set n [whoami $nick]
+        return "\0037,9Raise hands!\003"
+    }
+    proc buffelo_substring {{nick ""}} {
+        set n [whoami $nick]
+        return "\00311,4I WARNED YOU.\003"
+    }
+    proc pieg_substring {{nick ""}} {
+        set n [whoami $nick]
+        return "\0031,4scalar piegs\003"
+    }
 
     # ========================================================================
     # Shoutouts (each command produces a fixed canned message; "$1" is the
@@ -1600,44 +1644,44 @@ namespace eval timtom {
     proc _shoutout_msg {who key} {
         set ch [current_channel]
         switch -- $key {
-            qpzdox        { return "GOLD $who, you're a stand up type personality and quite the dedicated chatter to boot.  You'll always have a wheel to spin and a warm tea cup waiting here in $ch.  We want you to have the finer things in life because you give us such a fine, outstanding example of a human being every day you chat with us." }
-            aesop         { return "GOLD You are an excellent chatter and just an all around great person to be around $who.  You can stop by $ch anytime and that's fine by me." }
-            avi           { return "You are a strong chatter and exhibit all the qualities of a wonderful human being, $who.  Never be a stranger to $ch." }
-            bats          { return "GOLD Hey, $who, you're the best.  I hope you're having fun here in $ch because quite frankly we're all delighted and even a bit humbled that you'd hang out here with us.  Keep up the strong chatter." }
-            berry         { return "GOLD $who, $who, who will you marry today?  We love you $who.  Your presence here brings a certain class to $ch and we hope to never let you down in your expectations." }
-            blackjesus    { return "$who, you're a joy to have here.  From TIMTOM, on behalf of all of us here, we'd like to give you a great big round of applause for making it this far.  You're a main player in $ch now.  Congrats." }
-            b0nk          { return "GOLD Congratulations $who!!  You've finally made it into the elite circle of official $ch members.  You're dedication to TIMTOM and your overall friendly chatter have earned you this everlasting badge of honor.  Wear it well, friend.  You'll never forget the joyous friends and invaluable experiences you've gained from being a part of this magical community we call $ch.  Good job!" }
-            bzb           { return "GOLD Howdy $who!  You have strong chat views and your commitment to freedom is commendable.  You've earned a proper place here and you're welcome anytime.  Your debates are challenging and shed light on some flaws of $ch that need to be addressed.  We are doing our best to make your experience here and everyone else's an enjoyable one." }
-            flamoot       { return "I don't know if we've ever had a chatter of your calibre grace $ch before, and I doubt we ever will.  It was an easy decision to bestow upon you official membership into $ch.  We know you'll stop by often to enrich us with your powerful message and grace us with your presence.  SALUTE!" }
-            gamme         { return "GOLD $who, without your perseverance and dedication $ch wouldn't be the channel it is today. Keep up the good work and may $ch continue to grow!" }
-            gnol          { return "$who, we're so pleased that you're staying with us for a time.  You seem like a delightful person and your presence here lights up $ch in a way that no one else's could.  We hope you'll pick $ch to be your #1 channel.  <3 <3" }
-            hlp           { return "$who, good friend.  I hope you're having a pleasant stay here at $ch.  If there's anything you need you just give a holler, ya hear?  Love ya $who." }
-            jbs           { return "GOLD $who, how are you?  We're so glad that you decided to join our little shindig here at $ch.  We know you'll come along well here and we hope to see some more of your fine chatter in the years to come.  Have a drink on the house, kid!" }
-            luper1        { return "Well $who, I think it's time we gave you a little taste of the sweet life.  You did it.  You're one of us now.  No one can ever take that away from you.  You're a well put together type of chatter and you deserve it.  Thanks for the good memories and here's to good times to come." }
-            mano          { return "Oh $who.  Where would we be today without the constant support of you?  You've been here since the beginning and we hope you'll be here for years to come.  Keep up the progressive chatting." }
-            mandingo      { return "Congratulations son!  You are now officially part of the #gamme Circle of Friends.  We've seen some very positive things from you since you got here, and you've proven yourself to be an amicable chatter and a trustworthy soldier.  Way to go $who!!  And best of luck to you on the blackjack table!" }
-            matthew       { return "Hey $who!  Did we surprise you?  You did it!  You're a fine chatter and great company in $ch.  Stop in anytime; I know you'll enjoy some of our newer features.  Sit back, relax, and SPIN THAT WHEEL!!!" }
-            mao           { return "GOLD $who: a true friend and a gentle soldier in the army of $ch.  You're rising up the ranks quickly and don't think TIMTOM hasn't noticed.  The works you've achieved are greatly appreciated and for that we present you this humble membership.  We hope you'll accept and continue to do good things for the good of humanity." }
-            nay           { return "GOLD You've earned it $who.  You're a big part of $ch." }
-            ninjalie      { return "Hello $who!  Are you having fun yet?  We hope you are and if you have any requests don't hesitate to throw them out there.  $ch is here for people like you and we want you to become energized here as you await your next big battle.  Cheers to you, a grand champion in your own right." }
-            noodle        { return "GOLD How are you, friend?  We're so glad you found us here in $ch!  I hope you're having a marvelous time spinning the wheel with us, chatting, and enjoying all of our other services.  We hope you'll make $ch home, $who.  Spin with ya soon, buddy!" }
-            nigamajig     { return "GOLD Greetings $who.  What a friendly, thoughtful, and creative individual you are!  We are blessed to have you as part of the $ch team.  You are a grand participant in the sharing of ideas and insights, and we appreciate that.  Keep them unicorns a-comin'!!!" }
-            nza           { return "GOLD $who, the kind but stern leader.  Your presence here makes $ch feel just a touch more civilized.  Without you we might never have gotten to where we are today.  Stay as long as you wish; there's always a place for you and a hot bowl of soup waiting in $ch." }
-            oclet         { return "Hey $who!  We're pleased with you and, yeah, even if you don't care what we think we'd still love you to stick around $ch like you have been.  You're someone that everyone can talk to regardless of the people involved or the situation.  A person like you makes a big difference in $ch.  HOORAH!" }
-            timer         { return "GOLD Welcome to the gang, $who! You've come a long way since you first sat at table, and I think that every person agrees that you most certainly deserve it.  Cherish it, enjoy yourself here, and never forget the friends who encouraged you along the way.  We hope that you'll be a shining example and a leader to the new members to come." }
-            overfien      { return "Hey $who.  You've flashed some real moments of brilliance and purity here, and we feel this should be rewarded.  Accept this membership as a token of ${ch}'s appreciation for the person you put out there each and every day.  Stay for a time, stay for life!  $ch will always be here for you." }
-            dubz          { return "GOLD Hey $who.  You've flashed some real moments of brilliance and purity here, and we feel this should be rewarded.  Accept this membership as a token of ${ch}'s appreciation for the person you put out there every single day.  Stay for a time, stay for life!  $ch will always be here for you." }
-            papersk1n     { return "GOLD What's up $who?  You're a tough one to please but it's people like you who make $ch better.  You are a 100% correct chatter and we feel honored that you would chat here.  Your criticisms are always noted and changes are implemented as soon as possible." }
-            patroclus     { return "GOLD You've done it, $who, you've finally done it!  Your name will forever be etched onto the walls of greatness that house the names of all the members of $ch.  I hope it feels good - you've waited long enough and have definitely earned it.  Keep up the pleasant chatter, friend!" }
-            phillip       { return "It's been quite some time since you first stepped foot into table, $who, and I think you've waited long enough.  You did it!  We know there are a few components of $ch that you don't agree with, but we are working to correct them as quickly as possible.  It's people like you who make $ch strive for ultimate perfection.  Our goal is to please and energize you in a safe and enjoyable environment.  Have a spin on us!" }
-            bwaah         { return "GOLD Well done $who.  You're bringing together new friends and having a wonderful time in $ch it seems.  It's time we gave a little back.  Enjoy your newfound membership in $ch!" }
-            sandy_ravage  { return "GOLD Well if it isn't $who, that really cool chatter!  It's such a joy to have people like $who sitting down and rooting us on in our successes.  We're all rooting for you too $who, so don't be afraid to spin that wheel and make it happen!" }
-            sloth         { return "GOLD Hey $who.  It's an honor to have you.  Have a good time and take advantage of the relaxing resources we make available to our members." }
-            sniper        { return "GOLD $who, such a joyous individual.  You can find him spinning and laughing with the guys here in $ch.  It's hard to find a day in $ch without seeing sniper having a good time with friends.  People like sniper really exemplify what $ch is all about: soup, tea, the wheel, and good chats with good close friends." }
-            turbo         { return "GOLD Hey $who, did you know that you're a very strong chatter?  Yeah, you are.  You're welcome in $ch anytime and we know you've been supporting us from Day 1 so we support you in all that you do.  Good luck." }
-            tute          { return "GOLD Is there anyone more delightful than $who?  I can't think of anyone off the top of my head.  What an awesome person and just a well-rounded chatter!  We're pleased you sit with us at table in $ch." }
-            wooster       { return "GOLD $who has been a supporter of $ch since Day 1 and we appreciate that.  $who knows TIMTOM quite well and wears the unofficial cap of \"local $ch historian\" while displaying fine chatting skills and being just an overall well put-together human being.  Hats off to you $who!  Have a cup of tea on us!" }
-            z             { return "GOLD $who, you are a wonderful addition to $ch.  I know you'll love stopping in as much as possible and we'll be waiting for you to stop by as well." }
+            qpzdox         { return "\0031,8GOLD\003 \00310,7${who}, you're a stand up type personality and quite the dedicated chatter to boot.  You'll always have a wheel to spin and a warm tea cup waiting here in ${ch}.  We want you to have the finer things in life because you give us such a fine, outstanding example of a human being every day you chat with us.\003" }
+            aesop          { return "\0031,8GOLD\003 \00310,7You are an excellent chatter and just an all around great person to be around ${who}.  You can stop by $ch anytime and that's fine by me.\003" }
+            avi            { return "\00310,7You are a strong chatter and exhibit all the qualities of a wonderful human being, ${who}.  Never be a stranger to ${ch}.\003" }
+            bats           { return "\0031,8GOLD\003 \00310,7Hey, ${who}, you're the best.  I hope you're having fun here in $ch because quite frankly we're all delighted and even a bit humbled that you'd hang out here with us.  Keep up the strong chatter.\003" }
+            berry          { return "\0031,8GOLD\003 \00310,7${who}, ${who}, who will you marry today?  We love you ${who}.  Your presence here brings a certain class to $ch and we hope to never let you down in your expectations.\003" }
+            blackjesus     { return "\00310,7${who}, you're a joy to have here.  From TIMTOM, on behalf of all of us here, we'd like to give you a great big round of applause for making it this far.  You're a main player in $ch now.  Congrats.\003" }
+            b0nk           { return "\0031,8GOLD\003 \00310,7Congratulations ${who}!!  You've finally made it into the elite circle of official $ch members.  You're dedication to TIMTOM and your overall friendly chatter have earned you this everlasting badge of honor.  Wear it well, friend.  You'll never forget the joyous friends and invaluable experiences you've gained from being a part of this magical community we call ${ch}.  Good job!\003" }
+            bzb            { return "\0031,8GOLD\003 \00310,7Howdy ${who}!  You have strong chat views and your commitment to freedom is commendable.  You've earned a proper place here and you're welcome anytime.  Your debates are challenging and shed light on some flaws of $ch that need to be addressed.  We are doing our best to make your experience here and everyone else's an enjoyable one.\003" }
+            flamoot        { return "\00310,7I don't know if we've ever had a chatter of your calibre grace $ch before, and I doubt we ever will.  It was an easy decision to bestow upon you official membership into ${ch}.  We know you'll stop by often to enrich us with your powerful message and grace us with your presence.  SALUTE!\003" }
+            gamme          { return "\0031,8GOLD\003 \00310,7${who}, without your perseverance and dedication $ch wouldn't be the channel it is today. Keep up the good work and may $ch continue to grow!\003" }
+            gnol           { return "\00310,7${who}, we're so pleased that you're staying with us for a time.  You seem like a delightful person and your presence here lights up $ch in a way that no one else's could.  We hope you'll pick $ch to be your #1 channel.  <3 <3\003" }
+            hlp            { return "\00310,7${who}, good friend.  I hope you're having a pleasant stay here at ${ch}.  If there's anything you need you just give a holler, ya hear?  Love ya ${who}.\003" }
+            jbs            { return "\0031,8GOLD\003 \00310,7${who}, how are you?  We're so glad that you decided to join our little shindig here at ${ch}.  We know you'll come along well here and we hope to see some more of your fine chatter in the years to come.  Have a drink on the house, kid!\003" }
+            luper1         { return "\00310,7Well ${who}, I think it's time we gave you a little taste of the sweet life.  You did it.  You're one of us now.  No one can ever take that away from you.  You're a well put together type of chatter and you deserve it.  Thanks for the good memories and here's to good times to come.\003" }
+            mano           { return "\00310,7Oh ${who}.  Where would we be today without the constant support of you?  You've been here since the beginning and we hope you'll be here for years to come.  Keep up the progressive chatting.\003" }
+            mandingo       { return "\00310,7Congratulations son!  You are now officially part of the #gamme Circle of Friends.  We've seen some very positive things from you since you got here, and you've proven yourself to be an amicable chatter and a trustworthy soldier.  Way to go ${who}!!  And best of luck to you on the blackjack table!\003" }
+            matthew        { return "\00310,7Hey ${who}!  Did we surprise you?  You did it!  You're a fine chatter and great company in ${ch}.  Stop in anytime; I know you'll enjoy some of our newer features.  Sit back, relax, and \003\0034,11SPIN THAT WHEEL!!!\003" }
+            mao            { return "\0031,8GOLD\003 \00310,7${who}: a true friend and a gentle soldier in the army of ${ch}.  You're rising up the ranks quickly and don't think TIMTOM hasn't noticed.  The works you've achieved are greatly appreciated and for that we present you this humble membership.  We hope you'll accept and continue to do good things for the good of humanity.\003" }
+            nay            { return "\0031,8GOLD\003 \00310,7You've earned it ${who}.  You're a big part of ${ch}.\003" }
+            ninjalie       { return "\00310,7Hello ${who}!  Are you having fun yet?  We hope you are and if you have any requests don't hesitate to throw them out there.  $ch is here for people like you and we want you to become energized here as you await your next big battle.  Cheers to you, a grand champion in your own right.\003" }
+            noodle         { return "\0031,8GOLD\003 \00310,7How are you, friend?  We're so glad you found us here in ${ch}!  I hope you're having a marvelous time spinning the wheel with us, chatting, and enjoying all of our other services.  We hope you'll make $ch home, ${who}.  Spin with ya soon, buddy!\003" }
+            nigamajig      { return "\0031,8GOLD\003 \00310,7Greetings ${who}.  What a friendly, thoughtful, and creative individual you are!  We are blessed to have you as part of the $ch team.  You are a grand participant in the sharing of ideas and insights, and we appreciate that.  Keep them unicorns a-comin'!!!\003" }
+            nza            { return "\0031,8GOLD\003 \00310,7${who}, the kind but stern leader.  Your presence here makes $ch feel just a touch more civilized.  Without you we might never have gotten to where we are today.  Stay as long as you wish; there's always a place for you and a hot bowl of soup waiting in ${ch}.\003" }
+            oclet          { return "\00310,7Hey ${who}!  We're pleased with you and, yeah, even if you don't care what we think we'd still love you to stick around $ch like you have been.  You're someone that everyone can talk to regardless of the people involved or the situation.  A person like you makes a big difference in ${ch}.  HOORAH!\003" }
+            timer          { return "\0031,8GOLD\003 \00310,7Welcome to the gang, ${who}! You've come a long way since you first sat at table, and I think that every person agrees that you most certainly deserve it.  Cherish it, enjoy yourself here, and never forget the friends who encouraged you along the way.  We hope that you'll be a shining example and a leader to the new members to come.\003" }
+            overfien       { return "\00310,7Hey ${who}.  You've flashed some real moments of brilliance and purity here, and we feel this should be rewarded.  Accept this membership as a token of ${ch}'s appreciation for the person you put out there each and every day.  Stay for a time, stay for life!  $ch will always be here for you.\003" }
+            dubz           { return "\0031,8GOLD\003 \00310,7Hey ${who}.  You've flashed some real moments of brilliance and purity here, and we feel this should be rewarded.  Accept this membership as a token of ${ch}'s appreciation for the person you put out there every single day.  Stay for a time, stay for life!  $ch will always be here for you.\003" }
+            papersk1n      { return "\0031,8GOLD\003 \00310,7What's up ${who}?  You're a tough one to please but it's people like you who make $ch better.  You are a 100% correct chatter and we feel honored that you would chat here.  Your criticisms are always noted and changes are implemented as soon as possible.\003" }
+            patroclus      { return "\0031,8GOLD\003 \00310,7You've done it, ${who}, you've finally done it!  Your name will forever be etched onto the walls of greatness that house the names of all the members of ${ch}.  I hope it feels good - you've waited long enough and have definitely earned it.  Keep up the pleasant chatter, friend!\003" }
+            phillip        { return "\00310,7It's been quite some time since you first stepped foot into table, ${who}, and I think you've waited long enough.  You did it!  We know there are a few components of $ch that you don't agree with, but we are working to correct them as quickly as possible.  It's people like you who make $ch strive for ultimate perfection.  Our goal is to please and energize you in a safe and enjoyable environment.  Have a spin on us!\003" }
+            bwaah          { return "\0031,8GOLD\003 \00310,7Well done ${who}.  You're bringing together new friends and having a wonderful time in $ch it seems.  It's time we gave a little back.  Enjoy your newfound membership in ${ch}!\003" }
+            sandy_ravage   { return "\0031,8GOLD\003 \00310,7Well if it isn't ${who}, that really cool chatter!  It's such a joy to have people like $who sitting down and rooting us on in our successes.  We're all rooting for you too ${who}, so don't be afraid to spin that wheel and make it happen!\003" }
+            sloth          { return "\0031,8GOLD\003 \00310,7Hey ${who}.  It's an honor to have you.  Have a good time and take advantage of the relaxing resources we make available to our members.\003" }
+            sniper         { return "\0031,8GOLD\003 \00310,7${who}, such a joyous individual.  You can find him spinning and laughing with the guys here in ${ch}.  It's hard to find a day in $ch without seeing sniper having a good time with friends.  People like sniper really exemplify what $ch is all about: soup, tea, the wheel, and good chats with good close friends.\003" }
+            turbo          { return "\0031,8GOLD\003 \00310,7Hey ${who}, did you know that you're a very strong chatter?  Yeah, you are.  You're welcome in $ch anytime and we know you've been supporting us from Day 1 so we support you in all that you do.  Good luck.\003" }
+            tute           { return "\0031,8GOLD\003 \00310,7Is there anyone more delightful than ${who}?  I can't think of anyone off the top of my head.  What an awesome person and just a well-rounded chatter!  We're pleased you sit with us at table in ${ch}.\003" }
+            wooster        { return "\0031,8GOLD\003 \00310,7$who has been a supporter of $ch since Day 1 and we appreciate that.  $who knows TIMTOM quite well and wears the unofficial cap of \"local $ch historian\" while displaying fine chatting skills and being just an overall well put-together human being.  Hats off to you ${who}!  Have a cup of tea on us!\003" }
+            z              { return "\0031,8GOLD\003 \00310,7${who}, you are a wonderful addition to ${ch}.  I know you'll love stopping in as much as possible and we'll be waiting for you to stop by as well.\003" }
         }
         return ""
     }
@@ -1655,9 +1699,8 @@ namespace eval timtom {
         set i [expr {$k + 1}]
         set r [random_int 1 $i]
         set a [random_int 1 380]
+        set b [random_int 1 10]
         set c [random_int 1 6]
-
-        # Pick the target nick (if r==i, "Satan").
         set hit_satan [expr {$r == $i}]
         set target ""
         if {!$hit_satan} {
@@ -1666,23 +1709,110 @@ namespace eval timtom {
             if {$idx >= [llength $ns]} { set idx 0 }
             set target [lindex $ns $idx]
         }
-
-        if {$a == 1 && $hit_satan} {
-            return "$nick, you will be consumed by Satan tomorrow.  Tomorrow just isn't your day.  Have several drinks on us!"
-        }
-        if {$a == 1 && !$hit_satan} {
-            return "$nick, you will be slashed by $target tomorrow.  I'm sorry.  Have a spin on us."
-        }
-        if {$hit_satan} {
-            return "$nick, you will be slayed by Satan in precisely $a days.  Maybe you can enjoy some Polish water ice afterwards."
-        }
-        switch -- $c {
-            1 { return "$nick, you will be stabbed by $target in precisely $a days." }
-            2 { return "$nick, you will be shot by $target in precisely $a days." }
-            3 { return "$nick, you will be poisoned by $target in precisely $a days." }
-            4 { return "$nick, you will be stomped by $target in precisely $a days." }
-            5 { return "$nick, you will be beaten to death by $target in precisely $a days." }
-            6 { return "$nick, you will be loved to death by $target in precisely $a days." }
+        if {$a == 1 && $hit_satan} { return "\0031,4${nick}, you will be consumed by Satan tomorrow.  Tomorrow just isn't your day.  Have several drinks on us!\003" }
+        if {$a == 1 && !$hit_satan} { return "\0034,11${nick}, you will be slashed by $nick($ch,%r) tomorrow.  I'm sorry.  Have a spin on us.\003" }
+        if {$hit_satan} { return "\0031,4${nick}, you will be slayed by Satan in precisely %a days.  Maybe you can enjoy some Polish water ice afterwards.\003" }
+        switch -- $b {
+            1 {
+                switch -- $c {
+                    1 { return "\0030,5${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0030,5${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0030,5${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0030,5${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0030,5${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0030,5${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            2 {
+                switch -- $c {
+                    1 { return "\00312,11${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\00312,11${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\00312,11${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\00312,11${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\00312,11${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\00312,11${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            3 {
+                switch -- $c {
+                    1 { return "\0038,5${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0038,5${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0038,5${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0038,5${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0038,5${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0038,5${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            4 {
+                switch -- $c {
+                    1 { return "\0037,10${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0037,10${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0037,10${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0037,10${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0037,10${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0037,10${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            5 {
+                switch -- $c {
+                    1 { return "\0037,12${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0037,12${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0037,12${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0037,12${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0037,12${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0037,12${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            6 {
+                switch -- $c {
+                    1 { return "\0031,8${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0031,8${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0031,8${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0031,8${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0031,8${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0031,8${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            7 {
+                switch -- $c {
+                    1 { return "\0038,1${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0038,1${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0038,1${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0038,1${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0038,1${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0038,1${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            8 {
+                switch -- $c {
+                    1 { return "\0030,2${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0039,14${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0039,14${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0039,14${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0039,14${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0039,14${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            9 {
+                switch -- $c {
+                    1 { return "\0036,9${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\0036,9${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\0036,9${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\0036,9${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\0036,9${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\0036,9${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
+            10 {
+                switch -- $c {
+                    1 { return "\00311,2${nick}, you will be stabbed by $nick($ch,%r) in precisely %a days.\003" }
+                    2 { return "\00311,2${nick}, you will be shot by $nick($ch,%r) in precisely %a days.\003" }
+                    3 { return "\00311,2${nick}, you will be poisoned by $nick($ch,%r) in precisely %a days.\003" }
+                    4 { return "\00311,2${nick}, you will be stomped by $nick($ch,%r) in precisely %a days.\003" }
+                    5 { return "\00311,2${nick}, you will be beaten to death by $nick($ch,%r) in precisely %a days.\003" }
+                    6 { return "\00311,2${nick}, you will be loved to death by $nick($ch,%r) in precisely %a days.\003" }
+                }
+            }
         }
         return ""
     }
