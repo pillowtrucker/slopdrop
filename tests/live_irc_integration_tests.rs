@@ -211,7 +211,7 @@ async fn wait_for_response_from(
 
     // Return the first non-TIMTOM response
     for response in &responses {
-        if !response.contains("Welcome to") && !response.contains("TIMTOM is here to serve you") {
+        if !response.contains("Welcome to") && !response.contains("TIMTOM is here to serve you") && !response.contains("WELCOME TO TABLE") {
             return Some(response.clone());
         }
     }
