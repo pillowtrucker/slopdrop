@@ -666,6 +666,52 @@ namespace eval timtom {
         return [_drink_for_msg $nick $target [random_int 1 11]]
     }
 
+    # Known drink names: when someone types "drink water" / "drink beer" /
+    # etc, prefer the previous port's specific item response over treating
+    # the second word as a target nick. Returns "" if the keyword isn't a
+    # known drink, so the dispatcher can fall through to drink_for.
+    proc drink_named {drink_type {nick ""}} {
+        set nick [whoami $nick]
+        set drink_type [string tolower $drink_type]
+        set drinks [dict create \
+            "water"        "TIMTOM serves water to $nick. Enjoy!" \
+            "juice"        "TIMTOM serves orange juice to $nick. Enjoy!" \
+            "orange juice" "TIMTOM serves orange juice to $nick. Enjoy!" \
+            "lemonade"     "TIMTOM serves lemonade to $nick. Enjoy!" \
+            "milk"         "TIMTOM serves cold milk to $nick. Enjoy!" \
+            "soda"         "TIMTOM serves soda to $nick. Enjoy!" \
+            "beer"         "TIMTOM serves a cold beer to $nick. Enjoy!" \
+            "wine"         "TIMTOM serves fine wine to $nick. Enjoy!" \
+            "cocktail"     "TIMTOM serves a fancy cocktail to $nick. Enjoy!" \
+            "whiskey"      "TIMTOM serves whiskey to $nick. Enjoy!" \
+            "vodka"        "TIMTOM serves vodka to $nick. Enjoy!" \
+        ]
+        if {[dict exists $drinks $drink_type]} {
+            return "\0033,8[dict get $drinks $drink_type]\003"
+        }
+        return ""
+    }
+
+    # `food X` from the previous port: a generic dispatcher with a few
+    # known items and a fallback that just echoes whatever was asked for.
+    proc food {food_type {nick ""}} {
+        set nick [whoami $nick]
+        set food_type [string tolower $food_type]
+        set foods [dict create \
+            "pizza"   "TIMTOM serves hot pizza to $nick. Enjoy!" \
+            "crab"    "TIMTOM serves delicious crab to $nick. Enjoy!" \
+            "nachos"  "TIMTOM serves cheesy nachos to $nick. Enjoy!" \
+            "lasagna" "TIMTOM serves fresh lasagna to $nick. Enjoy!" \
+            "tacos"   "TIMTOM serves tasty tacos to $nick. Enjoy!" \
+            "burger"  "TIMTOM serves a juicy burger to $nick. Enjoy!" \
+        ]
+        if {[dict exists $foods $food_type]} {
+            return "\0038,4[dict get $foods $food_type]\003"
+        }
+        if {$food_type eq ""} { return "" }
+        return "\0038,4TIMTOM serves $food_type to $nick. Enjoy!\003"
+    }
+
     # ========================================================================
     # Crab (self / for someone)
     # ========================================================================
@@ -1150,6 +1196,20 @@ namespace eval timtom {
         set nick [whoami $nick]
         set_state story 1
         return "\0031,11Hello, ${nick}, I understand that you would like to hear a story now.  This would be my utmost pleasure.  To begin the story please type \"begin\".\003"
+    }
+
+    # The previous TCL port wrote three short complete tales of its own.
+    # Kept here as a side trigger ("tale" / "another story") so they survive
+    # alongside the mIRC state-machine story.
+    proc tale {{nick ""}} {
+        set nick [whoami $nick]
+        set ch [current_channel]
+        set tales [list \
+            "\0032,7Once upon a time, there was a horse named Gerald. Gerald lived in $ch and ate oats every day. One day, Gerald found a golden carrot. He ate it and became the king of all horses. The end.\003" \
+            "\0032,7In a land far away, there lived a brave chatter named ${nick}. They ventured into the treacherous channel of $ch and found friendship, laughter, and unlimited soup. The end.\003" \
+            "\0032,7There once was a bot named TIMTOM who served the people of $ch with unwavering dedication. Day after day, TIMTOM provided soup, tea, marriages, and stares. And everyone was happy forever. The end.\003" \
+        ]
+        return [lindex $tales [expr {int(rand() * [llength $tales])}]]
     }
 
     proc story_begin {{nick ""}} {
@@ -1890,6 +1950,9 @@ namespace eval timtom {
             "story"            { return [story_start $caller_nick] }
             "begin"            { return [story_begin $caller_nick] }
             "more"             { return [story_more $caller_nick] }
+            "tale" -
+            "another story" -
+            "another tale"     { return [tale $caller_nick] }
             "stoner" -
             "stoners"          { return [stoners] }
             "yes"              { return [yes_cmd $caller_nick] }
@@ -1949,7 +2012,16 @@ namespace eval timtom {
             set target [lindex $words 1]
             set rest_text [join $rest " "]
             switch -- $first {
-                "drink"   { return [drink_for $rest_text $caller_nick] }
+                "drink"   {
+                    # Prefer the previous port's named-drink response when the
+                    # argument is a known drink type ("drink water", "drink
+                    # beer"); otherwise fall through to the mIRC for-someone
+                    # rotation.
+                    set named [drink_named $rest_text $caller_nick]
+                    if {$named ne ""} { return $named }
+                    return [drink_for $rest_text $caller_nick]
+                }
+                "food"    { return [food $rest_text $caller_nick] }
                 "crab"    { return [crab_for $rest_text $caller_nick] }
                 "cake"    { return [cake_for $rest_text $caller_nick] }
                 "pizza"   { return [pizza_for $rest_text $caller_nick] }
