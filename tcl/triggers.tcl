@@ -236,6 +236,20 @@ namespace eval triggers {
             }
         }
 
+        # Expose the dispatching network as ::network for the duration
+        # of the handler calls. The Rust dispatch path (eval_simple) hard-
+        # codes ::network to "system" for its own bookkeeping; without this
+        # override, handlers can't tell which network the event came from
+        # and any timer they schedule with a "network:channel" key gets
+        # routed back to a bot connection that doesn't exist.
+        set _saved_network ""
+        set _had_network 0
+        if {[info exists ::network]} {
+            set _saved_network $::network
+            set _had_network 1
+        }
+        set ::network $network
+
         foreach binding $bindings($event) {
             set pattern [lindex $binding 0]
             set proc_name [lindex $binding 1]
@@ -263,6 +277,15 @@ namespace eval triggers {
                     lappend results [list $channel "Error in $proc_name: $err"]
                 }
             }
+        }
+
+        # Restore whatever value ::network had on entry (typically the
+        # "system" sentinel that eval_simple sets) so subsequent code in
+        # the same eval doesn't see the dispatch's network leak through.
+        if {$_had_network} {
+            set ::network $_saved_network
+        } else {
+            unset ::network
         }
 
         return $results
