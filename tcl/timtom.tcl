@@ -36,6 +36,22 @@ namespace eval timtom {
         return ""
     }
 
+    # Channel name for use as a `timers schedule` target. The Rust timer
+    # dispatch reads "network:channel" composite keys and routes them to
+    # the right network connection; without the prefix it falls back to
+    # picking an arbitrary first network, which silently misroutes
+    # recurring messages on multi-network bots. Prefix only when ::network
+    # is non-empty so the bare-channel fallback still works in tests and
+    # single-network deployments.
+    proc _timer_chan {} {
+        set ch [current_channel]
+        if {$ch eq ""} { return "" }
+        if {[info exists ::network] && $::network ne ""} {
+            return "${::network}:${ch}"
+        }
+        return $ch
+    }
+
     proc format_with_commas {num} {
         set num [expr {entier($num)}]
         set negative 0
@@ -907,7 +923,7 @@ namespace eval timtom {
 
     proc dice {{nick ""}} {
         set nick [whoami $nick]
-        set ch [current_channel]
+        set tchan [_timer_chan]
         # Cooldown: refuse to start a new game until the previous one's
         # 80 s window has elapsed.
         set started [get_state dice_started]
@@ -928,14 +944,14 @@ namespace eval timtom {
         set_state dice_started [clock seconds]
         clear_glob "bet*_*"
 
-        if {$ch ne ""} {
-            timers schedule $ch "\0031,7Let's get those bets in friends!\003" 5000
-            timers schedule $ch "\0031,730 seconds to get those bets in!\003" 10000
-            timers schedule $ch "\0031,720 seconds to bet and counting!  Hurry hurry hurry!\003" 20000
-            timers schedule $ch "\0038,410 seconds to bet!!!!!  Last call!!!!!  Get em in, friends!!!!!\003" 30000
-            timers schedule $ch "\0031,7Ok, all bets are in!\003" 40000
-            timers schedule $ch "\0031,7I rolled $d1 and $d2 for a total of ${total}...Calculating payoffs....Please wait a moment....\003" 40000
-            timers schedule $ch "\0032,8Thanks for playing dice, friends!  I'll be waiting for you to play again real soon!\003" 80000
+        if {$tchan ne ""} {
+            timers schedule $tchan "\0031,7Let's get those bets in friends!\003" 5000
+            timers schedule $tchan "\0031,730 seconds to get those bets in!\003" 10000
+            timers schedule $tchan "\0031,720 seconds to bet and counting!  Hurry hurry hurry!\003" 20000
+            timers schedule $tchan "\0038,410 seconds to bet!!!!!  Last call!!!!!  Get em in, friends!!!!!\003" 30000
+            timers schedule $tchan "\0031,7Ok, all bets are in!\003" 40000
+            timers schedule $tchan "\0031,7I rolled $d1 and $d2 for a total of ${total}...Calculating payoffs....Please wait a moment....\003" 40000
+            timers schedule $tchan "\0032,8Thanks for playing dice, friends!  I'll be waiting for you to play again real soon!\003" 80000
         }
 
         return "\0031,7Welcome to dice!  My name is TIMTOM and I will be throwing one pair of dice.  Everyone is encouraged to make bets on the total value.  The totals range from 2 to 12.  The min bet is \0031,7\$5000 and the max bet is \0031,7\$20,000 (only whole dollar amounts please).  The betting syntax is \"bet 5000 on 7\" for example.  The payouts are: 35:1 on 2 or 12, 17:1 on 3 or 11, 11:1 on 4 or 10, 8:1 on 5 or 9, 6:1 on 6 or 8, and 5:1 on 7.\003\n\0034,11Please make your bets now.  You can bet on as many numbers as you'd like, but please make only one bet per number.  TIMTOM gets confused easily ;P\003"
@@ -955,7 +971,7 @@ namespace eval timtom {
     # `bet <amount> on <total>` - dice bet placement.
     proc dice_bet {amount target {nick ""}} {
         set nick [whoami $nick]
-        set ch [current_channel]
+        set tchan [_timer_chan]
 
         # Sanity-check amount and target before hitting the game state.
         if {[string match "*.*" $amount]} {
@@ -1005,15 +1021,15 @@ namespace eval timtom {
             # win immediately. Result line still arrives at +40 s.
             add_money $nick [expr {$amount + $winnings}]
             set winnings_str [format_with_commas $winnings]
-            if {$ch ne ""} {
-                timers schedule $ch "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target. \00311,6You win $nick!\0038,5 TIMTOM pays $mul:1 odds for a total of \0038,5\$${winnings_str}.\003" $delay
+            if {$tchan ne ""} {
+                timers schedule $tchan "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target. \00311,6You win $nick!\0038,5 TIMTOM pays $mul:1 odds for a total of \0038,5\$${winnings_str}.\003" $delay
             }
         } else {
             # Loss: amount goes to the pot.
             add_stat $nick pot $amount
             inc_state pot $amount
-            if {$ch ne ""} {
-                timers schedule $ch "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target.  Sorry, $nick, that's a losing bet.  TIMTOM puts \0038,5\$${amount_str} into the pot.\003" $delay
+            if {$tchan ne ""} {
+                timers schedule $tchan "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target.  Sorry, $nick, that's a losing bet.  TIMTOM puts \0038,5\$${amount_str} into the pot.\003" $delay
             }
         }
 
@@ -1230,11 +1246,11 @@ namespace eval timtom {
     }
 
     proc stare_at {target {nick ""}} {
-        set ch [current_channel]
-        set msg "TIMTOM IS STARING AT [string toupper $target]"
+        set tchan [_timer_chan]
+        set msg "\0034,11TIMTOM IS STARING AT [string toupper $target]\003"
         # Schedule 10 follow-up stares 11 seconds apart (mIRC `timertowel 10 11`).
-        if {$ch ne ""} {
-            catch {timers schedule $ch $msg 11000 10 11000}
+        if {$tchan ne ""} {
+            catch {timers schedule $tchan $msg 11000 10 11000}
         }
         return $msg
     }
