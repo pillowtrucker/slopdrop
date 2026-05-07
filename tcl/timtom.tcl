@@ -491,7 +491,7 @@ namespace eval timtom {
                 add_money $nick 1000000
                 clear_glob "spin_*"
                 set_state ok 1
-                set msg "\0035,7${nick}, you get \0035,7$who,000,000!!! THAT'S AMAZING!!!\003"
+                set msg "\0035,7${nick}, you get \0035,7\$1,000,000!!! THAT'S AMAZING!!!\003"
             }
             37 { clear_glob "spin_*"; set msg "\0034,1${nick}, you get \0034,1\$000. LOL.\003" }
             default { set msg "" }
@@ -1059,7 +1059,7 @@ namespace eval timtom {
     proc prices {{nick ""}} {
         set nick [whoami $nick]
         set ch [current_channel]
-        return "\0035,10Hello ${nick}!  These are the current market prices in ${ch}:  drinks are \0035,10\$2 a piece, cake is \0035,10$who.95 a piece, and pizza is \0035,10\$2.22 a slice.  Homemade lasagna is \0035,10\$2.50.  Tacos are \0035,10$.79 \0035,10/ person (all non-ops served), and sauce is \0035,10$.25 extra.  A Nachos Fun Pack costs \0035,10\$3.95.  A pony will cost you \0035,10\$1000 and a unicorn will cost you \0035,10\$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!\003"
+        return "\0035,10Hello ${nick}!  These are the current market prices in ${ch}:  drinks are \0035,10\$2 a piece, cake is \0035,10\$1.95 a piece, and pizza is \0035,10\$2.22 a slice.  Homemade lasagna is \0035,10\$2.50.  Tacos are \0035,10$.79 \0035,10/ person (all non-ops served), and sauce is \0035,10$.25 extra.  A Nachos Fun Pack costs \0035,10\$3.95.  A pony will cost you \0035,10\$1000 and a unicorn will cost you \0035,10\$5000.  As always; soup, coffee, and tea are free; as are all of our other services.  Enjoy!\003"
     }
 
     proc hedges {{nick ""}} {
@@ -1177,11 +1177,11 @@ namespace eval timtom {
     }
 
     proc timtom_unicorns {{nick ""}} {
-        return "\0030,2$who always has 8 unicorns.  Never fear!\003"
+        return "\0030,2timtom always has 8 unicorns.  Never fear!\003"
     }
     proc timtom_pony {{nick ""}} {
         set nick [whoami $nick]
-        return "\0033,11HELLO HELLO HELLO HELLO ${nick}!  Don't you know that $who always has 8 ponies?  That's why he gives so many away.\003"
+        return "\0033,11HELLO HELLO HELLO HELLO ${nick}!  Don't you know that timtom always has 8 ponies?  That's why he gives so many away.\003"
     }
 
     # ========================================================================
