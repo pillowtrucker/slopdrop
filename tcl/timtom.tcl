@@ -890,6 +890,136 @@ namespace eval timtom {
         return "\0037,5TIMTOM brings out the \003\00311,3EMPANADAS\003\0037,5 for $who¡Buen provecho, amigos!"
     }
 
+    # ========================================================================
+    # Dice (line 2653 in TIMTOM.txt)
+    #
+    # The mIRC version pre-rolls a pair of dice when "dice" is typed,
+    # opens a 40-second betting window, schedules a series of
+    # countdown/result/payout messages spanning 80 seconds, and clears
+    # the per-game state via a timer at +80s. The trigger framework here
+    # can dispatch a string at a delay, but it can't run TCL code on
+    # timer fire, so the per-game cleanup is done lazily on the next
+    # `dice` call (any state older than 80 s is treated as expired) and
+    # money payouts are credited immediately rather than at +40s. The
+    # announcement and result messages still arrive at the correct
+    # mIRC-faithful offsets.
+    # ========================================================================
+
+    proc dice {{nick ""}} {
+        set nick [whoami $nick]
+        set ch [current_channel]
+        # Cooldown: refuse to start a new game until the previous one's
+        # 80 s window has elapsed.
+        set started [get_state dice_started]
+        if {$started ne ""} {
+            set elapsed [expr {[clock seconds] - $started}]
+            if {$elapsed < 80} { return "" }
+        }
+        # Pre-roll. Bets placed during the next 40 s know the outcome
+        # already; users don't, because the result is announced at +40s.
+        set d1 [random_int 1 6]
+        set d2 [random_int 1 6]
+        set total [expr {$d1 + $d2}]
+        set_state dice1 $d1
+        set_state dice2 $d2
+        set_state dicetotal $total
+        set_state dice 1
+        set_state edice 1
+        set_state dice_started [clock seconds]
+        clear_glob "bet*_*"
+
+        if {$ch ne ""} {
+            timers schedule $ch "\0031,7Let's get those bets in friends!\003" 5000
+            timers schedule $ch "\0031,730 seconds to get those bets in!\003" 10000
+            timers schedule $ch "\0031,720 seconds to bet and counting!  Hurry hurry hurry!\003" 20000
+            timers schedule $ch "\0038,410 seconds to bet!!!!!  Last call!!!!!  Get em in, friends!!!!!\003" 30000
+            timers schedule $ch "\0031,7Ok, all bets are in!\003" 40000
+            timers schedule $ch "\0031,7I rolled $d1 and $d2 for a total of ${total}...Calculating payoffs....Please wait a moment....\003" 40000
+            timers schedule $ch "\0032,8Thanks for playing dice, friends!  I'll be waiting for you to play again real soon!\003" 80000
+        }
+
+        return "\0031,7Welcome to dice!  My name is TIMTOM and I will be throwing one pair of dice.  Everyone is encouraged to make bets on the total value.  The totals range from 2 to 12.  The min bet is \0031,7\$5000 and the max bet is \0031,7\$20,000 (only whole dollar amounts please).  The betting syntax is \"bet 5000 on 7\" for example.  The payouts are: 35:1 on 2 or 12, 17:1 on 3 or 11, 11:1 on 4 or 10, 8:1 on 5 or 9, 6:1 on 6 or 8, and 5:1 on 7.\003\n\0034,11Please make your bets now.  You can bet on as many numbers as you'd like, but please make only one bet per number.  TIMTOM gets confused easily ;P\003"
+    }
+
+    # Returns the number of milliseconds left until the +40 s "result" mark.
+    # Used to schedule per-bet outcome lines so they arrive at the right time.
+    proc _dice_payout_delay {} {
+        set started [get_state dice_started]
+        if {$started eq ""} { return 0 }
+        set elapsed_ms [expr {([clock seconds] - $started) * 1000}]
+        set remaining [expr {40000 - $elapsed_ms}]
+        if {$remaining < 0} { return 0 }
+        return $remaining
+    }
+
+    # `bet <amount> on <total>` - dice bet placement.
+    proc dice_bet {amount target {nick ""}} {
+        set nick [whoami $nick]
+        set ch [current_channel]
+
+        # Sanity-check amount and target before hitting the game state.
+        if {[string match "*.*" $amount]} {
+            return "\0034,11Please, $nick, only whole dollar bets. :)\003"
+        }
+        if {![string is integer -strict $amount]} {
+            return "\0034,11Please, $nick, only whole dollar bets. :)\003"
+        }
+        if {[string match "*.*" $target] || ![string is integer -strict $target] || $target < 2 || $target > 12} {
+            return "\0034,11Sorry, $nick, that is not a valid dice total.  Use whole numbers ranging from 2 to 12.\003"
+        }
+        if {[get_state dice] ne "1"} { return "" }
+        if {$amount < 5000 || $amount > 20000} {
+            return "\0034,11$nick, the min bet is \0034,11\$5000 and the max bet is \0034,11\$20,000.\003"
+        }
+        if {[get_money $nick] < $amount} {
+            return "\0034,11Sorry, $nick, you don't have enough money to make that bet. :(\003"
+        }
+        set bet_key "bet${target}_[string tolower $nick]"
+        if {[get_state $bet_key] == 1} {
+            return "\0034,11Um...$nick....I'm pretty sure you already bet on $target.  I could be wrong though. ;P\003"
+        }
+
+        set_state $bet_key 1
+        add_money $nick [expr {-$amount}]
+
+        set total [get_state dicetotal]
+        set delay [_dice_payout_delay]
+        set amount_str [format_with_commas $amount]
+        if {$total == $target} {
+            # Win: payout multiplier from the mIRC schedule.
+            if {$total == 2 || $total == 12} {
+                set mul 35
+            } elseif {$total == 3 || $total == 11} {
+                set mul 17
+            } elseif {$total == 4 || $total == 10} {
+                set mul 11
+            } elseif {$total == 5 || $total == 9} {
+                set mul 8
+            } elseif {$total == 6 || $total == 8} {
+                set mul 6
+            } else {
+                set mul 5
+            }
+            set winnings [expr {$amount * $mul}]
+            # The framework can't run code on timer fire, so credit the
+            # win immediately. Result line still arrives at +40 s.
+            add_money $nick [expr {$amount + $winnings}]
+            set winnings_str [format_with_commas $winnings]
+            if {$ch ne ""} {
+                timers schedule $ch "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target. \00311,6You win $nick!\0038,5 TIMTOM pays $mul:1 odds for a total of \0038,5\$${winnings_str}.\003" $delay
+            }
+        } else {
+            # Loss: amount goes to the pot.
+            add_stat $nick pot $amount
+            inc_state pot $amount
+            if {$ch ne ""} {
+                timers schedule $ch "\0038,5Let's see here...$nick bet \0038,5\$$amount_str on $target.  Sorry, $nick, that's a losing bet.  TIMTOM puts \0038,5\$${amount_str} into the pot.\003" $delay
+            }
+        }
+
+        return "\0034,11$nick bets \0034,11\$$amount_str on $target.\003"
+    }
+
     proc unicorn_buy {{nick ""}} {
         set nick [whoami $nick]
         if {[get_money $nick] < 5000} {
@@ -1899,6 +2029,7 @@ namespace eval timtom {
             "blackjack"        { return [blackjack_start $caller_nick] }
             "hit"              { return [blackjack_hit $caller_nick] }
             "stand"            { return [blackjack_stand $caller_nick] }
+            "dice"             { return [dice $caller_nick] }
             "pot"              { return [pot_show] }
             "my pot"           { return [my_pot $caller_nick] }
             "guess" -
@@ -1969,9 +2100,13 @@ namespace eval timtom {
                     }
                 }
                 "bet"     {
-                    # "bet N" -> blackjack bet ; "bet N on M" -> dice bet (not implemented)
+                    # "bet N" -> blackjack bet
+                    # "bet N on M" -> dice bet
                     if {[llength $words] == 2} {
                         return [blackjack_bet $target $caller_nick]
+                    }
+                    if {[llength $words] >= 4 && [string equal -nocase [lindex $words 2] "on"]} {
+                        return [dice_bet $target [lindex $words 3] $caller_nick]
                     }
                 }
                 "&"       {
@@ -2018,6 +2153,7 @@ namespace eval timtom {
     # "timtom money" etc).
     namespace export handle commands_help greet money spin wheel flip \
         blackjack_start blackjack_bet blackjack_hit blackjack_stand \
+        dice dice_bet \
         soup tea coffee rings drink drink_for crab crab_for cake cake_for \
         pizza pizza_for nachos nachos_for lasagna lasagna_for sauce sauce_for \
         bong bong_for clean_bong marry marry_target divorce divorce_target \
@@ -2043,21 +2179,12 @@ namespace eval timtom {
 proc timtom_welcome {nick mask channel} {
     set bots [list "ChanServ" "NickServ" "MemoServ" "BotServ" "OperServ"]
     if {$nick in $bots} { return "" }
-    set up [string toupper $nick]
-    # gamme's original mIRC line plus the prior port's quirky variants —
-    # rotated through at random so TIMTOM keeps a bit of his character.
-    set greetings [list \
-        "\0034,11WELCOME TO TABLE, $up\003" \
-        "\0034,11WELCOME TO $channel, $nick! Kick off your shoes, relax, and enjoy your stay.\003" \
-        "\0033,8Hello $nick! Welcome to $channel! TIMTOM is here to serve you.\003" \
-        "\0036,11Greetings $nick! You have entered $channel. May your stay be filled with wonder.\003" \
-        "\0032,10Welcome $nick! $channel welcomes you with open arms and unlimited soup.\003" \
-        "\0038,2Hey $nick! Glad you could join us in $channel! Type 'tcl timtom help' to see what I can do.\003" \
-        "\0031,12Salutations, $nick! You have arrived at $channel. The internet cannot hurt you now.\003" \
-        "\0037,5Welcome to the party, $nick! $channel is better with you here.\003" \
-        "\00311,1$nick has graced $channel with their presence! Welcome, friend!\003" \
-    ]
-    return [lindex $greetings [expr {int(rand() * [llength $greetings])}]]
+    # gamme's original mIRC handler is:
+    #   on *:JOIN:#: { msg $chan 4,11WELCOME TO TABLE, $upper($nick)
+    #                  mode $chan +v $nick }
+    # The +v auto-voice isn't expressible via a trigger response (which is
+    # message-only) — that one bit is dropped; the greeting itself is faithful.
+    return "\0034,11WELCOME TO TABLE, [string toupper $nick]\003"
 }
 
 # TEXT trigger entry point. Sets the per-call context globals and dispatches
