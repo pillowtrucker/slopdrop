@@ -946,9 +946,9 @@ namespace eval timtom {
 
         if {$tchan ne ""} {
             timers schedule $tchan "\0031,7Let's get those bets in friends!\003" 5000
-            timers schedule $tchan "\0031,730 seconds to get those bets in!\003" 10000
-            timers schedule $tchan "\0031,720 seconds to bet and counting!  Hurry hurry hurry!\003" 20000
-            timers schedule $tchan "\0038,410 seconds to bet!!!!!  Last call!!!!!  Get em in, friends!!!!!\003" 30000
+            timers schedule $tchan "\00301,0730 seconds to get those bets in!\003" 10000
+            timers schedule $tchan "\00301,0720 seconds to bet and counting!  Hurry hurry hurry!\003" 20000
+            timers schedule $tchan "\00308,0410 seconds to bet!!!!!  Last call!!!!!  Get em in, friends!!!!!\003" 30000
             timers schedule $tchan "\0031,7Ok, all bets are in!\003" 40000
             timers schedule $tchan "\0031,7I rolled $d1 and $d2 for a total of ${total}...Calculating payoffs....Please wait a moment....\003" 40000
             timers schedule $tchan "\0032,8Thanks for playing dice, friends!  I'll be waiting for you to play again real soon!\003" 80000
