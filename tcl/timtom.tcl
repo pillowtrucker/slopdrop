@@ -1420,28 +1420,28 @@ namespace eval timtom {
 
         if {$r == $j} {
             set_stat $nick out 1
-            return "$nick finds: Satan, Destroyer of Souls Sorry, $nick, you're out for this game.  Better luck next game!"
+            return "\0031,13$nick finds: \0031,4Satan, Destroyer of Souls \0031,13Sorry, $nick, you're out for this game.  Better luck next game!\003"
         }
 
         # ChanServ branch (r == i): finds a colour from ChanServ.
         if {$r == $i} {
             set finder "ChanServ"
             switch -- $a {
-                1 { set color red;    set msg "$nick finds: $finder Hey Channel Servant!  You're looking rather ravishing in RED!" }
-                2 { set color blue;   set msg "$nick finds: $finder That shade of BLUE really toots you well!  Toot toot!" }
-                3 { set color yellow; set msg "$nick finds: $finder You're an owl here in your YELLOW gear!" }
-                4 { set color bblue;  set msg "$nick finds: $finder Your chives are as deep as the deep BLUE sea." }
-                5 { set color mayo;   set msg "$nick finds: $finder Check out the channel master struttin' around in those MAYONAISE colored shoes!" }
+                1 { set color red;    set msg "\0031,13$nick finds: \0031,4$finder \0031,13Hey Channel Servant!  You're looking rather ravishing in \0031,4RED\0031,13!\003" }
+                2 { set color blue;   set msg "\0031,13$nick finds: \00301,11$finder \0031,13That shade of \00301,11BLUE\0031,13 really toots you well!  Toot toot!\003" }
+                3 { set color yellow; set msg "\0031,13$nick finds: \0031,8$finder \0031,13You're an owl here in your \0031,8YELLOW\0031,13 gear!\003" }
+                4 { set color bblue;  set msg "\0031,13$nick finds: \0030,12$finder \0031,13Your chives are as deep as the deep \0030,12BLUE\0031,13 sea.\003" }
+                5 { set color mayo;   set msg "\0031,13$nick finds: \0031,7$finder \0031,13Check out the channel master struttin' around in those \0031,7MAYONAISE\0031,13 colored shoes!\003" }
             }
         } else {
             set who [random_other_nick $nick]
             if {$who eq ""} { set who [random_chan_nick] }
             switch -- $a {
-                1 { set color red;    set msg "$nick finds: $who  Well aren't you looking ravishing in RED?" }
-                2 { set color blue;   set msg "$nick finds: $who  That shade of BLUE really suits you well." }
-                3 { set color yellow; set msg "$nick finds: $who  You're a star here in your YELLOW gear!" }
-                4 { set color bblue;  set msg "$nick finds: $who  Your eyes are as deep as the deep BLUE sea." }
-                5 { set color mayo;   set msg "$nick finds: $who  Check out $who struttin' around in those MAYONAISE colored shoes!" }
+                1 { set color red;    set msg "\0031,13$nick finds: \0031,4$who \0031,13Well aren't you looking ravishing in \0031,4RED\0031,13?\003" }
+                2 { set color blue;   set msg "\0031,13$nick finds: \00301,11$who \0031,13That shade of \00301,11BLUE\0031,13 really suits you well.\003" }
+                3 { set color yellow; set msg "\0031,13$nick finds: \0031,8$who \0031,13You're a star here in your \0031,8YELLOW\0031,13 gear!\003" }
+                4 { set color bblue;  set msg "\0031,13$nick finds: \0030,12$who \0031,13Your eyes are as deep as the deep \0030,12BLUE\0031,13 sea.\003" }
+                5 { set color mayo;   set msg "\0031,13$nick finds: \0031,7$who \0031,13Check out $who struttin' around in those \0031,7MAYONAISE\0031,13 colored shoes!\003" }
             }
         }
 
@@ -1455,7 +1455,7 @@ namespace eval timtom {
             set ponies ""
             for {set p 0} {$p < 20} {incr p} {
                 add_stat $nick pony 1
-                append ponies "\nFinally, $nick gets a pony."
+                append ponies "\n\0037,10Finally, $nick gets a pony.\003"
             }
             clear_glob "red_*"
             clear_glob "blue_*"
@@ -1464,7 +1464,7 @@ namespace eval timtom {
             clear_glob "mayo_*"
             clear_glob "out_*"
             del_state hide
-            append msg "\nAwesome work, $nick, you win!!!  You found .......... , .......... , .......... , .......... , and ........... Here's 20 ponies to add to your collection.$ponies"
+            append msg "\n\0035,11Awesome work, $nick, you win!!!  You found \0034,4..........\003 , \00311,11..........\003 , \0038,8..........\003 , \00312,12..........\003 , and \0037,7..........\003. \0035,11Here's 20 \0037,10ponies\0035,11 to add to your collection.\003$ponies"
         }
         return $msg
     }
@@ -1509,11 +1509,11 @@ namespace eval timtom {
                 # First-try win: 10 bonus unicorns plus pot or pony.
                 if {$p > 0} {
                     add_money $nick $p
-                    set head "WOW YOU GOT IT [string toupper $nick]!  IT WAS $number!!!  AND ON YOUR FIRST TRY!!!  YOU WIN THE POT AND SINCE YOU GOT IT ON YOUR FIRST TRY HERE'S 10 BONUS UNICORNS!!!!"
+                    set head "\0038,3WOW YOU GOT IT [string toupper $nick]!  IT WAS $number!!!  AND ON YOUR FIRST TRY!!!  YOU WIN THE POT AND SINCE YOU GOT IT ON YOUR FIRST TRY HERE'S 10 BONUS \0030,2UNICORNS!!!!\003"
                 } else {
                     add_stat $nick pony 1
-                    append rewards "\nFinally, $nick gets a pony."
-                    set head "WOW YOU GOT IT [string toupper $nick]!  IT WAS $number!!!  AND ON YOUR FIRST TRY!!!  SINCE THE POT IS EMPTY, YOU GET 1 PONY, AND SINCE YOU GOT IT ON YOUR FIRST TRY HERE'S 10 BONUS UNICORNS!!!!"
+                    append rewards "\n\0037,10Finally, $nick gets a pony.\003"
+                    set head "\0038,3WOW YOU GOT IT [string toupper $nick]!  IT WAS $number!!!  AND ON YOUR FIRST TRY!!!  SINCE THE POT IS EMPTY, YOU GET 1 \0037,10PONY\0038,3, AND SINCE YOU GOT IT ON YOUR FIRST TRY HERE'S 10 BONUS \0030,2UNICORNS!!!!\003"
                 }
                 for {set k 0} {$k < 10} {incr k} {
                     add_stat $nick unicorn 1
