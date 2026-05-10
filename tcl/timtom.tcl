@@ -642,7 +642,7 @@ namespace eval timtom {
             8  { return "2,10timtom gives $nick a sip from his beer" }
             9  { return "4,11timtom pours $nick a shot of Robitussin" }
             10 { return "1,12timtom brings $nick a tall glass of water" }
-            11 { return "2,7timtom administers a few droplets of GHB to ${target}" }
+            11 { return "2,7timtom administers a few droplets of GHB to ${nick}" }
         }
         return ""
     }
