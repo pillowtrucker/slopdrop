@@ -277,9 +277,17 @@ impl TclPlugin {
         args: &[&str],
         network: &str,
     ) -> Result<()> {
-        // Build TCL command to dispatch event (include network)
-        let tcl_args: Vec<String> = args.iter().map(|s| format!("{{{}}}", s)).collect();
-        let dispatch_cmd = format!("triggers dispatch {} {{{}}} {}", event, network, tcl_args.join(" "));
+        // Build TCL command to dispatch event (include network).
+        // Every interpolated value is backslash-escaped so a stray `}` or
+        // `[command]` in user text can't break out of its argument slot.
+        use crate::tcl_escape::tcl_escape_arg;
+        let tcl_args: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
+        let dispatch_cmd = format!(
+            "triggers dispatch {} {} {}",
+            tcl_escape_arg(event),
+            tcl_escape_arg(network),
+            tcl_args.join(" "),
+        );
 
         debug!("Dispatching event: {}", dispatch_cmd);
 
