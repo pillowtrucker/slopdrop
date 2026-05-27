@@ -12,6 +12,7 @@ mod irc_formatting;
 mod smeggdrop_commands;
 mod state;
 mod stock_commands;
+mod tcl_escape;
 mod tcl_plugin;
 mod tcl_thread;
 mod tcl_wrapper;

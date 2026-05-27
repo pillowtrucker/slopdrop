@@ -1,3 +1,4 @@
+use slopdrop::tcl_escape::tcl_escape_arg;
 use slopdrop::tcl_wrapper::SafeTclInterp;
 use tempfile::TempDir;
 use std::path::PathBuf;
@@ -338,4 +339,89 @@ fn test_trigger_dispatch_text_event_with_network() {
     // Should NOT fire on libera
     let result = interp.eval(r#"triggers dispatch TEXT libera testuser user@host #test "!echo hello""#).unwrap();
     assert!(!result.contains("hello") || result.trim().is_empty() || result.trim() == "{}");
+}
+
+// Build the same dispatch command string that TclPlugin::handle_event emits.
+// Tests that go through this helper exercise the same escaping path that
+// runs in production.
+fn build_dispatch_cmd(event: &str, network: &str, args: &[&str]) -> String {
+    let escaped: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
+    format!(
+        "triggers dispatch {} {} {}",
+        tcl_escape_arg(event),
+        tcl_escape_arg(network),
+        escaped.join(" "),
+    )
+}
+
+// Regression test for the original bug: a TEXT event whose payload contained
+// "} ]" would close the brace-quoted word early, splitting one argument into
+// several and producing
+//   Error in ...: wrong # args: should be "... nick mask channel text"
+#[test]
+fn test_trigger_dispatch_text_with_brace_in_payload() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval(r#"
+        proc capture_text {nick mask channel text} {
+            set ::captured $text
+            return ""
+        }
+    "#).unwrap();
+    interp.eval("set ::captured {}").unwrap();
+    interp.eval("triggers bind TEXT * capture_text").unwrap();
+
+    let cmd = build_dispatch_cmd(
+        "TEXT",
+        "libera",
+        &["xactyp", "user@host", "#test", "i should fix the ] and } thing"],
+    );
+    let result = interp.eval(&cmd).unwrap();
+    assert!(
+        !result.contains("wrong # args"),
+        "dispatch surfaced a parse error: {}",
+        result
+    );
+
+    let captured = interp.eval("set ::captured").unwrap();
+    assert_eq!(
+        captured.trim_end_matches('\n'),
+        "i should fix the ] and } thing",
+        "handler received mangled text"
+    );
+}
+
+// Confirms that adversarial content cannot break out of the argument slot
+// and execute injected Tcl through the dispatch path.
+#[test]
+fn test_trigger_dispatch_blocks_tcl_injection() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval(r#"
+        proc capture_text {nick mask channel text} {
+            set ::captured $text
+            return ""
+        }
+    "#).unwrap();
+    interp.eval("set ::captured {}").unwrap();
+    interp.eval("set ::pwned 0").unwrap();
+    interp.eval("triggers bind TEXT * capture_text").unwrap();
+
+    // Payload tries to terminate the brace, run a command, and reopen the
+    // brace so the rest of the dispatch line still parses.
+    let payload = "} ; set ::pwned 1 ; {";
+    let cmd = build_dispatch_cmd(
+        "TEXT",
+        "libera",
+        &["xactyp", "user@host", "#test", payload],
+    );
+    let _ = interp.eval(&cmd).unwrap();
+
+    let pwned = interp.eval("set ::pwned").unwrap();
+    assert_eq!(pwned.trim_end_matches('\n'), "0", "injection executed");
+
+    let captured = interp.eval("set ::captured").unwrap();
+    assert_eq!(captured.trim_end_matches('\n'), payload, "handler got mangled text");
 }
