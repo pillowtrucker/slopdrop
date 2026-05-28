@@ -638,3 +638,83 @@ fn test_cache_keys() {
     assert!(result.contains("key2"));
     assert!(result.contains("key3"));
 }
+
+// =============================================================================
+// TIMTOM give / transfer
+// =============================================================================
+
+// Reported exploit: a sender whose balance exactly equalled the transfer
+// amount could still "give", overdrawing to -$2 (the fee) because the
+// balance check ignored the fee.
+#[test]
+fn test_timtom_give_rejects_overdraft_by_fee() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval("timtom set_money a_ 3998").unwrap();
+    interp.eval("timtom set_money xactyp 0").unwrap();
+
+    let result = interp.eval("::timtom::give xactyp 3998 a_").unwrap();
+    assert!(result.is_empty(), "transfer should fail silently, got: {}", result);
+
+    let sender = interp.eval("timtom get_money a_").unwrap();
+    assert_eq!(sender.trim_end_matches('\n'), "3998",
+        "sender balance should be untouched");
+
+    let receiver = interp.eval("timtom get_money xactyp").unwrap();
+    assert_eq!(receiver.trim_end_matches('\n'), "0",
+        "receiver should not have received anything");
+}
+
+// A sender with exactly enough for amount + fee should succeed.
+#[test]
+fn test_timtom_give_allows_amount_plus_fee() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval("timtom set_money sender 4000").unwrap();
+    interp.eval("timtom set_money recipient 0").unwrap();
+
+    let result = interp.eval("::timtom::give recipient 3998 sender").unwrap();
+    assert!(result.contains("transfer"), "expected confirmation, got: {}", result);
+
+    let sender = interp.eval("timtom get_money sender").unwrap();
+    assert_eq!(sender.trim_end_matches('\n'), "0");
+
+    let recipient = interp.eval("timtom get_money recipient").unwrap();
+    assert_eq!(recipient.trim_end_matches('\n'), "3998");
+}
+
+// Zero-amount transfers were also accepted and still charged the $2 fee,
+// letting any user drain themselves to -$2 from scratch.
+#[test]
+fn test_timtom_give_rejects_zero_amount() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval("timtom set_money sender 100").unwrap();
+    interp.eval("timtom set_money recipient 0").unwrap();
+
+    let result = interp.eval("::timtom::give recipient 0 sender").unwrap();
+    assert!(result.is_empty());
+
+    let sender = interp.eval("timtom get_money sender").unwrap();
+    assert_eq!(sender.trim_end_matches('\n'), "100", "fee should not have been charged");
+}
+
+// A sender starting with $0 has no business transferring anything; the
+// pre-fix code would silently take $2 from them for any "give X 0".
+#[test]
+fn test_timtom_give_from_empty_account_does_not_overdraw() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+
+    interp.eval("timtom set_money broke 0").unwrap();
+
+    let _ = interp.eval("::timtom::give someone 0 broke").unwrap();
+    let _ = interp.eval("::timtom::give someone 50 broke").unwrap();
+
+    let balance = interp.eval("timtom get_money broke").unwrap();
+    assert_eq!(balance.trim_end_matches('\n'), "0",
+        "no transfer should have charged the fee");
+}

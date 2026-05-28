@@ -424,9 +424,12 @@ namespace eval timtom {
         if {![string is integer -strict $amount]} {
             return "\0034,11Please, $nick, only whole dollar transfers.\003"
         }
-        if {$amount < 0} { return "" }
+        if {$amount <= 0} { return "" }
         set cur [get_money $nick]
-        if {$cur < $amount} { return "" }
+        # The fee comes out of the sender's pocket too, so the balance
+        # check has to cover amount + fee. Without the "+ 2" a sender
+        # whose balance exactly equals amount overdraws to -$2.
+        if {$cur < $amount + 2} { return "" }
         # Transfer with \$2 fee that goes into the pot.
         add_money $nick [expr {-$amount}]
         add_money $nick -2
