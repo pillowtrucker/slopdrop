@@ -126,20 +126,28 @@ impl IrcClient {
     /// Calculate maximum message length for a given channel
     ///
     /// Takes into account:
-    /// - Server's advertised MSGLEN (if available)
+    /// - Server's advertised MSGLEN (if available) — NOTE: MSGLEN is the
+    ///   TOTAL line length including prefix/command/target, so we subtract
+    ///   the overhead from it, we do NOT use it raw (that was the old bug:
+    ///   chunks were sized to the full 512-byte line, the server cut the
+    ///   tail at ~446 bytes, and numbers were lost mid-word).
     /// - IRC protocol limit (512 bytes)
     /// - Overhead from: :nick!ident@host PRIVMSG #channel :\r\n
+    /// - A safety margin so hostmask drift (cloaks applied after RPL_WELCOME,
+    ///   ident changes, etc.) can never push a chunk over the server limit.
     fn calculate_max_message_length(&self, channel: &str) -> usize {
-        // If server advertises MSGLEN, use that
-        if let Some(msglen) = self.server_limits.msglen {
-            return msglen;
-        }
+        // Extra bytes kept free so the server NEVER truncates a chunk.
+        // The hostmask estimate can be stale (cloaks are applied after
+        // RPL_WELCOME), and MSGLEN counts the whole line. Without this
+        // margin, a chunk that is exactly at the limit gets cut mid-word
+        // and the tail (numbers, words) is silently DISCARDED.
+        const SAFETY_MARGIN: usize = 20;
 
-        // Otherwise calculate based on IRC protocol limit (512 bytes total)
-        const IRC_PROTOCOL_MAX: usize = 512;
+        // Total line budget: server-advertised MSGLEN if present, else the
+        // IRC protocol maximum. MSGLEN is the WHOLE line, not the content.
+        let total_len = self.server_limits.msglen.unwrap_or(512);
 
-        // Calculate overhead: ":nick!ident@host PRIVMSG #channel :\r\n"
-        // Format: :<prefix> PRIVMSG <target> :<trailing>\r\n
+        // Overhead: ":nick!ident@host PRIVMSG #channel :\r\n"
         let overhead = if let Some(ref hostmask) = self.bot_hostmask {
             // :nick!ident@host (1 + hostmask length)
             let prefix_len = 1 + hostmask.len();
@@ -169,8 +177,9 @@ impl IrcClient {
             estimated_prefix + command_len + target_len + suffix_len
         };
 
-        // Available space for message content
-        let max_len = IRC_PROTOCOL_MAX.saturating_sub(overhead);
+        // Available space for message content: total line minus overhead,
+        // minus the safety margin so the server never truncates mid-chunk.
+        let max_len = total_len.saturating_sub(overhead + SAFETY_MARGIN);
 
         // Ensure we have at least some reasonable minimum (100 bytes)
         // Upper limit of 480 bytes leaves margin for edge cases while allowing
@@ -270,6 +279,28 @@ impl IrcClient {
         match message.command {
             Command::PRIVMSG(ref target, ref msg) => {
                 if let Some(Prefix::Nickname(ref nick, ref user, ref host)) = message.prefix {
+                    // If this is our own message echoed back by the server,
+                    // refresh the hostmask from the ACTUAL prefix the server
+                    // used. Cloaks are often applied after RPL_WELCOME, so
+                    // the welcome-time hostmask can be shorter than the real
+                    // one — the echo is ground truth. (Only update if the
+                    // echo is consistent: same nick, and target is a channel
+                    // or our own nick.)
+                    if nick == &self.client.current_nickname() {
+                        let echoed_hostmask = format!("{}!{}@{}", nick, user, host);
+                        let should_update = match self.bot_hostmask {
+                            Some(ref current) => current != &echoed_hostmask,
+                            None => true,
+                        };
+                        if should_update {
+                            debug!(
+                                "[{}] Refreshing bot hostmask from echo: {}",
+                                net, echoed_hostmask
+                            );
+                            self.bot_hostmask = Some(echoed_hostmask);
+                        }
+                    }
+
                     // Strip IRC formatting codes from the message
                     let clean_msg = irc_formatting::strip_irc_formatting(msg);
 

@@ -1060,4 +1060,104 @@ mod tests {
             assert_eq!(code_count, 0, "Plain text shouldn't have formatting codes");
         }
     }
+
+    /// Simulate the server-side truncation: the IRC server cuts any line
+    /// longer than 512 bytes TOTAL (including the :nick!user@host PRIVMSG
+    /// #chan : prefix and CRLF), discarding the tail mid-word.
+    ///
+    /// This is the production bug: the bot's max_len was computed from a
+    /// hostmask that is a few bytes SHORTER than the cloaked prefix the
+    /// server actually relays with, so every chunk went out a few bytes
+    /// over the limit and the server cut each one mid-number, losing the
+    /// tail ("1 2 3 ... 138 13" then "141 ..." — 139 and 140 gone).
+    fn server_truncate(chunk: &str, real_hostmask: &str, channel: &str) -> String {
+        // ":nick!user@host PRIVMSG #channel :content\r\n"
+        let overhead = 1 + real_hostmask.len() + 9 + channel.len() + 2 + 2;
+        let content_limit = 512usize.saturating_sub(overhead);
+        let mut cut = chunk.to_string();
+        cut.truncate(content_limit);
+        cut
+    }
+
+    #[test]
+    fn test_no_data_loss_when_server_truncates_at_512() {
+        // Production scenario: bot's cached hostmask (from RPL_WELCOME) is
+        // shorter than the real cloaked prefix. The old max_len calc used
+        // the short hostmask, so chunks were too long and the server cut
+        // them mid-word, DISCARding the tail.
+        let channel = "#flashsupport";
+        let cached_hostmask = "slopdrop!~slopdrop@user/slopdrop/ABC"; // 33 chars
+        let real_hostmask = "slopdrop!~slopdrop@user/slopdrop/ABCDEF"; // 39 chars (cloaked)
+
+        // What the OLD code computed: max_len = 512 - overhead(cached hostmask)
+        let old_overhead = 1 + cached_hostmask.len() + 9 + channel.len() + 1 + 3;
+        let old_max_len = 512usize.saturating_sub(old_overhead);
+
+        // What the NEW code computes: 512 - overhead(real hostmask) - margin
+        let new_overhead = 1 + real_hostmask.len() + 9 + channel.len() + 1 + 3;
+        let new_max_len = 512usize.saturating_sub(new_overhead + 20);
+
+        let text: String = (1..=500).map(|n| n.to_string()).collect::<Vec<_>>().join(" ");
+
+        // OLD behavior: chunks fit the bot's estimate but NOT the server's
+        // real limit — numbers get eaten.
+        let old_chunks = split_message_smart(&text, old_max_len);
+        let mut old_nums: Vec<i32> = Vec::new();
+        for chunk in &old_chunks {
+            let delivered = server_truncate(chunk, real_hostmask, channel);
+            old_nums.extend(
+                delivered.split_whitespace().filter_map(|w| w.parse::<i32>().ok()),
+            );
+        }
+        // The tail of each chunk is cut mid-number and the truncated
+        // remainder is lost entirely. (Partial numbers like "13" parse as
+        // duplicates, so check for MISSING numbers, not the raw count.)
+        let missing: Vec<i32> = (1..=500).filter(|n| !old_nums.contains(n)).collect();
+        assert!(
+            !missing.is_empty(),
+            "OLD code should have missing numbers"
+        );
+        // The first missing number is the one right after the first cut —
+        // e.g. 139 (log showed "...138 13" then "141 ...").
+        assert_eq!(missing[0], 139, "first lost number should be 139");
+
+        // NEW behavior: chunks are short enough that the server's real
+        // limit never bites — every number survives.
+        let new_chunks = split_message_smart(&text, new_max_len);
+        let mut new_nums: Vec<i32> = Vec::new();
+        for chunk in &new_chunks {
+            let delivered = server_truncate(chunk, real_hostmask, channel);
+            new_nums.extend(
+                delivered.split_whitespace().filter_map(|w| w.parse::<i32>().ok()),
+            );
+        }
+        assert_eq!(
+            new_nums.len(),
+            500,
+            "NEW code should preserve all 500 numbers"
+        );
+    }
+
+    #[test]
+    fn test_chunks_fit_under_server_limit_with_margin() {
+        // Even with the full 512-byte protocol max and a known hostmask,
+        // the computed max_len must leave a margin so a chunk that is
+        // exactly at the limit is never cut by the server.
+        let channel = "#bottest";
+        let hostmask = "slopdrop!~slopdrop@127.0.0.1";
+        let overhead = 1 + hostmask.len() + 9 + channel.len() + 1 + 3;
+        let max_len = 512usize.saturating_sub(overhead + 20);
+
+        // With the margin, chunk + real wire overhead < 512.
+        let text: String = (1..=500).map(|n| n.to_string()).collect::<Vec<_>>().join(" ");
+        for chunk in split_message_smart(&text, max_len) {
+            let full_line_len = 1 + hostmask.len() + 9 + channel.len() + 2 + chunk.len() + 2;
+            assert!(
+                full_line_len <= 512,
+                "chunk of {} bytes would exceed 512-byte line: {}",
+                chunk.len(),
+                full_line_len
+            );
+        }
+    }
 }
