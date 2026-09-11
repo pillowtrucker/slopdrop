@@ -2,7 +2,7 @@
 //!
 //! Provides HTTP REST API and WebSocket interface
 
-use crate::config::{SecurityConfig, TclConfig};
+use crate::config::{SecurityConfig, TclConfig, WebToken};
 use crate::frontend::Frontend;
 use crate::state::CommitInfo;
 use crate::tcl_service::{EvalContext, EvalResponse, TclService};
@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::{
     extract::{Query, Request, State as AxumState},
-    http::{Method, StatusCode, header},
+    Extension,
+    http::{StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -21,7 +22,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 
 /// Web frontend configuration
@@ -31,10 +31,9 @@ pub struct WebConfig {
     pub bind_address: String,
     /// Port
     pub port: u16,
-    /// Enable authentication
-    pub enable_auth: bool,
-    /// Auth token (if auth enabled)
-    pub auth_token: Option<String>,
+    /// Bearer tokens and their privilege. Empty = no authentication,
+    /// which `run_server` permits only on loopback.
+    pub tokens: Vec<WebToken>,
 }
 
 impl Default for WebConfig {
@@ -42,10 +41,53 @@ impl Default for WebConfig {
         Self {
             bind_address: "127.0.0.1".to_string(),
             port: 8080,
-            enable_auth: false,
-            auth_token: None,
+            tokens: Vec::new(),
         }
     }
+}
+
+impl WebConfig {
+    /// Read the `[web]` section, falling back to the defaults.
+    pub fn from_file(cfg: Option<&crate::config::WebConfigFile>) -> Self {
+        let d = Self::default();
+        match cfg {
+            None => d,
+            Some(w) => Self {
+                bind_address: w.bind_address.clone().unwrap_or(d.bind_address),
+                port: w.port.unwrap_or(d.port),
+                tokens: w.tokens.clone(),
+            },
+        }
+    }
+
+    /// Does this bind reach past this machine?
+    fn is_loopback_bind(&self) -> bool {
+        matches!(
+            self.bind_address.as_str(),
+            "127.0.0.1" | "::1" | "localhost" | "[::1]"
+        )
+    }
+}
+
+/// What one authenticated caller may do.
+///
+/// Carried through the request as an extension rather than read from the
+/// body: `is_admin` used to arrive in the JSON, which made privilege
+/// self-service — whoever could reach `/api/eval` could ask for the
+/// unrestricted interpreter (exec, file, socket) and be given it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Caller {
+    pub admin: bool,
+}
+
+/// Constant-time compare, so a token is not discoverable a byte at a
+/// time. No new dependency for a 32-byte secret.
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Shared application state
@@ -59,10 +101,13 @@ pub struct AppState {
 #[derive(Debug, Deserialize)]
 struct EvalRequest {
     code: String,
+    /// Who this is being run FOR. Recorded as the git commit author, so
+    /// a bridge (veles forwarding a channel line) can keep the real
+    /// person's name on the state change rather than attributing every
+    /// commit to the bridge. It is a LABEL, not a credential: privilege
+    /// comes from the bearer token.
     #[serde(default)]
     user: Option<String>,
-    #[serde(default)]
-    is_admin: bool,
 }
 
 /// Response from evaluation
@@ -135,13 +180,20 @@ impl WebFrontend {
 
     /// Build the axum router
     pub fn build_router(state: AppState) -> Router {
-        // CORS configuration
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST])
-            .allow_headers(Any);
-
-        let mut router = Router::new()
+        // NO permissive CORS.
+        //
+        // This used to be `allow_origin(Any).allow_headers(Any)`, which
+        // on a server with authentication off — the only shipped
+        // configuration, since nothing could turn it on — meant any page
+        // in any browser on this machine could POST to
+        // 127.0.0.1:8080/api/eval and run TCL, `is_admin: true`
+        // included. A JSON POST is preflighted, and that layer answered
+        // the preflight yes.
+        //
+        // This is a server-to-server API. It has no browser origin to
+        // allow, and the bundled index page is same-origin, so the
+        // correct policy is no cross-origin policy at all.
+        let router = Router::new()
             .route("/", get(serve_index))
             .route("/api/eval", post(handle_eval))
             .route("/api/more", get(handle_more))
@@ -149,20 +201,47 @@ impl WebFrontend {
             .route("/api/rollback", post(handle_rollback))
             .route("/api/health", get(handle_health));
 
-        // Add authentication middleware if enabled
-        if state.config.enable_auth {
-            info!("Web authentication enabled");
-            router = router.layer(middleware::from_fn_with_state(
+        // The auth layer runs ALWAYS, not "if enabled": with no tokens
+        // configured it stamps every caller as a non-admin local process
+        // (the loopback posture `run_server` enforces), and with tokens
+        // it requires one and reads the privilege off it. A middleware
+        // that could be skipped was a middleware that was skipped.
+        router
+            .layer(middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
-            ));
-        }
-
-        router.layer(cors).with_state(state)
+            ))
+            .with_state(state)
     }
 
     /// Run the web server
     async fn run_server(&self) -> Result<()> {
+        // No credential ⇒ loopback only, ENFORCED rather than merely
+        // defaulted. The previous shape defaulted to 127.0.0.1 with auth
+        // off and no way to change either; the moment the bind became
+        // configurable, "no tokens" had to stop meaning "and serve the
+        // network an eval endpoint".
+        if self.config.tokens.is_empty() && !self.config.is_loopback_bind() {
+            anyhow::bail!(
+                "[web] bind_address = {:?} reaches past this machine and no [[web.tokens]] \
+                 are configured — that would serve an unauthenticated TCL evaluator to the \
+                 network. Add a token, or bind 127.0.0.1.",
+                self.config.bind_address
+            );
+        }
+        if self.config.tokens.is_empty() {
+            info!(
+                "Web API is UNAUTHENTICATED on loopback: every local process may evaluate \
+                 (non-admin). Add [[web.tokens]] to require a bearer and to grant admin."
+            );
+        } else {
+            let admins = self.config.tokens.iter().filter(|t| t.admin).count();
+            info!(
+                "Web API requires a bearer token ({} configured, {} with admin)",
+                self.config.tokens.len(),
+                admins
+            );
+        }
         let addr: SocketAddr = format!("{}:{}", self.config.bind_address, self.config.port)
             .parse()
             .context("Invalid bind address")?;
@@ -214,37 +293,58 @@ impl Frontend for WebFrontend {
     }
 }
 
-/// Authentication middleware
+/// Authentication, and the privilege that comes with it.
+///
+/// Two postures, following the rule veles' own HTTP surfaces use:
+///
+///   - no tokens configured ⇒ loopback only (enforced at bind time),
+///     and every caller is a non-admin local process. This is what
+///     `--web` always did, minus the part where the caller could ask for
+///     admin in the request body.
+///   - tokens configured ⇒ a valid bearer is REQUIRED, and the token
+///     says whether its holder is an admin.
+///
+/// `/api/health` stays open either way: it answers "is this process
+/// alive" and nothing else, which is what a health check is for.
 async fn auth_middleware(
     AxumState(state): AxumState<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
-    // Skip auth for health endpoint
     if request.uri().path() == "/api/health" {
         return next.run(request).await;
     }
 
-    // Check for Bearer token if auth is enabled
-    if let Some(expected_token) = &state.config.auth_token {
-        match request.headers().get(header::AUTHORIZATION) {
-            Some(auth_header) => {
-                if let Ok(auth_str) = auth_header.to_str() {
-                    // Check for "Bearer <token>" format
-                    if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                        if token == expected_token {
-                            return next.run(request).await;
-                        }
-                    }
-                }
-                // Invalid or missing token
-                (StatusCode::UNAUTHORIZED, "Invalid authentication token").into_response()
-            }
-            None => (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+    if state.config.tokens.is_empty() {
+        // Unauthenticated loopback. Never admin: the unrestricted
+        // interpreter is exec/file/socket on this host, and "a local
+        // process asked nicely" is not an authorization decision.
+        request.extensions_mut().insert(Caller { admin: false });
+        return next.run(request).await;
+    }
+
+    let presented = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(str::trim)
+        .unwrap_or_default();
+
+    // Every token is compared even after a match, so the work done does
+    // not depend on WHICH token was presented.
+    let mut found: Option<&WebToken> = None;
+    for t in &state.config.tokens {
+        if ct_eq(&t.token, presented) {
+            found = Some(t);
         }
-    } else {
-        // Auth enabled but no token configured - deny all
-        (StatusCode::UNAUTHORIZED, "Authentication not configured").into_response()
+    }
+    match found {
+        Some(t) => {
+            request.extensions_mut().insert(Caller { admin: t.admin });
+            next.run(request).await
+        }
+        None => (StatusCode::UNAUTHORIZED, "Invalid authentication token").into_response(),
     }
 }
 
@@ -263,10 +363,14 @@ async fn serve_index() -> Html<String> {
 /// Handle eval request
 async fn handle_eval(
     AxumState(state): AxumState<AppState>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<EvalRequest>,
 ) -> Result<Json<EvalResponseDto>, StatusCode> {
     let user = req.user.unwrap_or_else(|| "web".to_string());
-    let ctx = EvalContext::new(user, "web".to_string()).with_admin(req.is_admin);
+    // Admin comes from the TOKEN. It used to come from the request body,
+    // which meant the caller chose their own privilege and the answer
+    // was always yes.
+    let ctx = EvalContext::new(user, "web".to_string()).with_admin(caller.admin);
 
     let mut service = state.tcl_service.lock().await;
 
@@ -316,8 +420,19 @@ async fn handle_history(
 /// Handle rollback request
 async fn handle_rollback(
     AxumState(state): AxumState<AppState>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<RollbackRequest>,
 ) -> Result<Json<GenericResponse>, StatusCode> {
+    // Rolling the state back rewrites everyone's procs and vars. On IRC
+    // that is `tclAdmin rollback`, privileged-users only; here it had no
+    // check at all, so it was reachable by anyone who could reach the
+    // port.
+    if !caller.admin {
+        return Ok(Json(GenericResponse {
+            success: false,
+            message: "rollback requires an admin token".to_string(),
+        }));
+    }
     let mut service = state.tcl_service.lock().await;
 
     match service.rollback(&req.commit_hash).await {

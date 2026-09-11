@@ -206,20 +206,43 @@ max_output_lines = 10
 # refresh_ms = 100
 
 # ============================================================================
-# WEB FRONTEND CONFIGURATION (future)
+# WEB FRONTEND CONFIGURATION  (--web)
 # ============================================================================
-# These settings will configure the web server when implemented
+# The HTTP API: POST /api/eval, GET /api/more, GET /api/history,
+# POST /api/rollback, GET /api/health. Omit this section entirely and
+# --web serves on 127.0.0.1:8080 with no authentication, which is the
+# behaviour it has always had.
+#
+# TWO POSTURES, and the rule between them:
+#
+#   no tokens  -> LOOPBACK ONLY (enforced: binding elsewhere is refused),
+#                 and every caller is a NON-ADMIN. Any local process may
+#                 evaluate; none of them may roll state back.
+#   tokens     -> a valid `Authorization: Bearer <token>` is REQUIRED,
+#                 and the token says whether its holder is an admin.
+#
+# Privilege belongs to the TOKEN. It used to be an `is_admin` field in
+# the request body, i.e. the caller chose it — and with authentication
+# off and CORS wide open, "the caller" included any page in any browser
+# on this machine. There is no CORS layer any more: this is a
+# server-to-server API and the bundled page is same-origin.
+#
+# Note that `admin` does NOT mean a second, unrestricted interpreter:
+# there is one interpreter and `exec`/`open`/`socket` are gone from it
+# for everybody. It means the caller-context injection is skipped,
+# `rollback` becomes reachable, and the request is additionally checked
+# against [security] privileged_users by hostmask.
 
 # [web]
-# Listen address (default: "127.0.0.1")
-# bind_address = "127.0.0.1"
-#
-# Listen port (default: 8080)
+# bind_address = "127.0.0.1"   # anything else REQUIRES at least one token
 # port = 8080
 #
-# Enable CORS (default: false)
-# cors_enabled = true
+# [[web.tokens]]
+# token = "generate-me-with-openssl-rand-hex-32"
+# admin = false                 # the default: evaluate, but not roll back
+# name = "veles-bridge"         # a label, for logs
 #
-# Authentication (future feature)
-# auth_enabled = false
-# auth_secret = "your-secret-key-here"
+# [[web.tokens]]
+# token = "a-different-32-byte-secret"
+# admin = true
+# name = "operator"

@@ -11,6 +11,55 @@ pub struct Config {
     pub servers: Option<Vec<ServerConfig>>,
     pub security: SecurityConfig,
     pub tcl: TclConfig,
+    /// `[web]` — the HTTP API's bind and its tokens. Absent means the
+    /// built-in defaults (loopback, port 8080, no tokens), which is what
+    /// `--web` did before this section existed.
+    #[serde(default)]
+    pub web: Option<WebConfigFile>,
+}
+
+/// The `[web]` section.
+///
+/// Until 2026-09-11 the web frontend was constructed from
+/// `WebConfig::default()` with no way to configure it at all: that meant
+/// `--web` served an eval API on 127.0.0.1:8080 with authentication
+/// switched off and `is_admin` taken from the REQUEST BODY — so any
+/// local process could ask for, and get, the unrestricted interpreter.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct WebConfigFile {
+    /// Default `127.0.0.1`. Binding anywhere else REQUIRES at least one
+    /// token — the same rule veles' own HTTP surfaces follow: no
+    /// credential means loopback only, and a credential alone does not
+    /// widen the bind, it merely permits you to.
+    #[serde(default)]
+    pub bind_address: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Bearer tokens, each with its own privilege. EMPTY means no
+    /// authentication, which is only allowed on loopback.
+    #[serde(default)]
+    pub tokens: Vec<WebToken>,
+}
+
+/// One bearer token and what it may do.
+///
+/// Privilege belongs to the TOKEN, not to a flag in the request body.
+/// The body's `is_admin` was self-service: whoever could reach the
+/// endpoint could ask for `tclAdmin` — exec, file, socket — and get it.
+/// A caller now gets admin because the operator issued them an admin
+/// token, which is a decision made once in a config file instead of
+/// per-request by the caller.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebToken {
+    pub token: String,
+    /// May this token run the unrestricted interpreter and roll state
+    /// back? Default false — the safe interp, like an IRC `tcl` line.
+    #[serde(default)]
+    pub admin: bool,
+    /// A label for logs and for the git author when the caller names
+    /// nobody. Optional.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl Config {

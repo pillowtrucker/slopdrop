@@ -39,6 +39,10 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
         blacklisted_users: vec![],
         memory_limit_mb: 0, // Disabled for tests - RLIMIT_AS affects entire process
         max_recursion_depth: 1000,
+        // The commit-notification knob, added to SecurityConfig after this
+        // file was last built. Its absence is why the whole suite stopped
+        // compiling — and why none of these twelve tests had run since.
+        notify_self: false,
     };
 
     let tcl_config = TclConfig {
@@ -57,6 +61,48 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
         config: WebConfig::default(),
     }
 }
+
+/// The same state, but with bearer tokens configured — the posture an
+/// operator actually deploys, and the only one in which anybody is an
+/// admin. Privilege belongs to the token, so testing admin at all
+/// requires issuing one.
+#[cfg(feature = "frontend-web")]
+async fn create_test_app_state_with_tokens(state_path: std::path::PathBuf) -> AppState {
+    use slopdrop::config::WebToken;
+    let mut state = create_test_app_state(state_path).await;
+    state.config.tokens = vec![
+        WebToken {
+            token: "plain-token".to_string(),
+            admin: false,
+            name: Some("plain".to_string()),
+        },
+        WebToken {
+            token: "admin-token".to_string(),
+            admin: true,
+            name: Some("boss".to_string()),
+        },
+    ];
+    state
+}
+
+/// What `is_admin` actually does, since it is easy to assume otherwise:
+/// there is ONE interpreter (`TclThread::interp`), and both branches of
+/// `handle_eval` evaluate in it, so admin does NOT hand out a second,
+/// unrestricted `tclsh` — `exec` and friends are removed for everybody.
+/// Admin means (a) the code runs without the caller-context injection,
+/// (b) `rollback` / `blacklist` / `history` become reachable, and (c)
+/// the request is first checked against `security.privileged_users` by
+/// hostmask.
+///
+/// (c) is the observable one here, and it is what makes a clean probe:
+/// an admin request from a hostmask that is NOT privileged is refused by
+/// name, while a non-admin request with the same code just runs. So
+/// "did the body's `is_admin` get honoured" has a yes/no answer that
+/// does not depend on the test machine.
+#[cfg(feature = "frontend-web")]
+const PROBE_CODE: &str = "expr {6 * 7}";
+#[cfg(feature = "frontend-web")]
+const UNPRIVILEGED_USER: &str = "nobody-in-particular";
 
 #[cfg(feature = "frontend-web")]
 #[tokio::test]
@@ -160,10 +206,13 @@ async fn test_eval_endpoint_admin() {
     let (_temp, state_path) = create_temp_state();
     let app = create_router(create_test_app_state(state_path).await);
 
-    // Test that admin can define and call a procedure in a single request
+    // Test that a caller can define and call a procedure in a single
+    // request. This used to pass `"is_admin": true` and assert 42 — but
+    // the SAFE interp defines procs and returns 42 perfectly well, so
+    // the test proved nothing about admin. It is the ordinary-eval test
+    // now, and admin has a real one below.
     let request_body = serde_json::json!({
-        "code": "proc test {} { return 42 }; test",
-        "is_admin": true
+        "code": "proc test {} { return 42 }; test"
     });
 
     let response = app
@@ -187,6 +236,131 @@ async fn test_eval_endpoint_admin() {
 
     assert_eq!(json["is_error"], false, "Error: {:?}", json["output"]);
     assert_eq!(json["output"][0], "42");
+}
+
+/// Privilege comes from the TOKEN, never from the request body.
+///
+/// `is_admin` used to be a field in the JSON, which made the
+/// unrestricted interpreter — exec, file, socket, on this host —
+/// self-service for anyone who could reach the port. With auth off by
+/// default and CORS wide open, "anyone" included any page in any browser
+/// on the machine.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn test_admin_comes_from_the_token_not_the_body() {
+    let (_temp, state_path) = create_temp_state();
+    let state = create_test_app_state_with_tokens(state_path).await;
+
+    let probe = |token: Option<&str>, body: serde_json::Value, state: AppState| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/eval")
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        let req = req
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        async move { create_router(state).oneshot(req).await.unwrap() }
+    };
+    let read = |response: axum::response::Response| async move {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::Value::Null),
+        )
+    };
+
+    // No token at all, while tokens ARE configured: refused outright.
+    let (status, _) = read(
+        probe(
+            None,
+            serde_json::json!({"code": PROBE_CODE}),
+            state.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "a bearer is required");
+
+    // A wrong token is refused too.
+    let (status, _) = read(
+        probe(
+            Some("not-a-token"),
+            serde_json::json!({"code": PROBE_CODE}),
+            state.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A plain token runs as a NON-admin, and shouting `is_admin` in the
+    // body changes nothing — which is the whole point. An unprivileged
+    // hostmask plus a genuine admin request is refused (see below), so
+    // the code simply running is the proof the claim was dropped.
+    let (status, json) = read(
+        probe(
+            Some("plain-token"),
+            serde_json::json!({
+                "code": PROBE_CODE, "user": UNPRIVILEGED_USER, "is_admin": true
+            }),
+            state.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["is_error"], false, "{json:?}");
+    assert_eq!(
+        json["output"][0].as_str().unwrap_or("?"),
+        "42",
+        "the body's is_admin must be ignored, not honoured: {json:?}"
+    );
+
+    // The same request with an ADMIN token IS an admin request, and an
+    // admin request from an unprivileged hostmask is refused by name.
+    // That refusal is the evidence the token was read.
+    let (status, json) = read(
+        probe(
+            Some("admin-token"),
+            serde_json::json!({"code": PROBE_CODE, "user": UNPRIVILEGED_USER}),
+            state.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json["is_error"], true,
+        "an admin token makes this an admin request: {json:?}"
+    );
+    assert!(
+        json["output"][0]
+            .as_str()
+            .unwrap_or("")
+            .contains("requires privileges"),
+        "and slopdrop's own hostmask check is what refuses it: {json:?}"
+    );
+
+    // An admin token whose caller IS privileged runs normally — the
+    // test config privileges `web!*`, and `user` defaults to `web`.
+    let (status, json) = read(
+        probe(
+            Some("admin-token"),
+            serde_json::json!({"code": PROBE_CODE}),
+            state.clone(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["is_error"], false, "{json:?}");
+    assert_eq!(json["output"][0].as_str().unwrap_or("?"), "42");
 }
 
 #[cfg(feature = "frontend-web")]
@@ -381,32 +555,75 @@ async fn test_rollback_endpoint() {
         .await
         .unwrap();
 
-    // Rollback
+    // Rollback. It rewrites everyone's procs and vars — on IRC that is
+    // `tclAdmin rollback`, privileged-users only — and here it had NO
+    // check at all, so it was reachable by anything that could reach the
+    // port. It needs an admin token now, which means this test has to
+    // issue one.
     let rollback_body = serde_json::json!({
         "commit_hash": commit_hash
     });
 
-    let app4 = create_router(app_state);
-    let response = app4
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/rollback")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&rollback_body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let rollback = |token: Option<&str>, state: AppState| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/rollback")
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        let req = req
+            .body(Body::from(serde_json::to_vec(&rollback_body).unwrap()))
+            .unwrap();
+        async move { create_router(state).oneshot(req).await.unwrap() }
+    };
 
+    // Without tokens configured, nobody is an admin — the unauthenticated
+    // loopback posture is deliberately not a privileged one.
+    let response = rollback(None, app_state.clone()).await;
     assert_eq!(response.status(), StatusCode::OK);
-
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["success"], false);
+    assert!(
+        json["message"].as_str().unwrap().contains("admin"),
+        "the refusal names what is missing: {json:?}"
+    );
 
-    assert!(json["message"].as_str().unwrap().contains("Rolled back"));
+    // A plain token is still not an admin.
+    let mut with_tokens = app_state.clone();
+    with_tokens.config.tokens = vec![
+        slopdrop::config::WebToken {
+            token: "plain-token".to_string(),
+            admin: false,
+            name: None,
+        },
+        slopdrop::config::WebToken {
+            token: "admin-token".to_string(),
+            admin: true,
+            name: None,
+        },
+    ];
+    let response = rollback(Some("plain-token"), with_tokens.clone()).await;
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["success"], false, "a plain token cannot roll back");
+
+    // An admin token can.
+    let response = rollback(Some("admin-token"), with_tokens).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["message"].as_str().unwrap().contains("Rolled back"),
+        "{json:?}"
+    );
 }
 
 #[cfg(feature = "frontend-web")]

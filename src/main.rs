@@ -187,12 +187,13 @@ async fn main() -> Result<()> {
         info!("Starting Web frontend");
         let security_config = config.security.clone();
         let tcl_config = config.tcl.clone();
+        let web_section = config.web.clone();
 
         let task = tokio::spawn(async move {
             use crate::frontend::Frontend;
             use crate::frontends::web::{WebConfig, WebFrontend};
 
-            let web_config = WebConfig::default();
+            let web_config = WebConfig::from_file(web_section.as_ref());
             match WebFrontend::new(web_config, security_config, tcl_config) {
                 Ok(mut frontend) => {
                     if let Err(e) = frontend.start().await {
