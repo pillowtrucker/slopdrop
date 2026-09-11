@@ -17,6 +17,47 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// The room an evaluation is happening in, as reported by a bridge.
+///
+/// WHY THIS IS NOT `EvalContext.user` / `.host`
+///
+/// Those two are the AUTHORIZATION identity: `handle_eval` builds
+/// `nick!host` from them and matches it against `privileged_users`. They
+/// must keep coming from the frontend's own knowledge of the caller —
+/// over the web that is the bearer token plus the recorded subject.
+///
+/// This is the DISPLAY identity: what `[nick]`, `[names]`, `[channel]`
+/// and `[hostmask]` answer inside the interpreter. Those globals used to
+/// be filled by our own IRC connection; headless, the only process that
+/// still knows them is whichever bot is actually in the channel, so it
+/// sends them. A caller can therefore choose them — which is exactly why
+/// they are kept away from the privilege check, and why nothing here is
+/// ever consulted by `matches_hostmask`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RoomContext {
+    /// The speaker's nick — `$::nick`, `[nick]`.
+    pub nick: Option<String>,
+    /// `ident@host` — `$::mask`, `[hostmask]`.
+    pub mask: Option<String>,
+    /// The channel, or the other party's nick in a query — `$::channel`.
+    pub channel: Option<String>,
+    /// The channel topic — `$::topic`. New: this bot has never had one.
+    pub topic: Option<String>,
+    /// The channel roster, bare nicks — what `chanlist` (and so `[names]`
+    /// and `[name]`) answers with.
+    pub members: Vec<String>,
+}
+
+impl RoomContext {
+    pub fn is_empty(&self) -> bool {
+        self.nick.is_none()
+            && self.mask.is_none()
+            && self.channel.is_none()
+            && self.topic.is_none()
+            && self.members.is_empty()
+    }
+}
+
 /// Context for a TCL evaluation request
 #[derive(Debug, Clone)]
 pub struct EvalContext {
@@ -28,6 +69,9 @@ pub struct EvalContext {
     pub channel: Option<String>,
     /// Network identifier (used to disambiguate channels across networks)
     pub network: String,
+    /// The room the line was typed in, when a bridge told us. Display
+    /// only — never consulted by the privilege check.
+    pub room: RoomContext,
     /// Whether the user has admin privileges
     pub is_admin: bool,
 }
@@ -39,6 +83,7 @@ impl EvalContext {
             host,
             channel: None,
             network: "default".to_string(),
+            room: RoomContext::default(),
             is_admin: false,
         }
     }
@@ -112,6 +157,18 @@ impl TclService {
 
     /// Evaluate TCL code
     pub async fn eval(&mut self, code: &str, ctx: EvalContext) -> Result<EvalResponse> {
+        // The frontends that name a channel through `EvalContext` — the
+        // CLI, the TUI, the service API — are reporting a room just as
+        // much as a bridge is, so their `channel` becomes one. It has to
+        // happen HERE, before the Option collapses: one line below,
+        // `None` becomes the literal string "default", and from there
+        // "the caller said nothing" and "the caller named a channel
+        // called default" are the same value.
+        let mut room = ctx.room.clone();
+        if room.channel.is_none() {
+            room.channel = ctx.channel.clone();
+        }
+
         let channel = ctx.channel.clone().unwrap_or_else(|| "default".to_string());
 
         // Evaluate the code
@@ -122,6 +179,7 @@ impl TclService {
             ctx.host.clone(),
             channel.clone(),
             ctx.network.clone(),
+            room,
         ).await?;
 
         // Split output into lines
@@ -158,6 +216,18 @@ impl TclService {
 
     /// Get more paginated output
     pub async fn more(&mut self, ctx: EvalContext) -> Result<EvalResponse> {
+        // The frontends that name a channel through `EvalContext` — the
+        // CLI, the TUI, the service API — are reporting a room just as
+        // much as a bridge is, so their `channel` becomes one. It has to
+        // happen HERE, before the Option collapses: one line below,
+        // `None` becomes the literal string "default", and from there
+        // "the caller said nothing" and "the caller named a channel
+        // called default" are the same value.
+        let mut room = ctx.room.clone();
+        if room.channel.is_none() {
+            room.channel = ctx.channel.clone();
+        }
+
         let channel = ctx.channel.clone().unwrap_or_else(|| "default".to_string());
         let cache_key = format!("{}:{}", channel, ctx.user);
 

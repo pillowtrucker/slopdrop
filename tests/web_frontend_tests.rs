@@ -705,3 +705,183 @@ fn test_web_frontend_not_enabled() {
     // This test just ensures the test file compiles when web frontend is disabled
     assert!(true);
 }
+
+/// The room a bridge reports must reach the interpreter globals a
+/// channel's procs actually read.
+///
+/// This is the whole point of going headless: `tcl/utils.tcl` publishes
+/// `[nick]`, `[names]`, `[name]` and `[hostmask]` on top of `::nick`,
+/// `::mask` and `chanlist`, and `tcl/timtom.tcl` builds `channel_nicks`
+/// and `random_other_nick` on top of those. Measured against the real
+/// #coven state on 2026-09-11: 18 stored procs call `[nick]`, 9 call
+/// `[name]`, 5 call `[names]`. Without this they all answer nothing,
+/// silently, the moment the bot leaves IRC.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_bridges_room_reaches_the_procs_that_read_it() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    // One throwaway evaluation first: a FRESH state repo commits the
+    // built-in procs the first time it sees them (`chanlist` among
+    // them), and that is not what this test is about.
+    let warmup = serde_json::json!({"code": "expr 1"});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&warmup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let request_body = serde_json::json!({
+        "code": "list [nick] [channel] [hostmask] [topic] [lsort [names]]",
+        "user": "irc:irc4fun/Demotion!~d@bouncer",
+        "nick": "Demotion",
+        "mask": "~d@bouncer",
+        "channel": "#coven",
+        "network": "irc4fun",
+        "topic": "the topic",
+        "members": ["Psy-Q", "gid", "cromega"],
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["is_error"], false, "{json}");
+    assert_eq!(
+        json["output"][0], "Demotion #coven ~d@bouncer {the topic} {Psy-Q cromega gid}",
+        "every global the procs read comes from the request: {json}"
+    );
+    // …and reporting the room is not a state CHANGE. `::topic` is new,
+    // so it was not on the internal-variable list the state diff filters
+    // by, and every bridged evaluation committed "+var: topic" to the
+    // channel's git repo — a commit per `tcl` line, and veles announcing
+    // "(state: +var: topic)" on every reply.
+    assert!(
+        json["commit_info"].is_null(),
+        "telling the interpreter where it is must not be a commit: {json}"
+    );
+}
+
+/// …and a request that reports no room does not invent one.
+///
+/// The interpreter keeps its globals between evaluations, so a blank
+/// `::channel` is worse than an absent one: it makes `[names]` answer
+/// "nobody is here" with confidence. An API caller who never heard of
+/// the room fields must leave the last real room alone.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_request_with_no_room_leaves_the_last_one_alone() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let with_room = serde_json::json!({
+        "code": "expr 1",
+        "user": "bridge",
+        "channel": "#coven",
+        "network": "irc4fun",
+        "members": ["Psy-Q", "gid"],
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&with_room).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // A plain caller, the shape every existing client sends.
+    let bare = serde_json::json!({"code": "list [llength [names]] [channel]"});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&bare).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["output"][0], "2 #coven",
+        "the roster the bridge reported survives a request that reported \
+         none: {json}"
+    );
+}
+
+/// A request may name its own nick and mask, so those must never be the
+/// ones the privilege check reads.
+///
+/// `handle_eval` builds `nick!host` from the AUTHORIZATION identity —
+/// `user` plus the frontend's own `web` host — and matches it against
+/// `privileged_users`. If the display fields fed that instead, an
+/// ordinary caller could name `admin!anything` and be believed. The
+/// admin token is still required, so this is the second gate, not the
+/// first; it is also the one a bridge's own compromise would reach.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_request_cannot_name_its_own_privilege() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state_with_tokens(state_path).await);
+
+    let request_body = serde_json::json!({
+        "code": PROBE_CODE,
+        "user": UNPRIVILEGED_USER,
+        // `privileged_users` in the test state is `admin!*@*` / `web!*`.
+        "nick": "admin",
+        "mask": "anything@anywhere",
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer admin-token")
+                .body(Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let output = json["output"][0].as_str().unwrap_or_default();
+    assert!(
+        output.contains("requires privileges"),
+        "the display nick must not reach the hostmask check: {json}"
+    );
+}

@@ -47,6 +47,10 @@ pub struct EvalRequest {
     pub host: String,
     pub channel: String,
     pub network: String,
+    /// What the room looks like, when a bridge reported it. Display
+    /// only: the privilege check reads `nick` and `host` above, never
+    /// this.
+    pub room: crate::tcl_service::RoomContext,
     pub response_tx: oneshot::Sender<EvalResult>,
 }
 
@@ -184,6 +188,7 @@ impl TclThreadHandle {
         host: String,
         channel: String,
         network: String,
+        room: crate::tcl_service::RoomContext,
     ) -> Result<EvalResult> {
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -194,6 +199,7 @@ impl TclThreadHandle {
             host,
             channel,
             network,
+            room,
             response_tx,
         };
 
@@ -280,6 +286,7 @@ impl TclThreadHandle {
             "system@bot".to_string(),
             "system".to_string(),
             "system".to_string(),
+            Default::default(),
         ).await?;
 
         Ok(result.output)
@@ -590,6 +597,128 @@ impl TclThreadWorker {
         }
     }
 
+    /// Brace-quote one value for `set ::var {…}`.
+    fn tcl_brace(v: &str) -> String {
+        v.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}")
+    }
+
+    /// Put the conversation into the interpreter, for the procs that read
+    /// it out of globals.
+    ///
+    /// These used to be set by our own IRC connection, and a large part of
+    /// what a channel has built reads them: `tcl/utils.tcl` publishes
+    /// `[nick]`, `[names]`, `[name]` and `[hostmask]` on top of `::nick`,
+    /// `::mask`, `::channel` and `chanlist`, and `tcl/timtom.tcl` builds
+    /// `channel_nicks`, `nick_count` and `random_other_nick` on top of
+    /// those. Headless — the `--web` deployment — the only process that
+    /// still knows any of it is whichever bot is in the room, so a bridge
+    /// reports it per request and this puts it back.
+    ///
+    /// TWO IDENTITIES, DELIBERATELY NOT ONE. `request.nick`/`request.host`
+    /// are the AUTHORIZATION identity: `handle_eval` builds `nick!host`
+    /// from them and matches `privileged_users`. `request.room` is the
+    /// DISPLAY identity, and a caller can choose it. So the room wins for
+    /// the globals and loses everywhere else, and nothing here is ever
+    /// read by the privilege check.
+    ///
+    /// Runs for the admin path too. It did not before — `handle_eval`'s
+    /// admin branch called `eval` where the ordinary one called
+    /// `eval_with_context` — so `tclAdmin` saw whatever the previous
+    /// evaluation had left in `::nick`.
+    fn apply_room_context(&self, request: &EvalRequest) {
+        let room = &request.room;
+
+        // The speaker. Every frontend has a real one — an IRC nick, a web
+        // `user`, a CLI username — so this is always set, and the room's
+        // version wins when a bridge sent one.
+        let nick = room.nick.clone().unwrap_or_else(|| request.nick.clone());
+        let mask = room.mask.clone().unwrap_or_else(|| request.host.clone());
+        for (var, val) in [("nick", &nick), ("mask", &mask)] {
+            self.set_global(var, val);
+        }
+
+        // The room itself is different, and the difference is the whole
+        // reason this function exists.
+        //
+        // `EvalContext.channel` is an Option that becomes the literal
+        // string "default" one layer up, so a caller who said nothing
+        // about a room is indistinguishable here from one who named a
+        // channel called "default". Setting ::channel from it every time
+        // means an unrelated API call — a cron, the bundled web page —
+        // silently moves the room out from under the procs a bridge just
+        // set up, and `names` then answers "nobody is here" with total
+        // confidence.
+        //
+        // So: a request that REPORTS a room sets it; one that does not
+        // only fills a hole. The hole has to be filled, because
+        // `tcl/utils.tcl` does `chanlist $::channel` and an unset
+        // variable is a Tcl error rather than an empty answer.
+        match room.channel.as_deref().filter(|c| !c.is_empty()) {
+            Some(c) => {
+                self.set_global("channel", c);
+                self.set_global("network", &request.network);
+                // The topic belongs to the channel, so it is rewritten
+                // exactly when the channel is — including to empty, which
+                // is what a room with no topic must leave behind.
+                self.set_global("topic", room.topic.as_deref().unwrap_or_default());
+            }
+            None => {
+                self.fill_global("channel", &request.channel);
+                self.fill_global("network", &request.network);
+                self.fill_global("topic", "");
+            }
+        }
+
+        // The roster, filed where `chanlist` looks for it: the composite
+        // `network:#channel` key, because members are tracked per network
+        // and a bare channel name collides across them.
+        //
+        // Written AFTER `sync_channel_members` and allowed to win. The
+        // bridge is the process actually sitting in that room right now;
+        // our own copy is whatever our IRC connection last saw, which
+        // headless is nothing at all. An absent roster changes nothing —
+        // an eval with no room behind it must not empty the channel.
+        if !room.members.is_empty() {
+            if let Some(channel) = room.channel.as_deref().filter(|c| !c.is_empty()) {
+                let key = format!("{}:{}", request.network, channel);
+                let names: Vec<String> = room.members.iter().map(|n| Self::tcl_brace(n)).collect();
+                let code = format!(
+                    "set ::slopdrop_channel_members({}) {{{}}}",
+                    Self::tcl_brace(&key),
+                    names.join(" ")
+                );
+                if let Err(e) = self.interp.interpreter().eval(code.as_str()) {
+                    warn!("Failed to set channel members for {}: {:?}", key, e);
+                }
+            }
+        }
+    }
+
+    /// `set ::<var> {<val>}`.
+    fn set_global(&self, var: &str, val: &str) {
+        let code = format!("set ::{} {{{}}}", var, Self::tcl_brace(val));
+        if let Err(e) = self.interp.interpreter().eval(code.as_str()) {
+            warn!("Failed to set ::{}: {:?}", var, e);
+        }
+    }
+
+    /// The same, but only where there is no answer yet — a default for a
+    /// fresh interpreter that never overwrites a real one.
+    ///
+    /// Unset AND empty both count as "no answer": `setup_safe_interp` does
+    /// `set ::network {}` at boot precisely so `info exists` is true
+    /// everywhere, so an existence check alone would never fill anything.
+    fn fill_global(&self, var: &str, val: &str) {
+        let code = format!(
+            "if {{![info exists ::{0}] || ${{::{0}}} eq {{}}}} {{ set ::{0} {{{1}}} }}",
+            var,
+            Self::tcl_brace(val)
+        );
+        if let Err(e) = self.interp.interpreter().eval(code.as_str()) {
+            warn!("Failed to default ::{}: {:?}", var, e);
+        }
+    }
+
     fn handle_eval(&self, request: EvalRequest) {
         debug!("TCL thread evaluating: {}", request.code);
 
@@ -632,16 +761,23 @@ impl TclThreadWorker {
         let set_channel = format!("set ::nick_channel {{{}}}", request.channel);
         let _ = self.interp.interpreter().eval(set_channel.as_str());
 
-        // Set the active network so chanlist can build the network:channel
-        // composite key used by sync_channel_members()
-        let set_network = format!("set ::network {{{}}}", request.network);
-        let _ = self.interp.interpreter().eval(set_network.as_str());
+        // `::network` moved into `apply_room_context`: it names the same
+        // room `::channel` does — `chanlist` builds ONE composite key out
+        // of the pair — so a caller that reports no room must not move
+        // half of it. Set here unconditionally, a bare API call reset it
+        // to "default" and the roster a bridge had just filed under
+        // `irc4fun:#coven` became unreachable, which reads from the
+        // channel as the bot forgetting who is in the room.
 
         // Set stock context for rate limiting
         crate::stock_commands::set_stock_context(request.nick.clone(), eval_count);
 
         // Sync channel members to TCL array before evaluation
         self.sync_channel_members();
+
+        // …then whatever the bridge reported about the room, which is the
+        // only source of it when we hold no IRC connection ourselves.
+        self.apply_room_context(&request);
 
         // Check for special commands
         let code_trimmed = request.code.trim();
@@ -672,16 +808,11 @@ impl TclThreadWorker {
         let state_before = InterpreterState::capture(self.interp.interpreter());
 
         // Evaluate the code
-        let result = if request.is_admin {
-            self.interp.eval(&request.code)
-        } else {
-            self.interp.eval_with_context(
-                &request.code,
-                &request.nick,
-                &request.host,
-                &request.channel,
-            )
-        };
+        // `apply_room_context` has already set ::nick, ::mask and
+        // ::channel — for BOTH paths, where `eval_with_context` set them
+        // for only one, leaving `tclAdmin` reading the previous
+        // evaluation's speaker.
+        let result = self.interp.eval(&request.code);
 
         let output = match result {
             Ok(output) => EvalResult {

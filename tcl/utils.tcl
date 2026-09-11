@@ -177,6 +177,24 @@ proc hostmask {{who ""}} {
     return $::mask
 }
 
+# topic - the channel topic, as reported by whoever holds the connection
+#
+# New in the headless era. This bot has never tracked a topic of its own
+# — there is no `::topic` anywhere in its history — so the only source is
+# the bridge that sends the room context with each evaluation, and the
+# answer is empty when nobody has.
+#
+# Guarded: a channel that already defined its own `topic` proc keeps it.
+# Being helpful is not worth silently rewriting somebody's command.
+if {[info procs topic] eq ""} {
+    proc topic {} {
+        if {[info exists ::topic]} {
+            return $::topic
+        }
+        return ""
+    }
+}
+
 # Meta namespace - info about evaluation context
 namespace eval meta {
     proc uptime {} {

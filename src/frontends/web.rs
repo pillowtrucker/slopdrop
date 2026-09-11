@@ -108,6 +108,27 @@ struct EvalRequest {
     /// comes from the bearer token.
     #[serde(default)]
     user: Option<String>,
+    /// The room the line was typed in, when the caller is a bridge that
+    /// still holds the IRC connection. All optional: a plain API caller
+    /// sends none of it and nothing changes for them.
+    ///
+    /// DISPLAY ONLY. These fill `::nick`, `::mask`, `::channel`,
+    /// `::topic` and `chanlist`, which is what a channel's procs read.
+    /// They are never consulted by the privilege check — that asks about
+    /// `user` and the bearer token, and letting a request name its own
+    /// hostmask would be letting it name its own privilege.
+    #[serde(default)]
+    nick: Option<String>,
+    #[serde(default)]
+    mask: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    network: Option<String>,
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
+    members: Vec<String>,
 }
 
 /// Response from evaluation
@@ -370,7 +391,23 @@ async fn handle_eval(
     // Admin comes from the TOKEN. It used to come from the request body,
     // which meant the caller chose their own privilege and the answer
     // was always yes.
-    let ctx = EvalContext::new(user, "web".to_string()).with_admin(caller.admin);
+    let mut ctx = EvalContext::new(user, "web".to_string()).with_admin(caller.admin);
+    // What the bridge says about the room. `channel` and `network` also
+    // steer the composite key `chanlist` reads, so they go on the
+    // context itself and not only into the room block.
+    if let Some(c) = req.channel.clone() {
+        ctx.channel = Some(c);
+    }
+    if let Some(n) = req.network.clone().filter(|n| !n.is_empty()) {
+        ctx.network = n;
+    }
+    ctx.room = crate::tcl_service::RoomContext {
+        nick: req.nick,
+        mask: req.mask,
+        channel: req.channel,
+        topic: req.topic,
+        members: req.members,
+    };
 
     let mut service = state.tcl_service.lock().await;
 

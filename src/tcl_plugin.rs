@@ -470,6 +470,7 @@ impl TclPlugin {
         let ident = message.author.ident.clone().unwrap_or_else(|| "user".to_string());
         let host_part = message.author.host.clone().unwrap_or_else(|| "irc".to_string());
         let full_host = format!("{}@{}", ident, host_part);
+        let full_host_for_room = full_host.clone();
         let user_hostmask = format!("{}!{}", message.author.nick, full_host);
 
         // Check if user is blacklisted
@@ -492,6 +493,20 @@ impl TclPlugin {
             full_host,
             message.author.channel.clone(),
             message.author.network.clone(),
+            // Our own connection IS the room. Reported explicitly rather
+            // than left to the fallback, because the fallback only fills
+            // a hole: a bot on IRC must rewrite `::channel` on every
+            // message, or the second channel it is in reads as the first.
+            // Members and topic stay empty — `sync_channel_members` fills
+            // the roster from our own tracking, and we have never had a
+            // topic to report.
+            crate::tcl_service::RoomContext {
+                nick: Some(message.author.nick.clone()),
+                mask: Some(full_host_for_room),
+                channel: Some(message.author.channel.clone()),
+                topic: None,
+                members: Vec::new(),
+            },
         ).await?;
 
         debug!("TCL eval completed, output length: {} bytes", result.output.len());

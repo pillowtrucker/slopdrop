@@ -130,6 +130,7 @@ async fn test_timeout_handling() {
         "testhost".to_string(),
         "#test".to_string(),
         "default".to_string(),
+        Default::default(),
     ).await;
 
     assert!(result.is_ok()); // The method returns Ok with error message on timeout

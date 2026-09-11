@@ -182,6 +182,7 @@ impl InterpreterState {
         // These are set by eval_with_context for each command, or are system arrays
         let internal_vars: HashSet<String> = [
             "nick", "channel", "mask", "network",  // Context variables set per-eval
+            "topic",                    // Room context from a bridge, same as the four above
             "slopdrop_channel_members", // Channel member lists synced before each eval
             "slopdrop_log_lines",       // Message log array
             "nick_channel",             // HTTP rate limiting context
