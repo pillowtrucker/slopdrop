@@ -79,10 +79,50 @@ fn test_encoding_blocks_system_modification() {
     let (_temp, state_path) = create_temp_state();
     let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
 
-    // Should block system encoding modification
-    let result = interp.eval("encoding system utf-8");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("can't modify system encoding"));
+    // The rule is "utf-8, and nothing else" — not "nothing".
+    //
+    // This test used to assert that `encoding system utf-8` was
+    // blocked, and it had been failing on an unmodified tree since
+    // `tcl/encoding.tcl` grew the utf-8 exemption that `tcl/http.tcl`
+    // depends on (it calls `encoding system utf-8` at load time, so
+    // blocking it outright would mean the HTTP commands never load).
+    // A red test nobody can act on is a suite nobody can use as a gate,
+    // so it now pins the exemption AND the thing the wrapper is
+    // actually for.
+    // Only the canonical spelling. The wrapper's own check is
+    // case-insensitive and accepts `utf8` too, but it then hands the
+    // name to Tcl's `encoding system`, whose table is narrower — so
+    // `UTF-8` passes the guard and is refused one layer down, by a
+    // different error. Asserting the broad spelling here would be
+    // asserting the wrapper's intent rather than the system's
+    // behaviour.
+    assert!(
+        interp.eval("encoding system utf-8").is_ok(),
+        "the one permitted change — http.tcl calls it at load time, so \
+         blocking it means the HTTP commands never load at all"
+    );
+
+    // Everything else is still refused, which is the security property
+    // the wrapper exists for: switching the system encoding underneath
+    // a running interpreter changes how every later byte is read.
+    for blocked in [
+        "encoding system iso8859-1",
+        "encoding system cp1252",
+        "encoding system ascii",
+    ] {
+        let result = interp.eval(blocked);
+        assert!(result.is_err(), "{blocked} must be refused");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("can't modify system encoding"),
+            "{blocked} must be refused by the wrapper, not by tcl"
+        );
+    }
+
+    // Reading it was never the problem.
+    assert!(interp.eval("encoding system").is_ok());
 }
 
 #[test]
