@@ -536,7 +536,7 @@ fn test_trigger_with_proc() {
     interp.eval("bind JOIN * greet_join").unwrap();
 
     // Dispatch event
-    let result = interp.eval("triggers dispatch JOIN alice user@host #test").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet alice user@host #test").unwrap();
     assert!(result.contains("Welcome alice"));
     assert!(result.contains("#test"));
 }
@@ -559,11 +559,11 @@ fn test_text_trigger_pattern_matching() {
     interp.eval("bind TEXT * bot_command").unwrap();
 
     // Test matching
-    let result = interp.eval("triggers dispatch TEXT user user@host #test {!help me}").unwrap();
+    let result = interp.eval("triggers dispatch TEXT testnet user user@host #test {!help me}").unwrap();
     assert!(result.contains("Available commands"));
 
     // Test non-matching
-    let result = interp.eval("triggers dispatch TEXT user user@host #test {hello}").unwrap();
+    let result = interp.eval("triggers dispatch TEXT testnet user user@host #test {hello}").unwrap();
     assert_eq!(result.trim(), "");
 }
 

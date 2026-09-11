@@ -1290,8 +1290,21 @@ async fn test_live_linkresolver_register_custom_resolver() {
     client.send_privmsg(&channel, r#"tcl linkresolver register {example\.com} test_resolver"#).expect("Failed to send");
 
     if let Some(response) = wait_for_response_from(&mut stream, 10, &channel, &bot_nick).await {
-        assert!(response.contains("Registered resolver"));
-        assert!(response.contains("example"));
+        // `linkresolver::register` answers
+        //   "Registered <type> resolver for pattern: <pat> (priority: N)"
+        // and this asserted the literal "Registered resolver", which the
+        // command has never produced — the `$type` word sits between the
+        // two. Red on an unmodified tree for as long as that word has
+        // existed. Assert the parts that carry meaning, not a word order
+        // that a second adjective breaks.
+        assert!(
+            response.contains("Registered") && response.contains("resolver"),
+            "register must confirm what it did: {response}"
+        );
+        assert!(
+            response.contains("example"),
+            "…and name the pattern it registered: {response}"
+        );
     } else {
         panic!("No response received for linkresolver register");
     }

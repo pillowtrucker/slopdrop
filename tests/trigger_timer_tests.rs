@@ -324,7 +324,7 @@ fn test_trigger_dispatch_join() {
     interp.eval("bind JOIN * welcome").unwrap();
 
     // Dispatch
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #test").unwrap();
     println!("Trigger dispatch returned: '{}'", result);
     assert!(result.contains("#test"), "Result should contain channel");
     assert!(result.contains("Hello testuser!"), "Result should contain message");
@@ -352,11 +352,11 @@ fn test_trigger_dispatch_text() {
     interp.eval("bind TEXT * echo_handler").unwrap();
 
     // Dispatch with matching text
-    let result = interp.eval("triggers dispatch TEXT testuser user@host #test {hello world}").unwrap();
+    let result = interp.eval("triggers dispatch TEXT testnet testuser user@host #test {hello world}").unwrap();
     assert!(result.contains("Hello to you too!"));
 
     // Dispatch without matching text
-    let result = interp.eval("triggers dispatch TEXT testuser user@host #test {goodbye}").unwrap();
+    let result = interp.eval("triggers dispatch TEXT testnet testuser user@host #test {goodbye}").unwrap();
     assert_eq!(result.trim(), "");
 }
 
@@ -373,11 +373,11 @@ fn test_trigger_dispatch_channel_pattern() {
     interp.eval("bind JOIN #specific specific_handler").unwrap();
 
     // Dispatch to matching channel
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #specific").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #specific").unwrap();
     assert!(result.contains("Specific!"));
 
     // Dispatch to non-matching channel
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #other").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #other").unwrap();
     assert_eq!(result.trim(), "");
 }
 
@@ -394,7 +394,7 @@ fn test_trigger_dispatch_multiple_handlers() {
     interp.eval("bind JOIN * handler2").unwrap();
 
     // Both should fire
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #test").unwrap();
     assert!(result.contains("Handler1"));
     assert!(result.contains("Handler2"));
 }
@@ -408,7 +408,7 @@ fn test_trigger_dispatch_no_bindings() {
     interp.eval("unbind JOIN * timtom_welcome").unwrap();
 
     // Dispatch with no bindings
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #test").unwrap();
     assert_eq!(result.trim(), "");
 }
 
@@ -422,7 +422,7 @@ fn test_trigger_dispatch_handler_error() {
     interp.eval("bind JOIN * error_handler").unwrap();
 
     // Dispatch - should return error message
-    let result = interp.eval("triggers dispatch JOIN testuser user@host #test").unwrap();
+    let result = interp.eval("triggers dispatch JOIN testnet testuser user@host #test").unwrap();
     assert!(result.contains("Error in error_handler"));
 }
 
