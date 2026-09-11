@@ -369,6 +369,18 @@ impl TclThreadWorker {
         // Register chanlist command
         Self::register_chanlist_command(interp.interpreter(), channel_members.clone())?;
 
+        // The veles bridge: a native `ai` command, when one is
+        // configured. Native rather than Tcl because it holds a bearer
+        // token, and this interpreter has no boundary a secret could
+        // hide behind — see `veles_bridge`'s header.
+        if let Some(bridge) = crate::veles_bridge::global() {
+            // Safety: the interpreter is owned by this worker, which
+            // owns it for the life of the thread; the Arc is leaked
+            // into ClientData for the process.
+            unsafe { crate::veles_bridge::register(bridge, interp.interpreter()) };
+            tracing::info!("veles bridge registered: `ai <prompt>` is available");
+        }
+
         let timeout = Duration::from_millis(security_config.eval_timeout_ms);
 
         Ok(Self {
@@ -600,6 +612,13 @@ impl TclThreadWorker {
                 });
                 return;
             }
+        }
+
+        // A new evaluation gets a fresh per-eval model-call budget. The
+        // per-minute one deliberately does not reset, or "one call per
+        // eval, a thousand evals" would be free.
+        if let Some(b) = crate::veles_bridge::global() {
+            b.begin_eval();
         }
 
         // Get eval count for rate limiting (needed for all commands)

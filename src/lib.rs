@@ -16,6 +16,7 @@ pub mod tcl_thread;
 pub mod tcl_wrapper;
 pub mod types;
 pub mod validator;
+pub mod veles_bridge;
 
 // Multi-frontend architecture
 pub mod frontend;

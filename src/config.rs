@@ -11,6 +11,11 @@ pub struct Config {
     pub servers: Option<Vec<ServerConfig>>,
     pub security: SecurityConfig,
     pub tcl: TclConfig,
+    /// `[veles]` — the inference bridge: a native `ai` Tcl command that
+    /// asks a veles agent over A2A. Absent means the command is not
+    /// registered at all.
+    #[serde(default)]
+    pub veles: Option<crate::veles_bridge::VelesConfig>,
     /// `[web]` — the HTTP API's bind and its tokens. Absent means the
     /// built-in defaults (loopback, port 8080, no tokens), which is what
     /// `--web` did before this section existed.

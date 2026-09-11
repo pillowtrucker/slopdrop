@@ -206,6 +206,42 @@ max_output_lines = 10
 # refresh_ms = 100
 
 # ============================================================================
+# VELES INFERENCE BRIDGE  ([veles])
+# ============================================================================
+# Adds ONE native TCL command:
+#
+#   ai <prompt> ?context?     -> the model's answer, as the command's result
+#
+# It asks a veles agent over A2A. Native rather than a tcl/*.tcl file
+# because it holds a bearer token, and SafeTclInterp is a single
+# interpreter with no boundary a secret could hide behind — in Tcl, the
+# first thing the channel would do is print it, and the second would be
+# to point the URL somewhere else and make the bot POST the credential
+# there. See src/veles_bridge.rs.
+#
+# Omit the section and the command is never registered, so TCL reports
+# `invalid command name "ai"` rather than erroring on every call.
+#
+# WHAT IT COSTS: an `ai` call spends the veles operator's model tokens,
+# and any proc can make one. Hence the two budgets below. They are low on
+# purpose; a proc that wants a dozen completions is a proc that wants a
+# bill.
+#
+# WHO IT IS, over there: veles reads A2A_PEER_TOKENS="slopdrop:<token>",
+# and the NAME on that line is the identity its ACL resolves — so
+# [acl.roles]."a2a:slopdrop" = "user" in veles' config decides what this
+# bridge may do. Unnamed peers are `user` there by default, which is the
+# level this bridge is meant to have.
+
+# [veles]
+# enabled = true
+# url = "http://127.0.0.1:9900"
+# token_env = "VELES_A2A_TOKEN"   # or token = "..." inline
+# timeout_ms = 120000
+# max_per_eval = 2                # model calls one evaluation may make
+# max_per_minute = 10             # …and per minute, across everybody
+
+# ============================================================================
 # WEB FRONTEND CONFIGURATION  (--web)
 # ============================================================================
 # The HTTP API: POST /api/eval, GET /api/more, GET /api/history,

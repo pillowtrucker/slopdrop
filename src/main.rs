@@ -18,6 +18,7 @@ mod tcl_thread;
 mod tcl_wrapper;
 mod types;
 mod validator;
+mod veles_bridge;
 
 // Multi-frontend support
 mod frontend;
@@ -180,6 +181,11 @@ async fn main() -> Result<()> {
     if flags.tui {
         warn!("TUI frontend requested but not compiled! Build with --features frontend-tui");
     }
+
+    // The veles inference bridge, published before any interpreter is
+    // built: `TclThreadWorker::new` asks for it while registering
+    // commands, and there are three places that construct one.
+    veles_bridge::publish(config.veles.as_ref());
 
     // Web Frontend
     #[cfg(feature = "frontend-web")]
