@@ -156,6 +156,15 @@ impl From<EvalResponse> for EvalResponseDto {
 struct MoreRequest {
     #[serde(default)]
     user: Option<String>,
+    /// The room, for the SAME reason `/api/eval` takes one: the
+    /// pagination cache is keyed `"{channel}:{user}"`, and a caller that
+    /// named a channel when it filled the cache has to name the same one
+    /// to read it back. Without this field `more` always looked under
+    /// the literal "default", so a bridged eval's remainder was
+    /// unreachable — cached, counted in `more_available`, and findable
+    /// by nobody.
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 /// Rollback request
@@ -426,7 +435,11 @@ async fn handle_more(
     Query(req): Query<MoreRequest>,
 ) -> Result<Json<EvalResponseDto>, StatusCode> {
     let user = req.user.unwrap_or_else(|| "web".to_string());
-    let ctx = EvalContext::new(user, "web".to_string());
+    let mut ctx = EvalContext::new(user, "web".to_string());
+    // Same room the eval named, or the cache key will not match.
+    if let Some(c) = req.channel.filter(|c| !c.is_empty()) {
+        ctx.channel = Some(c);
+    }
 
     let mut service = state.tcl_service.lock().await;
 

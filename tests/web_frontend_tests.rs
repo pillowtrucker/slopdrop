@@ -448,6 +448,89 @@ async fn test_more_endpoint() {
     assert!(json["output"].as_array().unwrap().len() > 0);
 }
 
+/// A bridged eval's remainder has to be reachable by the room that
+/// asked for it.
+///
+/// `eval` caches the overflow under `"{channel}:{user}"`. `more` looked
+/// it up under the literal "default", because `MoreRequest` had no
+/// channel field to pass one — so every caller that named a room (which
+/// is every bridged call) filled a cache slot nothing could read. The
+/// existing `test_more_endpoint` names no channel on EITHER call, so
+/// both sides agreed on "default" and the bug was invisible to it.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn test_more_finds_the_cache_the_room_filled() {
+    let (_temp, state_path) = create_temp_state();
+    let app_state = create_test_app_state(state_path).await;
+
+    let request_body = serde_json::json!({
+        "code": "join [list L0 L1 L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 L14 L15 L16 L17 L18 L19] \\n",
+        "user": "user:wrath",
+        "channel": "#coven",
+        "network": "irc.IRC4Fun.net"
+    });
+    let response = create_router(app_state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["more_available"], true,
+        "the fixture must actually paginate, or this test proves nothing: {json}"
+    );
+
+    // The SAME room asks for the rest.
+    let response = create_router(app_state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/more?user=user:wrath&channel=%23coven")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let out = json["output"].as_array().unwrap();
+    assert!(
+        !out.is_empty() && out[0] != "No cached output. Run a command first.",
+        "the room that filled the cache must be able to read it: {json}"
+    );
+
+    // A DIFFERENT room must not, or the key is not really the room.
+    let response = create_router(app_state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/more?user=user:wrath&channel=%23elsewhere")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["output"].as_array().unwrap()[0],
+        "No cached output. Run a command first.",
+        "another channel must not read this room's remainder: {json}"
+    );
+}
+
 #[cfg(feature = "frontend-web")]
 #[tokio::test]
 async fn test_history_endpoint() {
