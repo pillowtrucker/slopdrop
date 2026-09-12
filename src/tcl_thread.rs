@@ -1037,6 +1037,43 @@ impl TclThreadWorker {
             return;
         }
 
+        // The ROOM the caller reported, before our own map.
+        //
+        // This command is intercepted in Rust and never reaches the Tcl
+        // proc of the same name, so the roster the bridge writes into
+        // `::slopdrop_channel_members` — which is what `[names]`,
+        // `[name]` and every proc calling `chanlist $::channel` read —
+        // is invisible from here. Headless that map is not merely stale
+        // but permanently empty: nothing is filling it, because filling
+        // it is what an IRC connection does. So a person typing the
+        // plain `chanlist #coven` that this whole interception exists
+        // to serve got back nothing, while the identical call from
+        // inside a proc answered correctly.
+        //
+        // Same precedence rule as `apply_room_context`: the bridge is
+        // the process actually sitting in that room right now, so its
+        // roster wins when it names this channel. An unreported room,
+        // or one for a different channel, falls through to the map
+        // below and nothing changes for a slopdrop that still has its
+        // own connection.
+        let reported = request
+            .room
+            .channel
+            .as_deref()
+            .filter(|c| c.eq_ignore_ascii_case(channel))
+            .map(|_| request.room.members.as_slice())
+            .filter(|m| !m.is_empty());
+        if let Some(nicks) = reported {
+            let mut sorted: Vec<String> = nicks.to_vec();
+            sorted.sort();
+            let _ = request.response_tx.send(EvalResult {
+                output: sorted.join(" "),
+                is_error: false,
+                commit_info: None,
+            });
+            return;
+        }
+
         // Read from shared channel members. The map is keyed by the composite
         // "network:#channel" so we have to build the same key from the request.
         // Fall back to a bare channel-name lookup so callers that already

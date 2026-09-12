@@ -556,3 +556,61 @@ async fn test_chanlist_command() {
 
     service.shutdown();
 }
+
+/// Headless, the reported room is the ONLY roster there is.
+///
+/// `chanlist <chan>` typed at top level is intercepted in Rust and
+/// never reaches the Tcl proc of the same name, so it reads the map
+/// that slopdrop's OWN IRC connection fills. With no such connection
+/// that map is permanently empty — and the failure is silent: the
+/// command returns an empty list, exactly as it does for a channel
+/// nobody is in. Meanwhile `[names]` and `chanlist $::channel` from
+/// inside a proc answered correctly the whole time, because those read
+/// the Tcl array the bridge does write. One name, two sources, and
+/// only one of them was bridged.
+#[tokio::test]
+async fn test_chanlist_top_level_answers_from_the_reported_room() {
+    let (_temp, state_path) = create_temp_state();
+    // EMPTY on purpose: this is what headless looks like.
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+    let mut service = create_test_service_with_members(state_path, channel_members);
+
+    let mut ctx = EvalContext::new("user:wrath".to_string(), "web".to_string())
+        .with_channel("#coven".to_string())
+        .with_network("irc.IRC4Fun.net".to_string());
+    ctx.room = slopdrop::tcl_service::RoomContext {
+        nick: Some("lewrker".to_string()),
+        mask: Some("~hastur@users/lewrker".to_string()),
+        channel: Some("#coven".to_string()),
+        topic: Some("the coven".to_string()),
+        members: vec![
+            "lewrker".to_string(),
+            "Psy-Q".to_string(),
+            "gid".to_string(),
+            "jackma".to_string(),
+        ],
+    };
+
+    let response = service.eval("chanlist #coven", ctx.clone()).await.unwrap();
+    assert!(!response.is_error);
+    assert_eq!(response.output.len(), 1);
+    let output = &response.output[0];
+    assert!(
+        output.contains("Psy-Q") && output.contains("jackma") && output.contains("gid"),
+        "the intercepted chanlist must read the reported room: {}",
+        output
+    );
+
+    // A channel the room does NOT name falls through to our own map,
+    // which here is empty. It must not borrow this room's roster —
+    // "who is in #coven" is not an answer to "who is in #elsewhere".
+    let response = service.eval("chanlist #elsewhere", ctx.clone()).await.unwrap();
+    assert!(!response.is_error);
+    assert!(
+        response.output.is_empty() || response.output[0].is_empty(),
+        "a different channel must not inherit this room's roster: {:?}",
+        response.output
+    );
+
+    service.shutdown();
+}
