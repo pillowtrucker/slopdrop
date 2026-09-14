@@ -141,11 +141,8 @@ impl TclService {
         tcl_config: TclConfig,
         channel_members: ChannelMembers,
     ) -> Result<Self> {
-        let tcl_thread = TclThreadHandle::spawn(
-            tcl_config.clone(),
-            security_config.clone(),
-            channel_members,
-        )?;
+        let tcl_thread =
+            TclThreadHandle::spawn(tcl_config.clone(), security_config.clone(), channel_members)?;
 
         Ok(Self {
             tcl_thread,
@@ -172,15 +169,18 @@ impl TclService {
         let channel = ctx.channel.clone().unwrap_or_else(|| "default".to_string());
 
         // Evaluate the code
-        let result = self.tcl_thread.eval(
-            code.to_string(),
-            ctx.is_admin,
-            ctx.user.clone(),
-            ctx.host.clone(),
-            channel.clone(),
-            ctx.network.clone(),
-            room,
-        ).await?;
+        let result = self
+            .tcl_thread
+            .eval(
+                code.to_string(),
+                ctx.is_admin,
+                ctx.user.clone(),
+                ctx.host.clone(),
+                channel.clone(),
+                ctx.network.clone(),
+                room,
+            )
+            .await?;
 
         // Split output into lines
         let all_lines: Vec<String> = if result.output.is_empty() {
@@ -231,7 +231,9 @@ impl TclService {
         let channel = ctx.channel.clone().unwrap_or_else(|| "default".to_string());
         let cache_key = format!("{}:{}", channel, ctx.user);
 
-        let mut cache = self.output_cache.write()
+        let mut cache = self
+            .output_cache
+            .write()
             .map_err(|e| anyhow::anyhow!("Failed to access output cache: {}", e))?;
 
         if let Some(remaining) = cache.get_mut(&cache_key) {
@@ -287,10 +289,10 @@ impl TclService {
                 commit_id,
                 author,
                 message,
-                files_changed: 0,  // Not available from git history
+                files_changed: 0, // Not available from git history
                 insertions: 0,
                 deletions: 0,
-                changes_summary: String::new(),  // Not available from git history
+                changes_summary: String::new(), // Not available from git history
             })
             .collect())
     }
@@ -308,7 +310,10 @@ impl TclService {
         // Need to restart the TCL thread to reload state
         self.restart_tcl_thread().await?;
 
-        Ok(format!("Rolled back to commit {}. TCL thread restarted with new state.", &commit_hash[..8]))
+        Ok(format!(
+            "Rolled back to commit {}. TCL thread restarted with new state.",
+            &commit_hash[..8]
+        ))
     }
 
     /// Restart the TCL thread
@@ -332,7 +337,9 @@ impl TclService {
     /// NOTE: Used in tests; IRC frontend uses TclPlugin's auth instead
     #[allow(dead_code)]
     pub fn is_admin(&self, hostmask: &str) -> bool {
-        self.security_config.privileged_users.iter()
+        self.security_config
+            .privileged_users
+            .iter()
             .any(|pattern| crate::hostmask::matches_hostmask(hostmask, pattern))
     }
 
@@ -342,4 +349,215 @@ impl TclService {
     pub fn shutdown(&mut self) {
         self.tcl_thread.shutdown();
     }
+
+    /// Dispatch one IRC event to the trigger engine and return what the
+    /// handlers said, WITHOUT sending it anywhere (headless mode).
+    ///
+    /// This is `tcl_plugin::handle_event` minus the `send_to_network`
+    /// call: a bridge (veles) holds the IRC connection, forwards the
+    /// line over HTTP, and relays the `{channel, message}` pairs it gets
+    /// back through its own connection. The evaluation runs as the
+    /// "system" user via `eval_simple`, which is load-bearing twice:
+    ///
+    ///  - no state persistence — a hundred channel lines must not mint a
+    ///    hundred commits in the state repo ("Evaluated triggers
+    ///    dispatch …" burying real history was the stated reason this
+    ///    is a dedicated endpoint and not `POST /api/eval`);
+    ///  - no pagination cache fill — the reply belongs to the bridge,
+    ///    not to a `more` key nobody will ever read.
+    ///
+    /// `log` additionally appends the line to the channel LOG the same
+    /// way the IRC frontend's `LogMessage` command did, so headless
+    /// procs reading `utils.tcl`'s `log` see a channel that is alive.
+    pub async fn dispatch_event(
+        &mut self,
+        event: &str,
+        network: &str,
+        args: &[String],
+        log: Option<(&str, &str, &str, &str)>, // (channel, nick, mask, text)
+    ) -> Result<Vec<(String, String)>> {
+        use crate::tcl_escape::tcl_escape_arg;
+
+        let event = event.to_ascii_uppercase();
+        if !matches!(
+            event.as_str(),
+            "JOIN" | "PART" | "QUIT" | "KICK" | "NICK" | "TEXT"
+        ) {
+            anyhow::bail!("unknown event type '{event}'");
+        }
+
+        // Log BEFORE dispatch, the way the IRC frontend did it
+        // (`LogMessage` then `UserText` on the same line): a handler
+        // that reads the log must see the line it is reacting to.
+        if let Some((channel, nick, mask, text)) = log {
+            self.tcl_thread.log_message(
+                channel.to_string(),
+                nick.to_string(),
+                mask.to_string(),
+                text.to_string(),
+            );
+        }
+
+        let tcl_args: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
+        let dispatch_cmd = format!(
+            "triggers dispatch {} {} {}",
+            tcl_escape_arg(&event),
+            tcl_escape_arg(network),
+            tcl_args.join(" "),
+        );
+
+        let result = self.tcl_thread.eval_simple(dispatch_cmd).await?;
+        Ok(crate::tcl_plugin::parse_tcl_response_list(&result))
+    }
+
+    /// Fire every due timer and return its `{channel, message}` pairs
+    /// without sending them (headless mode). Same `check_timers` shape
+    /// as the IRC plugin's, minus the network routing: the CHANNEL may
+    /// carry a `network:` prefix in slopdrop's own spelling, and
+    /// deciding what to do with that is the bridge's job, not ours —
+    /// we no longer hold a connection to any network.
+    pub async fn check_timers_headless(&mut self) -> Result<Vec<(String, String)>> {
+        let result = self
+            .tcl_thread
+            .eval_simple("timers check".to_string())
+            .await?;
+        Ok(crate::tcl_plugin::parse_tcl_response_list(&result))
+    }
+
+    /// The live trigger bindings and disable rules, as data rather than
+    /// as one Tcl dump line. The mask a bridge derives (which events
+    /// does this channel actually want) is computed from THIS, not
+    /// restated beside it — the house rule.
+    pub async fn triggers_state(&mut self) -> Result<TriggerState> {
+        let bindings_raw = self
+            .tcl_thread
+            .eval_simple("triggers list_bindings".to_string())
+            .await?;
+        let disabled_raw = self
+            .tcl_thread
+            .eval_simple("triggers status".to_string())
+            .await?;
+
+        // `list_bindings` answers a Tcl list of {event pattern proc}
+        // triples; `status` answers lines of "key -> proc".
+        let bindings = parse_binding_triples(&bindings_raw);
+        let disabled = parse_disabled_lines(&disabled_raw);
+        Ok(TriggerState { bindings, disabled })
+    }
+}
+
+/// The trigger engine's live state, as the bridge needs it.
+#[derive(Debug, Clone, Default)]
+pub struct TriggerState {
+    /// Every binding: (event, channel pattern, proc name).
+    pub bindings: Vec<TriggerBinding>,
+    /// Disable rules, keyed `network:channel` in SLOPDROP's spelling.
+    pub disabled: Vec<(String, Vec<String>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TriggerBinding {
+    pub event: String,
+    pub pattern: String,
+    pub proc_name: String,
+}
+
+/// Split a Tcl list of `{event pattern proc}` triples.
+///
+/// The same brace-walker idea as `parse_tcl_response_list`, one element
+/// deeper: each top-level element is itself a braced list of three
+/// words. Hand-rolled rather than reaching for a Tcl parser crate
+/// because the shapes here are flat and the source is our own ensemble.
+fn parse_binding_triples(raw: &str) -> Vec<TriggerBinding> {
+    let mut out = Vec::new();
+    for element in split_tcl_words(raw) {
+        let words = split_tcl_words(&element);
+        if words.len() == 3 {
+            out.push(TriggerBinding {
+                event: words[0].clone(),
+                pattern: words[1].clone(),
+                proc_name: words[2].clone(),
+            });
+        }
+    }
+    out
+}
+
+/// Parse `status`'s lines: `key -> proc`, one rule per line.
+fn parse_disabled_lines(raw: &str) -> Vec<(String, Vec<String>)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut map: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if let Some((key, proc_name)) = line.split_once(" -> ") {
+            let key = key.trim().to_string();
+            let proc_name = proc_name.trim().to_string();
+            if key.is_empty() || proc_name.is_empty() {
+                continue;
+            }
+            if !map.contains_key(&key) {
+                order.push(key.clone());
+            }
+            map.entry(key).or_default().push(proc_name);
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|k| map.remove(&k).map(|procs| (k, procs)))
+        .collect()
+}
+
+/// Split a Tcl list into its words/elements: braced elements are
+/// de-quoted (honouring nesting and backslash escapes), bare words run
+/// to the next whitespace. Good enough for the flat lists our own
+/// ensembles emit; not a Tcl parser.
+fn split_tcl_words(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = raw.trim().chars().peekable();
+    loop {
+        while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
+            chars.next();
+        }
+        let Some(&c) = chars.peek() else { break };
+        if c == '{' {
+            chars.next(); // consume the opening brace
+            let mut depth = 1usize;
+            let mut w = String::new();
+            while let Some(c2) = chars.next() {
+                match c2 {
+                    '\\' => {
+                        w.push(c2);
+                        if let Some(c3) = chars.next() {
+                            w.push(c3);
+                        }
+                    }
+                    '{' => {
+                        depth += 1;
+                        w.push(c2);
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        w.push(c2);
+                    }
+                    _ => w.push(c2),
+                }
+            }
+            out.push(w);
+        } else {
+            let mut w = String::new();
+            while let Some(&c2) = chars.peek() {
+                if c2.is_whitespace() {
+                    break;
+                }
+                w.push(c2);
+                chars.next();
+            }
+            out.push(w);
+        }
+    }
+    out
 }

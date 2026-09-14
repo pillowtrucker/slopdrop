@@ -10,12 +10,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::{
     extract::{Query, Request, State as AxumState},
-    Extension,
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -87,7 +86,10 @@ fn ct_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// Shared application state
@@ -173,6 +175,70 @@ struct RollbackRequest {
     commit_hash: String,
 }
 
+/// One IRC event, forwarded by a bridge that holds the connection.
+///
+/// This is the headless replacement for what the IRC frontend's
+/// `PluginCommand::UserText`/`UserJoin`/… path did in-process: run the
+/// trigger engine and hand the responses back instead of sending them.
+#[derive(Debug, Deserialize)]
+struct EventRequest {
+    /// JOIN | PART | QUIT | KICK | NICK | TEXT (case-insensitive).
+    event: String,
+    /// slopdrop's own network spelling ("synirc", "irc4fun") — what the
+    /// `disabled` array and the timer keys are keyed on.
+    network: String,
+    /// Handler arguments. TEXT: [nick, mask, channel, text]; JOIN:
+    /// [nick, mask, channel]; QUIT: [nick, mask, message]; KICK:
+    /// [nick, kicker, channel, reason]; NICK: [old, new, mask].
+    args: Vec<String>,
+    /// Also append to the channel LOG (`::slopdrop_log_lines`), so
+    /// headless procs that read the log see the line. TEXT-only in
+    /// practice; the arg order is fixed per event.
+    #[serde(default)]
+    log: bool,
+}
+
+/// What the trigger handlers said, ready for the bridge to relay.
+#[derive(Debug, Serialize)]
+struct EventResponse {
+    /// `{channel, message}` pairs.
+    responses: Vec<ChannelMessage>,
+    is_error: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ChannelMessage {
+    channel: String,
+    message: String,
+}
+
+/// What `timers check` fired, without sending anything.
+#[derive(Debug, Serialize)]
+struct TimersResponse {
+    fired: Vec<ChannelMessage>,
+}
+
+/// The live trigger bindings and disable rules (GET /api/triggers).
+#[derive(Debug, Serialize)]
+struct TriggersDto {
+    bindings: Vec<BindingDto>,
+    disabled: Vec<DisabledDto>,
+}
+
+#[derive(Debug, Serialize)]
+struct BindingDto {
+    event: String,
+    pattern: String,
+    proc: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DisabledDto {
+    /// `network:channel` in slopdrop's spelling.
+    key: String,
+    procs: Vec<String>,
+}
+
 /// Generic response
 #[derive(Debug, Serialize)]
 struct GenericResponse {
@@ -229,6 +295,9 @@ impl WebFrontend {
             .route("/api/more", get(handle_more))
             .route("/api/history", get(handle_history))
             .route("/api/rollback", post(handle_rollback))
+            .route("/api/event", post(handle_event))
+            .route("/api/timers/check", post(handle_timers_check))
+            .route("/api/triggers", get(handle_triggers))
             .route("/api/health", get(handle_health));
 
         // The auth layer runs ALWAYS, not "if enabled": with no tokens
@@ -289,9 +358,7 @@ impl WebFrontend {
             .await
             .context("Failed to bind to address")?;
 
-        axum::serve(listener, app)
-            .await
-            .context("Server error")?;
+        axum::serve(listener, app).await.context("Server error")?;
 
         Ok(())
     }
@@ -304,7 +371,10 @@ impl Frontend for WebFrontend {
     }
 
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Web frontend on {}:{}", self.config.bind_address, self.config.port);
+        info!(
+            "Starting Web frontend on {}:{}",
+            self.config.bind_address, self.config.port
+        );
         *self.running.write().unwrap() = true;
         self.run_server().await?;
         Ok(())
@@ -506,6 +576,124 @@ async fn handle_health() -> Json<GenericResponse> {
         success: true,
         message: "OK".to_string(),
     })
+}
+
+/// Handle a forwarded IRC event (headless trigger dispatch).
+///
+/// Deliberately NOT `handle_eval` with a `triggers dispatch …` code
+/// string, even though that would work today with zero slopdrop
+/// changes: it would make every channel line a code-injection surface
+/// on our own side, record the line in the pagination cache as if a
+/// user had evaluated it, make `more_available` lie, and bury the state
+/// repo's history under "Evaluated triggers dispatch TEXT …" commits.
+/// A dedicated route runs the dispatch through the interpreter without
+/// any of that bookkeeping — see `TclService::dispatch_event`.
+async fn handle_event(
+    AxumState(state): AxumState<AppState>,
+    Json(req): Json<EventRequest>,
+) -> Result<Json<EventResponse>, StatusCode> {
+    let mut service = state.tcl_service.lock().await;
+
+    // The channel to log into is the third argument for every event
+    // that has one (JOIN/PART/KICK/TEXT); QUIT and NICK have none.
+    let log: Option<(String, String, String, String)> = req
+        .log
+        .then(|| match req.event.to_ascii_uppercase().as_str() {
+            "TEXT" => req.args.get(2).map(|c| {
+                (
+                    c.clone(),
+                    req.args.first().cloned().unwrap_or_default(),
+                    req.args.get(1).cloned().unwrap_or_default(),
+                    req.args.get(3).cloned().unwrap_or_default(),
+                )
+            }),
+            "JOIN" | "PART" => req.args.get(2).map(|c| {
+                (
+                    c.clone(),
+                    req.args.first().cloned().unwrap_or_default(),
+                    req.args.get(1).cloned().unwrap_or_default(),
+                    String::new(),
+                )
+            }),
+            _ => None,
+        })
+        .flatten();
+
+    let log_ref = log
+        .as_ref()
+        .map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str()));
+
+    match service
+        .dispatch_event(&req.event, &req.network, &req.args, log_ref)
+        .await
+    {
+        Ok(responses) => Ok(Json(EventResponse {
+            responses: responses
+                .into_iter()
+                .map(|(channel, message)| ChannelMessage { channel, message })
+                .collect(),
+            is_error: false,
+        })),
+        Err(e) => {
+            error!("Event error: {}", e);
+            Ok(Json(EventResponse {
+                responses: vec![],
+                is_error: true,
+            }))
+        }
+    }
+}
+
+/// Fire due timers and hand the messages back instead of sending them.
+async fn handle_timers_check(
+    AxumState(state): AxumState<AppState>,
+) -> Result<Json<TimersResponse>, StatusCode> {
+    let mut service = state.tcl_service.lock().await;
+
+    match service.check_timers_headless().await {
+        Ok(fired) => Ok(Json(TimersResponse {
+            fired: fired
+                .into_iter()
+                .map(|(channel, message)| ChannelMessage { channel, message })
+                .collect(),
+        })),
+        Err(e) => {
+            error!("Timers check error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// The live trigger bindings and disable rules, for a bridge that
+/// derives which events a channel actually wants (the forward mask)
+/// from our own truth rather than restating it.
+async fn handle_triggers(
+    AxumState(state): AxumState<AppState>,
+) -> Result<Json<TriggersDto>, StatusCode> {
+    let mut service = state.tcl_service.lock().await;
+
+    match service.triggers_state().await {
+        Ok(st) => Ok(Json(TriggersDto {
+            bindings: st
+                .bindings
+                .into_iter()
+                .map(|b| BindingDto {
+                    event: b.event,
+                    pattern: b.pattern,
+                    proc: b.proc_name,
+                })
+                .collect(),
+            disabled: st
+                .disabled
+                .into_iter()
+                .map(|(key, procs)| DisabledDto { key, procs })
+                .collect(),
+        })),
+        Err(e) => {
+            error!("Triggers state error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// Simple HTML interface

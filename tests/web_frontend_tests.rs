@@ -276,15 +276,8 @@ async fn test_admin_comes_from_the_token_not_the_body() {
     };
 
     // No token at all, while tokens ARE configured: refused outright.
-    let (status, _) = read(
-        probe(
-            None,
-            serde_json::json!({"code": PROBE_CODE}),
-            state.clone(),
-        )
-        .await,
-    )
-    .await;
+    let (status, _) =
+        read(probe(None, serde_json::json!({"code": PROBE_CODE}), state.clone()).await).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "a bearer is required");
 
     // A wrong token is refused too.
@@ -556,7 +549,11 @@ async fn test_history_endpoint() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     // Should return a history array directly (may be empty)
-    assert!(json.is_array(), "History should be an array, got: {:?}", json);
+    assert!(
+        json.is_array(),
+        "History should be an array, got: {:?}",
+        json
+    );
 }
 
 #[cfg(feature = "frontend-web")]
@@ -614,10 +611,7 @@ async fn test_rollback_endpoint() {
         history_json
     );
 
-    let commit_hash = history_json[0]["commit_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let commit_hash = history_json[0]["commit_id"].as_str().unwrap().to_string();
 
     // Change state
     let request_body = serde_json::json!({
@@ -966,5 +960,393 @@ async fn a_request_cannot_name_its_own_privilege() {
     assert!(
         output.contains("requires privileges"),
         "the display nick must not reach the hostmask check: {json}"
+    );
+}
+
+// ── /api/event, /api/timers/check, /api/triggers (the headless bridge
+// surface) ──────────────────────────────────────────────────────────
+//
+// The cutover left slopdrop's trigger engine with no events: the IRC
+// frontend that fed it is gone and a bridge (veles) holds the
+// connection instead. These tests pin the contract the bridge relies
+// on — dispatch runs the handlers, returns what they said WITHOUT
+// sending it, and none of it leaks into the eval bookkeeping.
+
+/// POST /api/event runs a bound handler and returns its reply.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn an_event_runs_the_bound_handler_and_returns_the_reply() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    // A binding that answers, on the record: TEXT -> proc that echoes.
+    let setup = serde_json::json!({
+        "code": "proc _ev_echo {nick mask channel text} { return \"heard $text\" }\nbind TEXT * _ev_echo"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["is_error"], false, "setup eval must succeed: {json}");
+
+    let event = serde_json::json!({
+        "event": "TEXT",
+        "network": "testnet",
+        "args": ["wrath", "wrath@test", "#test", "hello triggers"]
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/event")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&event).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["is_error"], false, "event: {json}");
+    let responses = json["responses"].as_array().expect("responses array");
+    assert!(
+        responses
+            .iter()
+            .any(|r| r["channel"] == "#test" && r["message"] == "heard hello triggers"),
+        "the handler's reply must come back as a channel/message pair: {json}"
+    );
+}
+
+/// A disabled binding does not fire — the per-channel split the live
+/// state on the VPS already expresses (all four handlers disabled in
+/// irc4fun:#coven) must keep working through the bridge path.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_disabled_binding_does_not_fire_over_the_bridge() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "proc _ev_echo {nick mask channel text} { return \"heard\" }\nbind TEXT * _ev_echo\ntriggers disable_for irc4fun #coven _ev_echo"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Same network:channel the disable rule names -> nothing fires.
+    let event = serde_json::json!({
+        "event": "TEXT",
+        "network": "irc4fun",
+        "args": ["x", "x@x", "#coven", "anything"]
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/event")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&event).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["responses"].as_array().map(Vec::len),
+        Some(0),
+        "a disable rule must silence the bridge path too: {json}"
+    );
+}
+
+/// The dispatch must not mint a commit: a hundred channel lines must
+/// not become a hundred "Evaluated triggers dispatch…" commits. (The
+/// `user` is the system nick; handle_eval skips persistence for it.)
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn an_event_does_not_mint_a_state_commit() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "proc _ev_setter {nick mask channel text} { set ::_bridge_var 1; return \"\" }\nbind TEXT * _ev_setter"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let event = serde_json::json!({
+        "event": "TEXT",
+        "network": "testnet",
+        "args": ["n", "n@t", "#test", "mutate"]
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/event")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&event).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The variable WAS set (the handler ran)…
+    let check = serde_json::json!({"code": "set ::_bridge_var"});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&check).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["output"][0], "1", "the handler must have run: {json}");
+
+    // …but the state repo recorded nothing beyond the setup commits.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/history")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let history: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    for commit in history.as_array().unwrap_or(&vec![]) {
+        let msg = commit["message"].as_str().unwrap_or_default();
+        assert!(
+            !msg.contains("triggers dispatch"),
+            "an event must not mint a state commit: {msg}"
+        );
+    }
+}
+
+/// `log: true` appends the line to the channel LOG the handlers read.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_logged_event_is_readable_from_the_channel_log() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let event = serde_json::json!({
+        "event": "TEXT",
+        "network": "testnet",
+        "args": ["wrath", "wrath@test", "#logged", "the logged line"],
+        "log": true
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/event")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&event).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // utils.tcl's `log` proc takes no argument — it reads $::channel.
+    let check = serde_json::json!({
+        "code": "set ::channel #logged; set n 0; catch {set n [llength [log]]}; set n"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&check).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["output"][0], "1",
+        "log:true must append exactly one line to the channel log: {json}"
+    );
+}
+
+/// GET /api/triggers reports the bindings and disable rules as data —
+/// the truth a bridge derives its forward mask from.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn the_triggers_endpoint_reports_bindings_and_disables_as_data() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "proc _ev_echo {nick mask channel text} { return \"\" }\nbind TEXT * _ev_echo\ntriggers disable_for irc4fun #coven _ev_echo"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/triggers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let bindings = json["bindings"].as_array().expect("bindings array");
+    assert!(
+        bindings
+            .iter()
+            .any(|b| b["event"] == "TEXT" && b["pattern"] == "*" && b["proc"] == "_ev_echo"),
+        "the binding must be reported: {json}"
+    );
+    let disabled = json["disabled"].as_array().expect("disabled array");
+    assert!(
+        disabled.iter().any(|d| d["key"] == "irc4fun:#coven"
+            && d["procs"]
+                .as_array()
+                .map(|p| p.iter().any(|v| v == "_ev_echo"))
+                .unwrap_or(false)),
+        "the disable rule must be reported under its key: {json}"
+    );
+}
+
+/// POST /api/timers/check fires a due timer and hands the message back
+/// without sending it anywhere.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn a_due_timer_fires_into_the_bridge_response() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    // A timer due shortly: schedule it 200ms out and wait, so the check
+    // has something to fire.
+    let setup = serde_json::json!({
+        "code": "timers schedule #testnet:#test {bridge timer fired} 200"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/timers/check")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let fired = json["fired"].as_array().expect("fired array");
+    assert!(
+        fired
+            .iter()
+            .any(|f| f["channel"] == "#testnet:#test" && f["message"] == "bridge timer fired"),
+        "the due timer must come back as a channel/message pair: {json}"
     );
 }

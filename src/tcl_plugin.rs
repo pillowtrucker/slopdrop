@@ -57,7 +57,11 @@ impl TclPlugin {
     }
 
     /// Register a response channel for a network
-    pub fn register_network(&mut self, network_name: String, response_tx: mpsc::Sender<PluginCommand>) {
+    pub fn register_network(
+        &mut self,
+        network_name: String,
+        response_tx: mpsc::Sender<PluginCommand>,
+    ) {
         info!("Registered response channel for network: {}", network_name);
         self.response_channels.insert(network_name, response_tx);
     }
@@ -67,7 +71,10 @@ impl TclPlugin {
         if let Some(tx) = self.response_channels.get(network) {
             tx.send(command).await?;
         } else {
-            warn!("No response channel for network '{}', dropping message", network);
+            warn!(
+                "No response channel for network '{}', dropping message",
+                network
+            );
         }
         Ok(())
     }
@@ -91,7 +98,10 @@ impl TclPlugin {
 
                 // Drain all pending events to batch reloads
                 while let Ok(event) = rx.try_recv() {
-                    debug!("File change detected: {:?} ({:?})", event.path, event.change_type);
+                    debug!(
+                        "File change detected: {:?} ({:?})",
+                        event.path, event.change_type
+                    );
                     match event.change_type {
                         ChangeType::TclModule => has_tcl_changes = true,
                         ChangeType::Config => has_config_changes = true,
@@ -205,7 +215,9 @@ impl TclPlugin {
     fn reload_config(&mut self) -> Result<()> {
         // Load new config from file
         let new_config = Config::from_file(
-            self.config_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid config path"))?
+            self.config_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid config path"))?,
         )?;
 
         info!("Configuration reloaded successfully");
@@ -217,46 +229,61 @@ impl TclPlugin {
             let old_srv = self.server_configs.get(i);
             if let Some(old) = old_srv {
                 if old.hostname != new_srv.hostname {
-                    warn!("  Server {}: hostname {} -> {} (requires restart/reconnect)",
-                        new_srv.network_name(), old.hostname, new_srv.hostname);
+                    warn!(
+                        "  Server {}: hostname {} -> {} (requires restart/reconnect)",
+                        new_srv.network_name(),
+                        old.hostname,
+                        new_srv.hostname
+                    );
                 }
                 if old.port != new_srv.port {
-                    warn!("  Server {}: port {} -> {} (requires restart/reconnect)",
-                        new_srv.network_name(), old.port, new_srv.port);
+                    warn!(
+                        "  Server {}: port {} -> {} (requires restart/reconnect)",
+                        new_srv.network_name(),
+                        old.port,
+                        new_srv.port
+                    );
                 }
             }
         }
 
         // Security config changes
         if self.security_config.eval_timeout_ms != new_config.security.eval_timeout_ms {
-            info!("  Timeout: {}ms -> {}ms",
-                self.security_config.eval_timeout_ms,
-                new_config.security.eval_timeout_ms);
+            info!(
+                "  Timeout: {}ms -> {}ms",
+                self.security_config.eval_timeout_ms, new_config.security.eval_timeout_ms
+            );
         }
 
         if self.security_config.privileged_users != new_config.security.privileged_users {
-            info!("  Privileged users: {} -> {} patterns",
+            info!(
+                "  Privileged users: {} -> {} patterns",
                 self.security_config.privileged_users.len(),
-                new_config.security.privileged_users.len());
+                new_config.security.privileged_users.len()
+            );
         }
 
         if self.security_config.blacklisted_users != new_config.security.blacklisted_users {
-            info!("  Blacklisted users: {} -> {} patterns",
+            info!(
+                "  Blacklisted users: {} -> {} patterns",
                 self.security_config.blacklisted_users.len(),
-                new_config.security.blacklisted_users.len());
+                new_config.security.blacklisted_users.len()
+            );
         }
 
         if self.security_config.notify_self != new_config.security.notify_self {
-            info!("  Notify self: {} -> {}",
-                self.security_config.notify_self,
-                new_config.security.notify_self);
+            info!(
+                "  Notify self: {} -> {}",
+                self.security_config.notify_self, new_config.security.notify_self
+            );
         }
 
         // TCL config changes
         if self.tcl_config.max_output_lines != new_config.tcl.max_output_lines {
-            info!("  Max output lines: {} -> {}",
-                self.tcl_config.max_output_lines,
-                new_config.tcl.max_output_lines);
+            info!(
+                "  Max output lines: {} -> {}",
+                self.tcl_config.max_output_lines, new_config.tcl.max_output_lines
+            );
         }
 
         // Update our configs
@@ -265,18 +292,14 @@ impl TclPlugin {
         self.tcl_config = new_config.tcl.clone();
 
         // Update the TCL thread's configuration
-        self.tcl_thread.update_config(new_config.tcl, new_config.security)?;
+        self.tcl_thread
+            .update_config(new_config.tcl, new_config.security)?;
 
         Ok(())
     }
 
     /// Handle an IRC event and dispatch to registered triggers
-    async fn handle_event(
-        &mut self,
-        event: &str,
-        args: &[&str],
-        network: &str,
-    ) -> Result<()> {
+    async fn handle_event(&mut self, event: &str, args: &[&str], network: &str) -> Result<()> {
         // Build TCL command to dispatch event (include network).
         // Every interpolated value is backslash-escaped so a stray `}` or
         // `[command]` in user text can't break out of its argument slot.
@@ -302,12 +325,19 @@ impl TclPlugin {
         let responses = self.parse_timer_list(&result);
 
         for (channel, message) in responses {
-            debug!("Trigger response for {} on {}: {}", channel, network, message);
-            self.send_to_network(network, PluginCommand::SendToIrc {
-                network: network.to_string(),
-                channel,
-                text: message,
-            }).await?;
+            debug!(
+                "Trigger response for {} on {}: {}",
+                channel, network, message
+            );
+            self.send_to_network(
+                network,
+                PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel,
+                    text: message,
+                },
+            )
+            .await?;
         }
 
         Ok(())
@@ -316,7 +346,10 @@ impl TclPlugin {
     /// Check for ready timers and send their messages
     async fn check_timers(&mut self) -> Result<()> {
         // Evaluate TCL to check timers (using general timer framework)
-        let result = self.tcl_thread.eval_simple("timers check".to_string()).await?;
+        let result = self
+            .tcl_thread
+            .eval_simple("timers check".to_string())
+            .await?;
 
         if result.trim().is_empty() || result.trim() == "{}" {
             return Ok(());
@@ -335,16 +368,23 @@ impl TclPlugin {
                 (n.to_string(), c.to_string())
             } else {
                 // Default to first network
-                let default_net = self.response_channels.keys().next()
+                let default_net = self
+                    .response_channels
+                    .keys()
+                    .next()
                     .cloned()
                     .unwrap_or_else(|| "default".to_string());
                 (default_net, channel)
             };
-            self.send_to_network(&net, PluginCommand::SendToIrc {
-                network: net.clone(),
-                channel: chan,
-                text: message,
-            }).await?;
+            self.send_to_network(
+                &net,
+                PluginCommand::SendToIrc {
+                    network: net.clone(),
+                    channel: chan,
+                    text: message,
+                },
+            )
+            .await?;
         }
 
         Ok(())
@@ -352,87 +392,10 @@ impl TclPlugin {
 
     /// Parse a TCL list of {channel message} pairs
     fn parse_timer_list(&self, tcl_list: &str) -> Vec<(String, String)> {
-        let mut result = Vec::new();
-        let trimmed = tcl_list.trim();
-
-        if trimmed.is_empty() {
-            return result;
-        }
-
-        // Simple parser for TCL list format
-        // Each element is {channel message}
-        let mut depth = 0;
-        let mut current = String::new();
-        let mut in_element = false;
-
-        for ch in trimmed.chars() {
-            match ch {
-                '{' => {
-                    depth += 1;
-                    if depth == 1 {
-                        in_element = true;
-                        current.clear();
-                    } else {
-                        current.push(ch);
-                    }
-                }
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 && in_element {
-                        // Parse {channel message}
-                        if let Some((channel, message)) = self.parse_timer_element(&current) {
-                            result.push((channel, message));
-                        }
-                        in_element = false;
-                    } else if depth > 0 {
-                        current.push(ch);
-                    }
-                }
-                _ => {
-                    if in_element {
-                        current.push(ch);
-                    }
-                }
-            }
-        }
-
-        result
+        parse_tcl_response_list(tcl_list)
     }
 
-    /// Parse a single timer element: "{channel} {message}" or "channel message"
-    fn parse_timer_element(&self, element: &str) -> Option<(String, String)> {
-        let trimmed = element.trim();
-
-        // Check if message is braced
-        if let Some(space_idx) = trimmed.find(' ') {
-            let channel_part = trimmed[..space_idx].to_string();
-            let rest = trimmed[space_idx + 1..].trim();
-
-            // Handle braced channel (TCL list format)
-            let channel = if channel_part.starts_with('{') && channel_part.ends_with('}') {
-                channel_part[1..channel_part.len() - 1].to_string()
-            } else {
-                channel_part
-            };
-
-            // Handle braced message
-            let message = if rest.starts_with('{') && rest.ends_with('}') {
-                rest[1..rest.len() - 1].to_string()
-            } else {
-                rest.to_string()
-            };
-
-            return Some((channel, message));
-        }
-
-        None
-    }
-
-    async fn handle_eval(
-        &mut self,
-        message: Message,
-        is_admin: bool,
-    ) -> Result<()> {
+    async fn handle_eval(&mut self, message: Message, is_admin: bool) -> Result<()> {
         let network = message.author.network.clone();
 
         // Clean up old cache entries (older than 5 minutes)
@@ -440,9 +403,15 @@ impl TclPlugin {
 
         // Extract the command (remove "tcl " or "tclAdmin " prefix)
         let code = if message.content.starts_with("tclAdmin ") {
-            message.content.strip_prefix("tclAdmin ").unwrap_or(&message.content)
+            message
+                .content
+                .strip_prefix("tclAdmin ")
+                .unwrap_or(&message.content)
         } else if message.content.starts_with("tcl ") {
-            message.content.strip_prefix("tcl ").unwrap_or(&message.content)
+            message
+                .content
+                .strip_prefix("tcl ")
+                .unwrap_or(&message.content)
         } else {
             &message.content
         };
@@ -454,7 +423,9 @@ impl TclPlugin {
 
         // Handle admin blacklist commands
         if code.trim() == "blacklist" || code.trim().starts_with("blacklist ") {
-            return self.handle_blacklist_command(&message, is_admin, code.trim(), &network).await;
+            return self
+                .handle_blacklist_command(&message, is_admin, code.trim(), &network)
+                .await;
         }
 
         // Validate bracket balancing
@@ -467,54 +438,76 @@ impl TclPlugin {
         debug!("Evaluating TCL: {} (admin={})", code, is_admin);
 
         // Build hostmask for privilege and blacklist checking: nick!ident@host
-        let ident = message.author.ident.clone().unwrap_or_else(|| "user".to_string());
-        let host_part = message.author.host.clone().unwrap_or_else(|| "irc".to_string());
+        let ident = message
+            .author
+            .ident
+            .clone()
+            .unwrap_or_else(|| "user".to_string());
+        let host_part = message
+            .author
+            .host
+            .clone()
+            .unwrap_or_else(|| "irc".to_string());
         let full_host = format!("{}@{}", ident, host_part);
         let full_host_for_room = full_host.clone();
         let user_hostmask = format!("{}!{}", message.author.nick, full_host);
 
         // Check if user is blacklisted
-        let blacklisted_pattern = self.security_config.blacklisted_users.iter()
+        let blacklisted_pattern = self
+            .security_config
+            .blacklisted_users
+            .iter()
             .find(|pattern| crate::hostmask::matches_hostmask(&user_hostmask, pattern))
             .cloned();
 
         if let Some(pattern) = blacklisted_pattern {
             let msg = "error: you are blacklisted and cannot use this bot";
-            self.send_response(&message, msg.to_string(), &network).await?;
-            info!("Blocked blacklisted user: {} (matched pattern: {})", user_hostmask, pattern);
+            self.send_response(&message, msg.to_string(), &network)
+                .await?;
+            info!(
+                "Blocked blacklisted user: {} (matched pattern: {})",
+                user_hostmask, pattern
+            );
             return Ok(());
         }
 
         // Send to TCL thread with timeout
-        let result = self.tcl_thread.eval(
-            code.to_string(),
-            is_admin,
-            message.author.nick.clone(),
-            full_host,
-            message.author.channel.clone(),
-            message.author.network.clone(),
-            // Our own connection IS the room. Reported explicitly rather
-            // than left to the fallback, because the fallback only fills
-            // a hole: a bot on IRC must rewrite `::channel` on every
-            // message, or the second channel it is in reads as the first.
-            // Members and topic stay empty — `sync_channel_members` fills
-            // the roster from our own tracking, and we have never had a
-            // topic to report.
-            crate::tcl_service::RoomContext {
-                nick: Some(message.author.nick.clone()),
-                mask: Some(full_host_for_room),
-                channel: Some(message.author.channel.clone()),
-                topic: None,
-                members: Vec::new(),
-            },
-        ).await?;
+        let result = self
+            .tcl_thread
+            .eval(
+                code.to_string(),
+                is_admin,
+                message.author.nick.clone(),
+                full_host,
+                message.author.channel.clone(),
+                message.author.network.clone(),
+                // Our own connection IS the room. Reported explicitly rather
+                // than left to the fallback, because the fallback only fills
+                // a hole: a bot on IRC must rewrite `::channel` on every
+                // message, or the second channel it is in reads as the first.
+                // Members and topic stay empty — `sync_channel_members` fills
+                // the roster from our own tracking, and we have never had a
+                // topic to report.
+                crate::tcl_service::RoomContext {
+                    nick: Some(message.author.nick.clone()),
+                    mask: Some(full_host_for_room),
+                    channel: Some(message.author.channel.clone()),
+                    topic: None,
+                    members: Vec::new(),
+                },
+            )
+            .await?;
 
-        debug!("TCL eval completed, output length: {} bytes", result.output.len());
+        debug!(
+            "TCL eval completed, output length: {} bytes",
+            result.output.len()
+        );
 
         // Send PM notifications to admins if state was committed
         if let Some(ref commit_info) = result.commit_info {
             debug!("Sending commit notifications");
-            self.send_commit_notifications(commit_info, &message, &network).await?;
+            self.send_commit_notifications(commit_info, &message, &network)
+                .await?;
         }
 
         debug!("Starting response send with timeout");
@@ -522,18 +515,28 @@ impl TclPlugin {
         let timeout = Duration::from_millis(self.security_config.eval_timeout_ms);
         match tokio::time::timeout(
             timeout,
-            self.send_response(&message, result.output, &network)
-        ).await {
+            self.send_response(&message, result.output, &network),
+        )
+        .await
+        {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => {
-                warn!("Response sending timed out after {}ms, likely huge output", self.security_config.eval_timeout_ms);
+                warn!(
+                    "Response sending timed out after {}ms, likely huge output",
+                    self.security_config.eval_timeout_ms
+                );
                 // Try to send error message
-                let _ = self.send_to_network(&network, PluginCommand::SendToIrc {
-                    network: network.clone(),
-                    channel: message.author.channel.clone(),
-                    text: "error: output too large, response timed out".to_string(),
-                }).await;
+                let _ = self
+                    .send_to_network(
+                        &network,
+                        PluginCommand::SendToIrc {
+                            network: network.clone(),
+                            channel: message.author.channel.clone(),
+                            text: "error: output too large, response timed out".to_string(),
+                        },
+                    )
+                    .await;
                 Ok(())
             }
         }
@@ -550,13 +553,23 @@ impl TclPlugin {
         // Reject output that's too large
         const MAX_OUTPUT_BYTES: usize = 100_000; // 100KB max
         if output.len() > MAX_OUTPUT_BYTES {
-            warn!("Output too large ({} bytes), sending error instead", output.len());
-            self.send_to_network(network, PluginCommand::SendToIrc {
-                network: network.to_string(),
-                channel: original_message.author.channel.clone(),
-                text: format!("error: output too large ({} bytes, max {} bytes)",
-                             output.len(), MAX_OUTPUT_BYTES),
-            }).await?;
+            warn!(
+                "Output too large ({} bytes), sending error instead",
+                output.len()
+            );
+            self.send_to_network(
+                network,
+                PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel: original_message.author.channel.clone(),
+                    text: format!(
+                        "error: output too large ({} bytes, max {} bytes)",
+                        output.len(),
+                        MAX_OUTPUT_BYTES
+                    ),
+                },
+            )
+            .await?;
             return Ok(());
         }
 
@@ -599,11 +612,15 @@ impl TclPlugin {
             (output, false)
         };
 
-        self.send_to_network(network, PluginCommand::SendToIrc {
-            network: network.to_string(),
-            channel: original_message.author.channel.clone(),
-            text: output,
-        }).await?;
+        self.send_to_network(
+            network,
+            PluginCommand::SendToIrc {
+                network: network.to_string(),
+                channel: original_message.author.channel.clone(),
+                text: output,
+            },
+        )
+        .await?;
 
         // Clean up cache entry if we showed all lines
         if !cache_remaining {
@@ -637,11 +654,15 @@ impl TclPlugin {
             let is_sender = admin_nick == &original_message.author.nick;
             if !is_sender || self.security_config.notify_self {
                 debug!("Sending commit notification to {}", admin_nick);
-                self.send_to_network(network, PluginCommand::SendToIrc {
-                    network: network.to_string(),
-                    channel: admin_nick.clone(), // In IRC, nick as channel = PM
-                    text: notification.clone(),
-                }).await?;
+                self.send_to_network(
+                    network,
+                    PluginCommand::SendToIrc {
+                        network: network.to_string(),
+                        channel: admin_nick.clone(), // In IRC, nick as channel = PM
+                        text: notification.clone(),
+                    },
+                )
+                .await?;
             }
         }
 
@@ -654,9 +675,11 @@ impl TclPlugin {
         let hostmask = format!("{}!{}", nick, mask);
 
         // Check if hostmask matches any privileged pattern
-        let is_admin = self.security_config.privileged_users.iter().any(|pattern| {
-            hostmask::matches_hostmask(&hostmask, pattern)
-        });
+        let is_admin = self
+            .security_config
+            .privileged_users
+            .iter()
+            .any(|pattern| hostmask::matches_hostmask(&hostmask, pattern));
 
         if is_admin {
             if add {
@@ -673,21 +696,13 @@ impl TclPlugin {
         let now = Instant::now();
         let timeout = Duration::from_secs(300); // 5 minutes
 
-        self.output_cache.retain(|_, cache| {
-            now.duration_since(cache.timestamp) < timeout
-        });
+        self.output_cache
+            .retain(|_, cache| now.duration_since(cache.timestamp) < timeout);
     }
 
     /// Handle "more" command to show next chunk of cached output
-    async fn handle_more_command(
-        &mut self,
-        message: &Message,
-        network: &str,
-    ) -> Result<()> {
-        let cache_key = (
-            message.author.channel.clone(),
-            message.author.nick.clone(),
-        );
+    async fn handle_more_command(&mut self, message: &Message, network: &str) -> Result<()> {
+        let cache_key = (message.author.channel.clone(), message.author.nick.clone());
 
         if let Some(cache) = self.output_cache.get_mut(&cache_key) {
             let max_lines = self.tcl_config.max_output_lines;
@@ -695,11 +710,15 @@ impl TclPlugin {
 
             if remaining == 0 {
                 // No more lines
-                self.send_to_network(network, PluginCommand::SendToIrc {
-                    network: network.to_string(),
-                    channel: message.author.channel.clone(),
-                    text: "No more output.".to_string(),
-                }).await?;
+                self.send_to_network(
+                    network,
+                    PluginCommand::SendToIrc {
+                        network: network.to_string(),
+                        channel: message.author.channel.clone(),
+                        text: "No more output.".to_string(),
+                    },
+                )
+                .await?;
                 self.output_cache.remove(&cache_key);
                 return Ok(());
             }
@@ -724,22 +743,30 @@ impl TclPlugin {
                 chunk.join("\n")
             };
 
-            self.send_to_network(network, PluginCommand::SendToIrc {
-                network: network.to_string(),
-                channel: message.author.channel.clone(),
-                text: output,
-            }).await?;
+            self.send_to_network(
+                network,
+                PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel: message.author.channel.clone(),
+                    text: output,
+                },
+            )
+            .await?;
 
             // Clean up if we showed all lines
             if still_remaining == 0 {
                 self.output_cache.remove(&cache_key);
             }
         } else {
-            self.send_to_network(network, PluginCommand::SendToIrc {
-                network: network.to_string(),
-                channel: message.author.channel.clone(),
-                text: "No cached output. Run a tcl command first.".to_string(),
-            }).await?;
+            self.send_to_network(
+                network,
+                PluginCommand::SendToIrc {
+                    network: network.to_string(),
+                    channel: message.author.channel.clone(),
+                    text: "No cached output. Run a tcl command first.".to_string(),
+                },
+            )
+            .await?;
         }
 
         Ok(())
@@ -755,14 +782,24 @@ impl TclPlugin {
     ) -> Result<()> {
         // Blacklist commands are admin-only
         if !is_admin {
-            self.send_response(message, "error: blacklist commands require admin privileges (use tclAdmin)".to_string(), network).await?;
+            self.send_response(
+                message,
+                "error: blacklist commands require admin privileges (use tclAdmin)".to_string(),
+                network,
+            )
+            .await?;
             return Ok(());
         }
 
         let parts: Vec<&str> = code.split_whitespace().collect();
 
         if parts.len() < 2 {
-            self.send_response(message, "error: usage: blacklist <add|remove|list> [hostmask]".to_string(), network).await?;
+            self.send_response(
+                message,
+                "error: usage: blacklist <add|remove|list> [hostmask]".to_string(),
+                network,
+            )
+            .await?;
             return Ok(());
         }
 
@@ -771,7 +808,12 @@ impl TclPlugin {
         match subcommand {
             "add" => {
                 if parts.len() < 3 {
-                    self.send_response(message, "error: usage: blacklist add <hostmask>".to_string(), network).await?;
+                    self.send_response(
+                        message,
+                        "error: usage: blacklist add <hostmask>".to_string(),
+                        network,
+                    )
+                    .await?;
                     return Ok(());
                 }
 
@@ -779,45 +821,104 @@ impl TclPlugin {
 
                 // Check if already blacklisted
                 if self.security_config.blacklisted_users.contains(&hostmask) {
-                    self.send_response(message, format!("Hostmask '{}' is already blacklisted", hostmask), network).await?;
+                    self.send_response(
+                        message,
+                        format!("Hostmask '{}' is already blacklisted", hostmask),
+                        network,
+                    )
+                    .await?;
                     return Ok(());
                 }
 
                 // Add to blacklist
-                self.security_config.blacklisted_users.push(hostmask.clone());
-                info!("Admin {} added '{}' to blacklist", message.author.nick, hostmask);
-                self.send_response(message, format!("Added '{}' to blacklist (runtime only, not saved to config)", hostmask), network).await?;
+                self.security_config
+                    .blacklisted_users
+                    .push(hostmask.clone());
+                info!(
+                    "Admin {} added '{}' to blacklist",
+                    message.author.nick, hostmask
+                );
+                self.send_response(
+                    message,
+                    format!(
+                        "Added '{}' to blacklist (runtime only, not saved to config)",
+                        hostmask
+                    ),
+                    network,
+                )
+                .await?;
             }
 
             "remove" => {
                 if parts.len() < 3 {
-                    self.send_response(message, "error: usage: blacklist remove <hostmask>".to_string(), network).await?;
+                    self.send_response(
+                        message,
+                        "error: usage: blacklist remove <hostmask>".to_string(),
+                        network,
+                    )
+                    .await?;
                     return Ok(());
                 }
 
                 let hostmask = parts[2..].join(" ");
 
                 // Find and remove
-                if let Some(pos) = self.security_config.blacklisted_users.iter().position(|x| x == &hostmask) {
+                if let Some(pos) = self
+                    .security_config
+                    .blacklisted_users
+                    .iter()
+                    .position(|x| x == &hostmask)
+                {
                     self.security_config.blacklisted_users.remove(pos);
-                    info!("Admin {} removed '{}' from blacklist", message.author.nick, hostmask);
-                    self.send_response(message, format!("Removed '{}' from blacklist", hostmask), network).await?;
+                    info!(
+                        "Admin {} removed '{}' from blacklist",
+                        message.author.nick, hostmask
+                    );
+                    self.send_response(
+                        message,
+                        format!("Removed '{}' from blacklist", hostmask),
+                        network,
+                    )
+                    .await?;
                 } else {
-                    self.send_response(message, format!("Hostmask '{}' is not in blacklist", hostmask), network).await?;
+                    self.send_response(
+                        message,
+                        format!("Hostmask '{}' is not in blacklist", hostmask),
+                        network,
+                    )
+                    .await?;
                 }
             }
 
             "list" => {
                 if self.security_config.blacklisted_users.is_empty() {
-                    self.send_response(message, "Blacklist is empty".to_string(), network).await?;
+                    self.send_response(message, "Blacklist is empty".to_string(), network)
+                        .await?;
                 } else {
                     let list = self.security_config.blacklisted_users.join(", ");
-                    self.send_response(message, format!("Blacklisted hostmasks ({}): {}", self.security_config.blacklisted_users.len(), list), network).await?;
+                    self.send_response(
+                        message,
+                        format!(
+                            "Blacklisted hostmasks ({}): {}",
+                            self.security_config.blacklisted_users.len(),
+                            list
+                        ),
+                        network,
+                    )
+                    .await?;
                 }
             }
 
             _ => {
-                self.send_response(message, format!("error: unknown blacklist subcommand '{}'. Use: add, remove, or list", subcommand), network).await?;
+                self.send_response(
+                    message,
+                    format!(
+                        "error: unknown blacklist subcommand '{}'. Use: add, remove, or list",
+                        subcommand
+                    ),
+                    network,
+                )
+                .await?;
             }
         }
 
@@ -825,95 +926,142 @@ impl TclPlugin {
     }
 }
 
+// ── shared response-pair parsing ─────────────────────────────────────
+//
+// Both dispatch paths — the IRC plugin that held the connection and the
+// HTTP event endpoint that serves a headless bridge — get their answers
+// back from Tcl as one list of `{channel message}` pairs. That parsing
+// lived as `TclPlugin` methods; the service layer under `/api/event`
+// needs the same thing without owning a `TclPlugin`, so it is a free
+// function now. The plugin's methods delegate to it, unchanged in
+// behaviour, so the twelve existing parser tests keep pinning it.
+
+/// Parse a TCL list of `{channel message}` pairs into tuples.
+pub fn parse_tcl_response_list(tcl_list: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let trimmed = tcl_list.trim();
+
+    if trimmed.is_empty() {
+        return result;
+    }
+
+    // Simple parser for TCL list format
+    // Each element is {channel message}
+    let mut depth = 0;
+    let mut current = String::new();
+    let mut in_element = false;
+
+    for ch in trimmed.chars() {
+        match ch {
+            '{' => {
+                depth += 1;
+                if depth == 1 {
+                    in_element = true;
+                    current.clear();
+                } else {
+                    current.push(ch);
+                }
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 && in_element {
+                    // Parse {channel message}
+                    if let Some((channel, message)) = parse_tcl_response_element(&current) {
+                        result.push((channel, message));
+                    }
+                    in_element = false;
+                } else if depth > 0 {
+                    current.push(ch);
+                }
+            }
+            _ => {
+                if in_element {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Parse a single element: `{channel} {message}` or `channel message`.
+fn parse_tcl_response_element(element: &str) -> Option<(String, String)> {
+    let trimmed = element.trim();
+
+    // Check if message is braced
+    if let Some(space_idx) = trimmed.find(' ') {
+        let channel_part = &trimmed[..space_idx];
+        let rest = trimmed[space_idx + 1..].trim();
+
+        // Handle braced channel (TCL list format)
+        let channel = if channel_part.starts_with('{') && channel_part.ends_with('}') {
+            channel_part[1..channel_part.len() - 1].to_string()
+        } else {
+            channel_part.to_string()
+        };
+
+        // Handle braced message
+        let message = if rest.starts_with('{') && rest.ends_with('}') {
+            rest[1..rest.len() - 1].to_string()
+        } else {
+            rest.to_string()
+        };
+
+        return Some((channel, message));
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Helper to create a minimal TclPlugin for testing parse functions
-    fn create_test_plugin() -> TclPlugin {
-        use crate::config::{SecurityConfig, ServerConfig, TclConfig};
-        use std::collections::HashMap;
-        use std::sync::{Arc, RwLock};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let state_path = temp_dir.path().join("state");
-        let config_path = temp_dir.path().join("config.toml");
-
-        let security_config = SecurityConfig {
-            eval_timeout_ms: 5000,
-            memory_limit_mb: 0,
-            max_recursion_depth: 1000,
-            privileged_users: vec![],
-            blacklisted_users: vec![],
-            notify_self: false,
-        };
-
-        let tcl_config = TclConfig {
-            state_path,
-            state_repo: None,
-            ssh_key: None,
-            max_output_lines: 10,
-            show_error_traces: false,
-        };
-
-        let server_config = ServerConfig {
-            name: None,
-            hostname: "irc.example.com".to_string(),
-            port: 6667,
-            use_tls: false,
-            nickname: "testbot".to_string(),
-            channels: vec!["#test".to_string()],
-        };
-
-        let channel_members: ChannelMembers = Arc::new(RwLock::new(HashMap::new()));
-
-        TclPlugin::new(security_config, tcl_config, vec![server_config], config_path, channel_members).unwrap()
-    }
+    // The parser tests used to construct a whole TclPlugin just to call
+    // two pure functions on it; the functions are free now, so the
+    // plugin (and its temp dirs and interpreter thread) are gone from
+    // this suite. Same assertions, same names.
 
     #[test]
     fn test_parse_timer_element_braced() {
-        let plugin = create_test_plugin();
-
         // Test format: {channel} {message}
-        let result = plugin.parse_timer_element("{#test} {Hello world}");
-        assert_eq!(result, Some(("#test".to_string(), "Hello world".to_string())));
+        let result = parse_tcl_response_element("{#test} {Hello world}");
+        assert_eq!(
+            result,
+            Some(("#test".to_string(), "Hello world".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_timer_element_unbraced() {
-        let plugin = create_test_plugin();
-
         // Test format: channel message
-        let result = plugin.parse_timer_element("#test Hello");
+        let result = parse_tcl_response_element("#test Hello");
         assert_eq!(result, Some(("#test".to_string(), "Hello".to_string())));
     }
 
     #[test]
     fn test_parse_timer_element_braced_message_only() {
-        let plugin = create_test_plugin();
-
         // Test format: channel {message with spaces}
-        let result = plugin.parse_timer_element("#test {Hello world}");
-        assert_eq!(result, Some(("#test".to_string(), "Hello world".to_string())));
+        let result = parse_tcl_response_element("#test {Hello world}");
+        assert_eq!(
+            result,
+            Some(("#test".to_string(), "Hello world".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_timer_list_single() {
-        let plugin = create_test_plugin();
-
         // Test single timer in list
-        let result = plugin.parse_timer_list("{{#test} {Hello world}}");
+        let result = parse_tcl_response_list("{{#test} {Hello world}}");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], ("#test".to_string(), "Hello world".to_string()));
     }
 
     #[test]
     fn test_parse_timer_list_multiple() {
-        let plugin = create_test_plugin();
-
         // Test multiple timers in list
-        let result = plugin.parse_timer_list("{{#test} {Hello}} {{#chan2} {World}}");
+        let result = parse_tcl_response_list("{{#test} {Hello}} {{#chan2} {World}}");
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], ("#test".to_string(), "Hello".to_string()));
         assert_eq!(result[1], ("#chan2".to_string(), "World".to_string()));
@@ -921,32 +1069,35 @@ mod tests {
 
     #[test]
     fn test_parse_timer_list_empty() {
-        let plugin = create_test_plugin();
-
-        let result = plugin.parse_timer_list("");
+        let result = parse_tcl_response_list("");
         assert_eq!(result.len(), 0);
 
-        let result = plugin.parse_timer_list("{}");
+        let result = parse_tcl_response_list("{}");
         assert_eq!(result.len(), 0);
     }
 
     #[test]
     fn test_parse_timer_list_stare_message() {
-        let plugin = create_test_plugin();
-
         // Test the actual stare message format
-        let result = plugin.parse_timer_list("{{#bottest} {TIMTOM IS STARING AT WRATH}}");
+        let result = parse_tcl_response_list("{{#bottest} {TIMTOM IS STARING AT WRATH}}");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], ("#bottest".to_string(), "TIMTOM IS STARING AT WRATH".to_string()));
+        assert_eq!(
+            result[0],
+            (
+                "#bottest".to_string(),
+                "TIMTOM IS STARING AT WRATH".to_string()
+            )
+        );
     }
 
     #[test]
     fn test_parse_trigger_response() {
-        let plugin = create_test_plugin();
-
         // Test trigger dispatch response format (same as timer format)
-        let result = plugin.parse_timer_list("{{#test} {Welcome testuser!}}");
+        let result = parse_tcl_response_list("{{#test} {Welcome testuser!}}");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], ("#test".to_string(), "Welcome testuser!".to_string()));
+        assert_eq!(
+            result[0],
+            ("#test".to_string(), "Welcome testuser!".to_string())
+        );
     }
 }
