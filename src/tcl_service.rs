@@ -554,7 +554,14 @@ impl TclService {
         );
         let response = self.eval(&code, ctx).await?;
         if response.is_error {
-            return Ok(response.output.join("\n"));
+            // The interpreter refused the definition (bad args, a body
+            // it cannot parse). Return the refusal as an ERROR so the
+            // caller reports success:false — reporting it as a success
+            // message would let a broken deploy read as "deployed".
+            return Err(anyhow::anyhow!(
+                "the interpreter refused the proc definition: {}",
+                response.output.join("\n")
+            ));
         }
         let mut msg = format!("{} deployed", name);
         if let Some(ci) = &response.commit_info {
