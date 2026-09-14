@@ -444,6 +444,143 @@ impl TclService {
         let disabled = parse_disabled_lines(&disabled_raw);
         Ok(TriggerState { bindings, disabled })
     }
+
+    /// Everything on disk under `procs/` — the index and every blob —
+    /// read WITHOUT touching the interpreter, for a mirror that cannot
+    /// be starved by a running eval (item 3). Blobs are `{args} {body}`;
+    /// names come from the index. Unparseable blobs are skipped rather
+    /// than erroring the whole listing: one corrupted entry must not
+    /// take down the bridge's sync with it.
+    pub fn procs_from_disk(&self) -> Result<Vec<ProcEntry>> {
+        let state_path = &self.tcl_config.state_path;
+        let index_path = state_path.join("procs/_index");
+        if !index_path.exists() {
+            return Ok(Vec::new());
+        }
+        let index = std::fs::read_to_string(&index_path)?;
+        let mut out = Vec::new();
+        for line in index.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            let name = parts[0].to_string();
+            let hash = parts[1].to_string();
+            let Ok(content) = std::fs::read_to_string(state_path.join("procs").join(&hash)) else {
+                continue; // a referenced blob vanished: skip, do not fail
+            };
+            // `{args} {body}` — the first two top-level elements.
+            let words = split_tcl_words(&content);
+            let args = words.first().cloned().unwrap_or_default();
+            let body = words.get(1).cloned().unwrap_or_default();
+            out.push(ProcEntry {
+                name,
+                args,
+                body,
+                hash,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Everything on disk under `vars/`, the same off-interpreter rule.
+    /// Blobs are `scalar {value}` or `array {k v …}`.
+    pub fn vars_from_disk(&self) -> Result<Vec<VarEntry>> {
+        let state_path = &self.tcl_config.state_path;
+        let index_path = state_path.join("vars/_index");
+        if !index_path.exists() {
+            return Ok(Vec::new());
+        }
+        let index = std::fs::read_to_string(&index_path)?;
+        let mut out = Vec::new();
+        for line in index.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            let name = parts[0].to_string();
+            let hash = parts[1].to_string();
+            let Ok(content) = std::fs::read_to_string(state_path.join("vars").join(&hash)) else {
+                continue;
+            };
+            let words = split_tcl_words(&content);
+            let (kind, value) = match words.first().map(String::as_str) {
+                Some("scalar") => ("scalar", words.get(1).cloned().unwrap_or_default()),
+                Some("array") => ("array", words.get(1).cloned().unwrap_or_default()),
+                _ => ("scalar", content),
+            };
+            out.push(VarEntry {
+                name,
+                kind: kind.to_string(),
+                value,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Deploy one proc through the live interpreter — the ONLY write
+    /// path that live-updates and commits correctly (item 3). The code
+    /// is built with `tcl_escape_arg`, so a body containing braces or
+    /// semicolons stays one literal script. `user` rides as the git
+    /// author; `nick`/`host` default to bridge-style values, so the
+    /// commit is never attributed to a nick that does not exist.
+    pub async fn deploy_proc(
+        &mut self,
+        name: &str,
+        args: &str,
+        body: &str,
+        user: Option<&str>,
+    ) -> Result<String> {
+        use crate::tcl_escape::tcl_escape_arg;
+        let user = user.unwrap_or("web");
+        let nick = user
+            .split('@')
+            .next()
+            .filter(|n| !n.is_empty())
+            .unwrap_or("web");
+        let host = user.split_once('@').map(|(_, h)| h).unwrap_or("local");
+        let ctx = EvalContext::new(nick.to_string(), host.to_string());
+        let code = format!(
+            // A `proc` REDEFINITION replaces the live entry and keeps the
+            // modified-proc tracker pointing at this name, so saving here
+            // persists the new blob and updates the index — the same path
+            // typing it in the channel takes. Not `is_admin`: adminship
+            // does not decide whether a caller may define a proc; the
+            // bearer token already did.
+            "proc {} {} {}",
+            tcl_escape_arg(name),
+            tcl_escape_arg(args),
+            tcl_escape_arg(body),
+        );
+        let response = self.eval(&code, ctx).await?;
+        if response.is_error {
+            return Ok(response.output.join("\n"));
+        }
+        let mut msg = format!("{} deployed", name);
+        if let Some(ci) = &response.commit_info {
+            let hash = &ci.commit_id;
+            msg.push_str(&format!(" (commit {})", &hash[..hash.len().min(8)]));
+        }
+        Ok(msg)
+    }
+}
+
+/// One proc, as the mirror needs it: the real name, the args-string and
+/// body-string, and the content hash at fetch time.
+#[derive(Debug, Clone)]
+pub struct ProcEntry {
+    pub name: String,
+    pub args: String,
+    pub body: String,
+    pub hash: String,
+}
+
+/// One persistent variable, scalar or array.
+#[derive(Debug, Clone)]
+pub struct VarEntry {
+    pub name: String,
+    pub kind: String,
+    pub value: String,
 }
 
 /// The trigger engine's live state, as the bridge needs it.

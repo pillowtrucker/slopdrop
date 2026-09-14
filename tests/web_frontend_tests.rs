@@ -1350,3 +1350,279 @@ async fn a_due_timer_fires_into_the_bridge_response() {
         "the due timer must come back as a channel/message pair: {json}"
     );
 }
+
+// ── /api/procs, /api/vars, /api/proc (item 3: the mirror's write path
+// and the disk reads a desktop editor renders) ──────────────────────
+//
+// The materialized mirror on veles' side renders these three. The
+// contract that matters: procs/vars come back OFF DISK (a running eval
+// cannot starve the editor), and a proc deploy goes through the
+// interpreter — the only path that persists AND live-updates.
+
+/// GET /api/procs lists a persisted proc with its real name, args,
+/// body and content hash; ?names=1 strips the bodies.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn procs_endpoint_lists_persisted_procs_off_disk() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "proc _mirror_echo {a b} { return \"$a:$b\" }"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/procs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let procs = json.as_array().expect("procs array");
+    let found = procs
+        .iter()
+        .find(|p| p["name"] == "_mirror_echo")
+        .expect("the defined proc must be listed");
+    assert_eq!(found["args"], "a b", "args come back: {json}");
+    assert_eq!(found["body"], " return \"$a:$b\" ", "body too: {json}");
+    assert!(
+        found["hash"].as_str().unwrap_or("").len() == 40,
+        "hash is the sha1: {json}"
+    );
+
+    // names=1 strips args and body but keeps the name.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/procs?names=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let found = json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "_mirror_echo")
+        .expect("still listed under names=1");
+    assert_eq!(found["args"], "", "names=1 strips args: {json}");
+    assert_eq!(found["body"], "", "names=1 strips body: {json}");
+}
+
+/// GET /api/vars lists scalars and arrays off disk.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn vars_endpoint_lists_scalars_and_arrays() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "set ::mirror_scalar hello\narray set ::mirror_array {goose 1 duck 2}"
+    });
+    let response = app
+        .clone()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/vars")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let vars = json.as_array().expect("vars array");
+    let scalar = vars
+        .iter()
+        .find(|v| v["name"] == "mirror_scalar" || v["name"] == "::mirror_scalar")
+        .expect("scalar listed");
+    assert_eq!(scalar["kind"], "scalar", "{json}");
+    assert_eq!(scalar["value"], "hello", "{json}");
+    let arr = vars
+        .iter()
+        .find(|v| v["name"] == "mirror_array" || v["name"] == "::mirror_array")
+        .expect("array listed");
+    assert_eq!(arr["kind"], "array", "{json}");
+    assert!(
+        arr["value"].as_str().unwrap_or("").contains("goose"),
+        "array value carries the pairs: {json}"
+    );
+}
+
+/// POST /api/proc deploys through the interpreter: the proc is live
+/// (an eval can call it) AND persisted (it shows up in a later
+/// /api/procs listing).
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn proc_deploy_makes_the_proc_live_and_persisted() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let deploy = serde_json::json!({
+        "name": "mirror_deployed",
+        "args": "x",
+        "body": "return \"got $x\"",
+        "user": "tester@local"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/proc")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&deploy).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["success"], true, "deploy must report success: {json}");
+
+    // Live: a follow-up eval can call it.
+    let call = serde_json::json!({ "code": "mirror_deployed banana" });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&call).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["output"][0], "got banana",
+        "the deploy is live: {json}"
+    );
+
+    // Persisted: the disk listing names it.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/procs?names=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json.as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "mirror_deployed"),
+        "the deploy must be on disk: {json}"
+    );
+
+    // A hostile body stays ONE literal script — no brace breakout.
+    let hostile = serde_json::json!({
+        "name": "mirror_hostile",
+        "args": "x",
+        "body": "return ok }; set ::mirror_pwned 1; proc _unused {} {"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/proc")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&hostile).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // The body is DATA until the proc is called, so a definition with a
+    // hostile literal must not fail. The property that matters is the
+    // next probe: the `};` fragment must not have executed AT DEPLOY
+    // TIME — an escaping failure would have closed the definition and
+    // run `set ::mirror_pwned 1` as a top-level script.
+    let probe = serde_json::json!({ "code": "info exists ::mirror_pwned" });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&probe).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["output"][0], "0", "no side effect escaped: {json}");
+}

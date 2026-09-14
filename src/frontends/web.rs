@@ -225,6 +225,37 @@ struct TriggersDto {
     disabled: Vec<DisabledDto>,
 }
 
+/// One proc as the mirror sees it (GET /api/procs).
+#[derive(Debug, Serialize)]
+struct ProcDto {
+    name: String,
+    args: String,
+    body: String,
+    hash: String,
+}
+
+/// One persistent variable (GET /api/vars).
+#[derive(Debug, Serialize)]
+struct VarDto {
+    name: String,
+    #[serde(rename = "kind")]
+    kind: String,
+    value: String,
+}
+
+/// A proc deployment (POST /api/proc) — the mirror's write path.
+#[derive(Debug, Deserialize)]
+struct ProcDeployRequest {
+    name: String,
+    args: String,
+    body: String,
+    /// The caller, for the STATE COMMIT's author — slopdrop's git needs
+    /// to blame a person, not the bridge. A label, like `user` on the
+    /// eval route; privilege stays with the bearer token.
+    #[serde(default)]
+    user: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct BindingDto {
     event: String,
@@ -298,6 +329,9 @@ impl WebFrontend {
             .route("/api/event", post(handle_event))
             .route("/api/timers/check", post(handle_timers_check))
             .route("/api/triggers", get(handle_triggers))
+            .route("/api/procs", get(handle_procs))
+            .route("/api/vars", get(handle_vars))
+            .route("/api/proc", post(handle_proc_deploy))
             .route("/api/health", get(handle_health));
 
         // The auth layer runs ALWAYS, not "if enabled": with no tokens
@@ -692,6 +726,89 @@ async fn handle_triggers(
         Err(e) => {
             error!("Triggers state error: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// GET /api/procs — every stored proc, read off disk (never through the
+/// interpreter, so a running eval cannot starve it). `?names=1` strips
+/// the bodies for callers that only need the index.
+async fn handle_procs(
+    AxumState(state): AxumState<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<ProcDto>>, StatusCode> {
+    let names_only = params.get("names").map(|v| v == "1").unwrap_or(false);
+    let service = state.tcl_service.lock().await;
+    match service.procs_from_disk() {
+        Ok(procs) => Ok(Json(
+            procs
+                .into_iter()
+                .map(|p| ProcDto {
+                    name: p.name,
+                    args: if names_only { String::new() } else { p.args },
+                    body: if names_only { String::new() } else { p.body },
+                    hash: p.hash,
+                })
+                .collect(),
+        )),
+        Err(e) => {
+            error!("procs listing error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// GET /api/vars — every stored variable off disk, same rule as procs.
+async fn handle_vars(
+    AxumState(state): AxumState<AppState>,
+) -> Result<Json<Vec<VarDto>>, StatusCode> {
+    let service = state.tcl_service.lock().await;
+    match service.vars_from_disk() {
+        Ok(vars) => Ok(Json(
+            vars.into_iter()
+                .map(|v| VarDto {
+                    name: v.name,
+                    kind: v.kind,
+                    value: v.value,
+                })
+                .collect(),
+        )),
+        Err(e) => {
+            error!("vars listing error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// POST /api/proc — deploy (or redefine) ONE proc through the live
+/// interpreter. Deliberately NOT a disk write: defining it in the
+/// interpreter is what marks it modified, persists the new blob and
+/// commits it — the only write path that is correct.
+async fn handle_proc_deploy(
+    AxumState(state): AxumState<AppState>,
+    Json(req): Json<ProcDeployRequest>,
+) -> Result<Json<GenericResponse>, StatusCode> {
+    if req.name.trim().is_empty() {
+        return Ok(Json(GenericResponse {
+            success: false,
+            message: "empty proc name".to_string(),
+        }));
+    }
+    let mut service = state.tcl_service.lock().await;
+    match service
+        .deploy_proc(&req.name, &req.args, &req.body, req.user.as_deref())
+        .await
+    {
+        Ok(msg) => Ok(Json(GenericResponse {
+            success: true,
+            message: msg,
+        })),
+        Err(e) => {
+            error!("proc deploy error: {}", e);
+            Ok(Json(GenericResponse {
+                success: false,
+                message: format!("deploy failed: {e:#}"),
+            }))
         }
     }
 }
