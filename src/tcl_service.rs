@@ -120,6 +120,11 @@ pub struct EvalResponse {
     pub commit_info: Option<CommitInfo>,
     /// Whether more output is available via pagination
     pub more_available: bool,
+    /// The content hash of the stored proc the eval's first word named
+    /// (slopdrop `procs/_index`), for the public-surface safety
+    /// classifier. `None` for ad-hoc code / builtins / `more` — the far
+    /// end fails closed on unknown.
+    pub invoked_hash: Option<String>,
 }
 
 /// Core TCL evaluation service
@@ -211,6 +216,7 @@ impl TclService {
             is_error: result.is_error,
             commit_info: result.commit_info,
             more_available,
+            invoked_hash: result.invoked_hash,
         })
     }
 
@@ -243,6 +249,7 @@ impl TclService {
                     is_error: false,
                     commit_info: None,
                     more_available: false,
+                    invoked_hash: None,
                 });
             }
 
@@ -261,6 +268,7 @@ impl TclService {
                 is_error: false,
                 commit_info: None,
                 more_available,
+                invoked_hash: None,
             })
         } else {
             Ok(EvalResponse {
@@ -268,6 +276,7 @@ impl TclService {
                 is_error: false,
                 commit_info: None,
                 more_available: false,
+                invoked_hash: None,
             })
         }
     }

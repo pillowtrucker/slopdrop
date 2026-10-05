@@ -1092,6 +1092,85 @@ async fn a_disabled_binding_does_not_fire_over_the_bridge() {
     );
 }
 
+/// `/api/eval` reports the content hash of the stored proc the line
+/// named, so the veles Bluesky surface can classify the output by it.
+/// A stored proc yields its hash; ad-hoc code yields none (the far end
+/// fails closed on unknown).
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn eval_reports_the_invoked_procs_content_hash() {
+    let (_temp, state_path) = create_temp_state();
+    let index_path = state_path.join("procs/_index");
+    let app = create_router(create_test_app_state(state_path).await);
+    let setup = serde_json::json!({ "code": "proc greet {} { return \"hi\" }" });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // The hash the index recorded for it.
+    let index = std::fs::read_to_string(&index_path).unwrap();
+    let stored = index
+        .lines()
+        .find_map(|l| l.split_whitespace().nth(1).filter(|_| l.starts_with("greet")))
+        .expect("greet must be in the index")
+        .to_string();
+
+    // Eval by name -> invoked_hash is that hash.
+    let call = serde_json::json!({ "code": "greet" });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&call).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["invoked_hash"].as_str(),
+        Some(stored.as_str()),
+        "the stored proc's hash rides the eval reply: {json}"
+    );
+
+    // Ad-hoc code names no stored proc -> no hash (fail-closed upstream).
+    let call = serde_json::json!({ "code": "expr {6*7}" });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&call).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json.get("invoked_hash").is_none() || json["invoked_hash"].is_null(),
+        "ad-hoc code reports no hash: {json}"
+    );
+}
+
 /// The dispatch must not mint a commit: a hundred channel lines must
 /// not become a hundred "Evaluated triggers dispatch…" commits. (The
 /// `user` is the system nick; handle_eval skips persistence for it.)

@@ -140,6 +140,10 @@ struct EvalResponseDto {
     is_error: bool,
     commit_info: Option<CommitInfo>,
     more_available: bool,
+    /// The content hash of the stored proc the eval named, for the
+    /// public-surface safety classifier. Absent (null) for ad-hoc code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invoked_hash: Option<String>,
 }
 
 impl From<EvalResponse> for EvalResponseDto {
@@ -149,6 +153,7 @@ impl From<EvalResponse> for EvalResponseDto {
             is_error: r.is_error,
             commit_info: r.commit_info,
             more_available: r.more_available,
+            invoked_hash: r.invoked_hash,
         }
     }
 }

@@ -64,6 +64,13 @@ pub struct EvalResult {
     pub is_error: bool,
     /// Git commit information (if state changed and was committed)
     pub commit_info: Option<crate::state::CommitInfo>,
+    /// The content hash of the STORED proc this evaluation's first word
+    /// named, when it named one. A public surface (the veles Bluesky
+    /// frontend) classifies the state repo by this hash to decide whether
+    /// the output may be posted inline; `None` (ad-hoc code, a builtin,
+    /// a special command) means "no stored proc behind this", which the
+    /// far end treats as unknown and fails CLOSED.
+    pub invoked_hash: Option<String>,
 }
 
 /// Commands that can be sent to the TCL thread
@@ -215,6 +222,7 @@ impl TclThreadHandle {
                     output: format!("error: thread crashed and failed to restart: {}", restart_err),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
 
@@ -222,6 +230,7 @@ impl TclThreadHandle {
                 output: "error: thread crashed (likely out of memory), restarted".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
         }
 
@@ -244,6 +253,7 @@ impl TclThreadHandle {
                         output: format!("error: thread died and failed to restart: {}", restart_err),
                         is_error: true,
                         commit_info: None,
+                        invoked_hash: None,
                     });
                 }
 
@@ -251,6 +261,7 @@ impl TclThreadHandle {
                     output: "error: thread died unexpectedly (likely out of memory), restarted".to_string(),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 })
             }
             Err(_) => {
@@ -264,6 +275,7 @@ impl TclThreadHandle {
                         output: format!("error: timeout and failed to restart: {}", e),
                         is_error: true,
                         commit_info: None,
+                        invoked_hash: None,
                     });
                 }
 
@@ -271,6 +283,7 @@ impl TclThreadHandle {
                     output: format!("error: evaluation timed out after {}s (thread restarted)", self.timeout.as_secs()),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 })
             }
         }
@@ -602,6 +615,35 @@ impl TclThreadWorker {
         v.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}")
     }
 
+    /// The content hash of the STORED proc this code's first word names,
+    /// read from the on-disk index (`procs/_index`), never the
+    /// interpreter — the same off-interpreter rule as `procs_from_disk`,
+    /// so a running eval cannot starve the lookup. `None` for ad-hoc
+    /// code, a builtin, or a name with no stored proc: the public-surface
+    /// classifier treats those as unknown and fails closed.
+    fn invoked_proc_hash(&self, code: &str) -> Option<String> {
+        let name = code.trim().split_whitespace().next()?;
+        // A leading sigil is part of the name on this bot (`!unknown`).
+        // Only a bare word can name a proc; anything with a bracket,
+        // brace, `$` or `;` is an expression, not a proc call.
+        if name
+            .chars()
+            .any(|c| matches!(c, '[' | ']' | '{' | '}' | '$' | ';' | '"'))
+        {
+            return None;
+        }
+        let index = std::fs::read_to_string(self.tcl_config.state_path.join("procs/_index")).ok()?;
+        for line in index.lines() {
+            let mut it = line.split_whitespace();
+            if let (Some(n), Some(h)) = (it.next(), it.next()) {
+                if n == name {
+                    return Some(h.to_string());
+                }
+            }
+        }
+        None
+    }
+
     /// Put the conversation into the interpreter, for the procs that read
     /// it out of globals.
     ///
@@ -738,6 +780,7 @@ impl TclThreadWorker {
                     output: format!("error: tclAdmin requires privileges (your hostmask: {})", hostmask),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
                 return;
             }
@@ -814,16 +857,23 @@ impl TclThreadWorker {
         // evaluation's speaker.
         let result = self.interp.eval(&request.code);
 
+        // Which stored proc, if any, the first word named — resolved from
+        // the on-disk index so a public surface can classify the output by
+        // the proc's content hash. None for ad-hoc code (fail closed).
+        let invoked_hash = self.invoked_proc_hash(&request.code);
+
         let output = match result {
             Ok(output) => EvalResult {
                 output,
                 is_error: false,
                 commit_info: None,
+                invoked_hash: invoked_hash.clone(),
             },
             Err(e) => EvalResult {
                 output: format!("error: {}", e),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: invoked_hash.clone(),
             },
         };
 
@@ -919,6 +969,7 @@ impl TclThreadWorker {
                         output: "No commits found".to_string(),
                         is_error: false,
                         commit_info: None,
+                        invoked_hash: None,
                     });
                     return;
                 }
@@ -939,6 +990,7 @@ impl TclThreadWorker {
                     output: output.trim_end().to_string(),
                     is_error: false,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
             Err(e) => {
@@ -946,6 +998,7 @@ impl TclThreadWorker {
                     output: format!("error: {}", e),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
         }
@@ -958,6 +1011,7 @@ impl TclThreadWorker {
                 output: "error: rollback requires admin privileges (use tclAdmin)".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         }
@@ -972,6 +1026,7 @@ impl TclThreadWorker {
                 output: "error: usage: rollback <commit-hash>".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         };
@@ -981,6 +1036,7 @@ impl TclThreadWorker {
                 output: "error: usage: rollback <commit-hash>".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         }
@@ -1001,6 +1057,7 @@ impl TclThreadWorker {
                     output: format!("Rolled back to commit {}. Note: Restart bot to reload state.", hash),
                     is_error: false,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
             Err(e) => {
@@ -1008,6 +1065,7 @@ impl TclThreadWorker {
                     output: format!("error: {}", e),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
         }
@@ -1024,6 +1082,7 @@ impl TclThreadWorker {
                 output: "error: usage: chanlist <channel>".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         };
@@ -1033,6 +1092,7 @@ impl TclThreadWorker {
                 output: "error: usage: chanlist <channel>".to_string(),
                 is_error: true,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         }
@@ -1070,6 +1130,7 @@ impl TclThreadWorker {
                 output: sorted.join(" "),
                 is_error: false,
                 commit_info: None,
+                invoked_hash: None,
             });
             return;
         }
@@ -1090,6 +1151,7 @@ impl TclThreadWorker {
                             output: String::new(),
                             is_error: false,
                             commit_info: None,
+                            invoked_hash: None,
                         });
                     } else {
                         let mut sorted: Vec<_> = nicks.iter().cloned().collect();
@@ -1098,6 +1160,7 @@ impl TclThreadWorker {
                             output: sorted.join(" "),
                             is_error: false,
                             commit_info: None,
+                            invoked_hash: None,
                         });
                     }
                 } else {
@@ -1106,6 +1169,7 @@ impl TclThreadWorker {
                         output: String::new(),
                         is_error: false,
                         commit_info: None,
+                        invoked_hash: None,
                     });
                 }
             }
@@ -1114,6 +1178,7 @@ impl TclThreadWorker {
                     output: format!("error: failed to read channel members: {}", e),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
         }
@@ -1130,6 +1195,7 @@ impl TclThreadWorker {
                     output: "error: Usage: stock::chart <symbol> [days] [interval]".to_string(),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
                 return;
             }
@@ -1159,6 +1225,7 @@ impl TclThreadWorker {
                                 output: result.to_string(),
                                 is_error: false,
                                 commit_info: None,
+                                invoked_hash: None,
                             });
                         }
                         Err(e) => {
@@ -1166,6 +1233,7 @@ impl TclThreadWorker {
                                 output: format!("error: Failed to generate chart: {:?}", e),
                                 is_error: true,
                                 commit_info: None,
+                                invoked_hash: None,
                             });
                         }
                     }
@@ -1175,6 +1243,7 @@ impl TclThreadWorker {
                         output: format!("error: {}", e),
                         is_error: true,
                         commit_info: None,
+                        invoked_hash: None,
                     });
                 }
             }
@@ -1188,6 +1257,7 @@ impl TclThreadWorker {
                     output,
                     is_error: false,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
             Err(e) => {
@@ -1195,6 +1265,7 @@ impl TclThreadWorker {
                     output: format!("error: {}", e),
                     is_error: true,
                     commit_info: None,
+                    invoked_hash: None,
                 });
             }
         }
