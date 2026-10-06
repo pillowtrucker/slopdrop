@@ -622,16 +622,23 @@ impl TclThreadWorker {
     /// code, a builtin, or a name with no stored proc: the public-surface
     /// classifier treats those as unknown and fails closed.
     fn invoked_proc_hash(&self, code: &str) -> Option<String> {
-        let name = code.trim().split_whitespace().next()?;
-        // A leading sigil is part of the name on this bot (`!unknown`).
-        // Only a bare word can name a proc; anything with a bracket,
-        // brace, `$` or `;` is an expression, not a proc call.
-        if name
+        let code = code.trim();
+        // The hash vouches for the OUTPUT, so it may only be reported for
+        // a line that is that one proc called with literal words. The
+        // first version checked only the first word, and `safe [unsafe]`,
+        // `safe; unsafe` or a second line all came back with the SAFE
+        // proc's hash while printing the other's output. Any bracket,
+        // brace, quote, `$`, `;`, backslash or newline ANYWHERE in the
+        // line means the result is not just the named proc's: no hash,
+        // and the far end fails closed. A leading sigil is part of the
+        // name on this bot (`!unknown`).
+        if code
             .chars()
-            .any(|c| matches!(c, '[' | ']' | '{' | '}' | '$' | ';' | '"'))
+            .any(|c| matches!(c, '[' | ']' | '{' | '}' | '$' | ';' | '"' | '\\' | '\n' | '\r'))
         {
             return None;
         }
+        let name = code.split_whitespace().next()?;
         let index = std::fs::read_to_string(self.tcl_config.state_path.join("procs/_index")).ok()?;
         for line in index.lines() {
             let mut it = line.split_whitespace();

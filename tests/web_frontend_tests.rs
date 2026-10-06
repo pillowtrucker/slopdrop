@@ -1148,6 +1148,33 @@ async fn eval_reports_the_invoked_procs_content_hash() {
         "the stored proc's hash rides the eval reply: {json}"
     );
 
+    // A line that does MORE than call the stored proc with literal words
+    // gets no hash: the output is not just the proc's. The first version
+    // looked only at the first word and vouched for all of these.
+    for composed in ["greet [greet]", "greet; greet", "greet\nexpr 1", "greet $x", "greet {a}"] {
+        let call = serde_json::json!({ "code": composed });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/eval")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&call).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            json.get("invoked_hash").is_none() || json["invoked_hash"].is_null(),
+            "{composed:?} must not carry greet's hash: {json}"
+        );
+    }
+
     // Ad-hoc code names no stored proc -> no hash (fail-closed upstream).
     let call = serde_json::json!({ "code": "expr {6*7}" });
     let response = app
