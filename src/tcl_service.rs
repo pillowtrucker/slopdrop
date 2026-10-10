@@ -46,6 +46,10 @@ pub struct RoomContext {
     /// The channel roster, bare nicks — what `chanlist` (and so `[names]`
     /// and `[name]`) answers with.
     pub members: Vec<String>,
+    /// The Bluesky post this line came from, its thread, and a read
+    /// capability — `$::bsky::post` and friends (`tcl/bsky.tcl`). Display
+    /// only, like the rest of this block. `None` off Bluesky.
+    pub bsky: Option<serde_json::Value>,
 }
 
 impl RoomContext {
@@ -55,6 +59,7 @@ impl RoomContext {
             && self.channel.is_none()
             && self.topic.is_none()
             && self.members.is_empty()
+            && self.bsky.is_none()
     }
 }
 
@@ -125,6 +130,8 @@ pub struct EvalResponse {
     /// classifier. `None` for ad-hoc code / builtins / `more` — the far
     /// end fails closed on unknown.
     pub invoked_hash: Option<String>,
+    /// The Bluesky reply spec the evaluation recorded (`tcl/bsky.tcl`).
+    pub bsky: Option<serde_json::Value>,
 }
 
 /// Core TCL evaluation service
@@ -217,6 +224,7 @@ impl TclService {
             commit_info: result.commit_info,
             more_available,
             invoked_hash: result.invoked_hash,
+            bsky: result.bsky,
         })
     }
 
@@ -250,6 +258,7 @@ impl TclService {
                     commit_info: None,
                     more_available: false,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
 
@@ -269,6 +278,7 @@ impl TclService {
                 commit_info: None,
                 more_available,
                 invoked_hash: None,
+                bsky: None,
             })
         } else {
             Ok(EvalResponse {
@@ -277,6 +287,7 @@ impl TclService {
                 commit_info: None,
                 more_available: false,
                 invoked_hash: None,
+                bsky: None,
             })
         }
     }
@@ -385,14 +396,12 @@ impl TclService {
         args: &[String],
         log: Option<(&str, &str, &str, &str)>, // (channel, nick, mask, text)
         answered_urls: &[String],
-    ) -> Result<Vec<(String, String)>> {
+        bsky_event: Option<&serde_json::Value>,
+    ) -> Result<Vec<EventReply>> {
         use crate::tcl_escape::tcl_escape_arg;
 
         let event = event.to_ascii_uppercase();
-        if !matches!(
-            event.as_str(),
-            "JOIN" | "PART" | "QUIT" | "KICK" | "NICK" | "TEXT"
-        ) {
+        if !is_known_event(&event) {
             anyhow::bail!("unknown event type '{event}'");
         }
 
@@ -409,10 +418,47 @@ impl TclService {
         }
 
         let tcl_args: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
-        let dispatch_cmd = dispatch_command(&event, network, &tcl_args, answered_urls);
+        let mut dispatch_cmd = dispatch_command(&event, network, &tcl_args, answered_urls);
+        // A Bluesky event's detail rides as `$::bsky::event` for exactly
+        // this dispatch, and is gone after it — `finally`, so a handler
+        // that errors cannot leave it for the next event to misread.
+        if let Some(ev) = bsky_event {
+            dispatch_cmd = format!(
+                "{}\ntry {{\n{dispatch_cmd}\n}} finally {{\nset ::bsky::event {{}}\n}}",
+                crate::bsky::event_setup(ev)
+            );
+        }
 
         let result = self.tcl_thread.eval_simple(dispatch_cmd).await?;
-        Ok(crate::tcl_plugin::parse_tcl_response_list(&result))
+        let pairs = crate::tcl_plugin::parse_tcl_response_list(&result);
+        // Which stored proc wrote each response. Aligned by position with
+        // what `dispatch` returned; if the two ever disagree in length
+        // (a response the parser could not read), no response gets a
+        // proc rather than a wrong one — the public surface then fails
+        // closed instead of vouching for the wrong code.
+        let procs: Vec<String> = self
+            .tcl_thread
+            .eval_simple("join $::triggers::last_procs \\n".to_string())
+            .await
+            .map(|s| s.lines().map(str::to_string).collect())
+            .unwrap_or_default();
+        let aligned = procs.len() == pairs.len();
+        Ok(pairs
+            .into_iter()
+            .enumerate()
+            .map(|(i, (channel, message))| {
+                let proc_name = aligned.then(|| procs[i].clone());
+                let invoked_hash = proc_name.as_deref().and_then(|p| {
+                    crate::tcl_thread::stored_proc_hash(&self.tcl_config.state_path, p)
+                });
+                EventReply {
+                    channel,
+                    message,
+                    proc_name,
+                    invoked_hash,
+                }
+            })
+            .collect())
     }
 
     /// Fire every due timer and return its `{channel, message}` pairs
@@ -715,6 +761,29 @@ fn split_tcl_words(raw: &str) -> Vec<String> {
 /// already answered are linkresolver's `answered_urls` for exactly this
 /// dispatch — set before, cleared after even when a handler fails — so
 /// they never leak into the next line's dispatch.
+/// One trigger handler's answer, and the stored proc that wrote it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventReply {
+    pub channel: String,
+    pub message: String,
+    /// The bound proc, when known.
+    pub proc_name: Option<String>,
+    /// Its content hash in the state repo (`procs/_index`), when it is a
+    /// stored proc — what a public surface classifies the output by.
+    pub invoked_hash: Option<String>,
+}
+
+/// The events the trigger engine binds: eggdrop's IRC six, and the
+/// Bluesky ones a bridge forwards from its notifications (`tcl/bsky.tcl`).
+/// Kept in step with `triggers bind`'s list in tcl/triggers.tcl.
+pub fn is_known_event(event: &str) -> bool {
+    matches!(
+        event,
+        "JOIN" | "PART" | "QUIT" | "KICK" | "NICK" | "TEXT"
+            | "LIKE" | "REPOST" | "FOLLOW" | "QUOTE" | "REPLY" | "MENTION"
+    )
+}
+
 pub fn dispatch_command(
     event: &str,
     network: &str,

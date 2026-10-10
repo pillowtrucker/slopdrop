@@ -494,6 +494,7 @@ impl TclPlugin {
                     channel: Some(message.author.channel.clone()),
                     topic: None,
                     members: Vec::new(),
+                    bsky: None,
                 },
             )
             .await?;

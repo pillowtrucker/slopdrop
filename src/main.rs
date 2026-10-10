@@ -2,6 +2,7 @@
 //!
 //! Supports running multiple frontends (IRC, CLI, TUI, Web) simultaneously
 
+mod bsky;
 mod config;
 mod file_watcher;
 mod hostmask;

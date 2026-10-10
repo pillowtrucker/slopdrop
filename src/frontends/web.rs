@@ -131,6 +131,11 @@ struct EvalRequest {
     topic: Option<String>,
     #[serde(default)]
     members: Vec<String>,
+    /// The Bluesky post the line came from (veles' atproto surface): the
+    /// post, its thread and a short-lived read capability. Display only,
+    /// like the room fields; see `tcl/bsky.tcl` and `src/bsky.rs`.
+    #[serde(default)]
+    bsky: Option<serde_json::Value>,
 }
 
 /// Response from evaluation
@@ -144,6 +149,10 @@ struct EvalResponseDto {
     /// public-surface safety classifier. Absent (null) for ad-hoc code.
     #[serde(skip_serializing_if = "Option::is_none")]
     invoked_hash: Option<String>,
+    /// What a Bluesky evaluation recorded for its reply (links, tags,
+    /// mentions, embeds). Absent off Bluesky or when nothing was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bsky: Option<serde_json::Value>,
 }
 
 impl From<EvalResponse> for EvalResponseDto {
@@ -154,6 +163,7 @@ impl From<EvalResponse> for EvalResponseDto {
             commit_info: r.commit_info,
             more_available: r.more_available,
             invoked_hash: r.invoked_hash,
+            bsky: r.bsky,
         }
     }
 }
@@ -195,6 +205,9 @@ struct EventRequest {
     /// Handler arguments. TEXT: [nick, mask, channel, text]; JOIN:
     /// [nick, mask, channel]; QUIT: [nick, mask, message]; KICK:
     /// [nick, kicker, channel, reason]; NICK: [old, new, mask].
+    /// Bluesky (the channel is the bridge's room, "bluesky"): LIKE and
+    /// REPOST [handle, did, channel, subject-uri]; FOLLOW [handle, did,
+    /// channel]; QUOTE, REPLY, MENTION [handle, did, channel, uri, text].
     args: Vec<String>,
     /// Also append to the channel LOG (`::slopdrop_log_lines`), so
     /// headless procs that read the log see the line. TEXT-only in
@@ -207,6 +220,10 @@ struct EventRequest {
     /// twice; a bridge that answered nothing sends none.
     #[serde(default)]
     answered_urls: Vec<String>,
+    /// A Bluesky event's detail (kind, did, handle, uri, cid, subject,
+    /// text), set as `$::bsky::event` for the handlers. Absent for IRC.
+    #[serde(default)]
+    bsky: Option<serde_json::Value>,
 }
 
 /// What the trigger handlers said, ready for the bridge to relay.
@@ -221,6 +238,13 @@ struct EventResponse {
 struct ChannelMessage {
     channel: String,
     message: String,
+    /// The trigger proc that wrote this (events only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proc: Option<String>,
+    /// That proc's stored content hash, for a public surface's safety
+    /// classifier (events only; absent = unknown, which fails closed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invoked_hash: Option<String>,
 }
 
 /// What `timers check` fired, without sending anything.
@@ -531,6 +555,7 @@ async fn handle_eval(
         channel: req.channel,
         topic: req.topic,
         members: req.members,
+        bsky: req.bsky,
     };
 
     let mut service = state.tcl_service.lock().await;
@@ -675,13 +700,19 @@ async fn handle_event(
             &req.args,
             log_ref,
             &req.answered_urls,
+            req.bsky.as_ref(),
         )
         .await
     {
         Ok(responses) => Ok(Json(EventResponse {
             responses: responses
                 .into_iter()
-                .map(|(channel, message)| ChannelMessage { channel, message })
+                .map(|r| ChannelMessage {
+                    channel: r.channel,
+                    message: r.message,
+                    proc: r.proc_name,
+                    invoked_hash: r.invoked_hash,
+                })
                 .collect(),
             is_error: false,
         })),
@@ -705,7 +736,12 @@ async fn handle_timers_check(
         Ok(fired) => Ok(Json(TimersResponse {
             fired: fired
                 .into_iter()
-                .map(|(channel, message)| ChannelMessage { channel, message })
+                .map(|(channel, message)| ChannelMessage {
+                    channel,
+                    message,
+                    proc: None,
+                    invoked_hash: None,
+                })
                 .collect(),
         })),
         Err(e) => {

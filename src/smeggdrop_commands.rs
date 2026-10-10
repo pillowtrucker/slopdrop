@@ -94,6 +94,11 @@ pub fn linkresolver_commands() -> String {
     load_tcl_file("linkresolver.tcl", include_str!("../tcl/linkresolver.tcl"))
 }
 
+/// Returns the Bluesky helpers (`::bsky::*`, see the file's header).
+pub fn bsky_commands() -> String {
+    load_tcl_file("bsky.tcl", include_str!("../tcl/bsky.tcl"))
+}
+
 /// Returns example link resolvers (YouTube, Bluesky, etc.)
 pub fn linkresolver_examples() -> String {
     load_tcl_file("linkresolver_examples.tcl", include_str!("../tcl/linkresolver_examples.tcl"))

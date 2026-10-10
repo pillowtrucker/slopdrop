@@ -38,6 +38,21 @@ fn set_memory_limit(_limit_mb: u64) -> Result<()> {
     Ok(())
 }
 
+/// The content hash of the STORED proc `name`, from the state repo's
+/// on-disk index (`procs/_index`), never the interpreter — so a running
+/// evaluation cannot starve the lookup. `None` for a builtin, a stock
+/// proc, or no such proc: the public surface fails closed on that.
+pub fn stored_proc_hash(state_path: &std::path::Path, name: &str) -> Option<String> {
+    let index = std::fs::read_to_string(state_path.join("procs/_index")).ok()?;
+    index.lines().find_map(|line| {
+        let mut it = line.split_whitespace();
+        match (it.next(), it.next()) {
+            (Some(n), Some(h)) if n == name => Some(h.to_string()),
+            _ => None,
+        }
+    })
+}
+
 /// Request to evaluate TCL code
 #[derive(Debug)]
 pub struct EvalRequest {
@@ -71,6 +86,10 @@ pub struct EvalResult {
     /// a special command) means "no stored proc behind this", which the
     /// far end treats as unknown and fails CLOSED.
     pub invoked_hash: Option<String>,
+    /// What a Bluesky evaluation recorded in `::bsky::out` (links, tags,
+    /// mentions, embeds; see `tcl/bsky.tcl`), for veles to shape the
+    /// reply with. `None` off Bluesky or when nothing was recorded.
+    pub bsky: Option<serde_json::Value>,
 }
 
 /// Commands that can be sent to the TCL thread
@@ -223,6 +242,7 @@ impl TclThreadHandle {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
 
@@ -231,6 +251,7 @@ impl TclThreadHandle {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
         }
 
@@ -254,6 +275,7 @@ impl TclThreadHandle {
                         is_error: true,
                         commit_info: None,
                         invoked_hash: None,
+                        bsky: None,
                     });
                 }
 
@@ -262,6 +284,7 @@ impl TclThreadHandle {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 })
             }
             Err(_) => {
@@ -276,6 +299,7 @@ impl TclThreadHandle {
                         is_error: true,
                         commit_info: None,
                         invoked_hash: None,
+                        bsky: None,
                     });
                 }
 
@@ -284,6 +308,7 @@ impl TclThreadHandle {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 })
             }
         }
@@ -400,6 +425,11 @@ impl TclThreadWorker {
             unsafe { crate::veles_bridge::register(bridge, interp.interpreter()) };
             tracing::info!("veles bridge registered: `ai <prompt>` is available");
         }
+
+        // `bsky::query`: native, because the read capability veles grants a
+        // Bluesky evaluation must stay out of Tcl's reach (src/bsky.rs).
+        // Safety: the interpreter is owned by this worker's thread.
+        unsafe { crate::bsky::register(interp.interpreter()) };
 
         let timeout = Duration::from_millis(security_config.eval_timeout_ms);
 
@@ -639,16 +669,7 @@ impl TclThreadWorker {
             return None;
         }
         let name = code.split_whitespace().next()?;
-        let index = std::fs::read_to_string(self.tcl_config.state_path.join("procs/_index")).ok()?;
-        for line in index.lines() {
-            let mut it = line.split_whitespace();
-            if let (Some(n), Some(h)) = (it.next(), it.next()) {
-                if n == name {
-                    return Some(h.to_string());
-                }
-            }
-        }
-        None
+        stored_proc_hash(&self.tcl_config.state_path, name)
     }
 
     /// Put the conversation into the interpreter, for the procs that read
@@ -788,6 +809,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
                 return;
             }
@@ -829,6 +851,13 @@ impl TclThreadWorker {
         // only source of it when we hold no IRC connection ourselves.
         self.apply_room_context(&request);
 
+        // The Bluesky post, when the line came from one — and, for every
+        // other evaluation, the reset that keeps the last post's context
+        // (and its read capability) from leaking into this one. Before the
+        // state capture, like the room: these are per-eval inputs, and
+        // they live in ::bsky, which state tracking never reads.
+        crate::bsky::apply(self.interp.interpreter(), request.room.bsky.as_ref());
+
         // Check for special commands
         let code_trimmed = request.code.trim();
         if code_trimmed == "history" || code_trimmed.starts_with("history ") {
@@ -869,18 +898,25 @@ impl TclThreadWorker {
         // the proc's content hash. None for ad-hoc code (fail closed).
         let invoked_hash = self.invoked_proc_hash(&request.code);
 
+        // What a Bluesky evaluation recorded for its reply. Read on an
+        // error too: a proc that recorded a link and then failed still
+        // gets a reply, and veles decides what of it to post.
+        let bsky = crate::bsky::collect(self.interp.interpreter());
+
         let output = match result {
             Ok(output) => EvalResult {
                 output,
                 is_error: false,
                 commit_info: None,
                 invoked_hash: invoked_hash.clone(),
+                bsky: bsky.clone(),
             },
             Err(e) => EvalResult {
                 output: format!("error: {}", e),
                 is_error: true,
                 commit_info: None,
                 invoked_hash: invoked_hash.clone(),
+                bsky,
             },
         };
 
@@ -977,6 +1013,7 @@ impl TclThreadWorker {
                         is_error: false,
                         commit_info: None,
                         invoked_hash: None,
+                        bsky: None,
                     });
                     return;
                 }
@@ -998,6 +1035,7 @@ impl TclThreadWorker {
                     is_error: false,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
             Err(e) => {
@@ -1006,6 +1044,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
         }
@@ -1019,6 +1058,7 @@ impl TclThreadWorker {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         }
@@ -1034,6 +1074,7 @@ impl TclThreadWorker {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         };
@@ -1044,6 +1085,7 @@ impl TclThreadWorker {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         }
@@ -1065,6 +1107,7 @@ impl TclThreadWorker {
                     is_error: false,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
             Err(e) => {
@@ -1073,6 +1116,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
         }
@@ -1090,6 +1134,7 @@ impl TclThreadWorker {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         };
@@ -1100,6 +1145,7 @@ impl TclThreadWorker {
                 is_error: true,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         }
@@ -1138,6 +1184,7 @@ impl TclThreadWorker {
                 is_error: false,
                 commit_info: None,
                 invoked_hash: None,
+                bsky: None,
             });
             return;
         }
@@ -1159,6 +1206,7 @@ impl TclThreadWorker {
                             is_error: false,
                             commit_info: None,
                             invoked_hash: None,
+                            bsky: None,
                         });
                     } else {
                         let mut sorted: Vec<_> = nicks.iter().cloned().collect();
@@ -1168,6 +1216,7 @@ impl TclThreadWorker {
                             is_error: false,
                             commit_info: None,
                             invoked_hash: None,
+                            bsky: None,
                         });
                     }
                 } else {
@@ -1177,6 +1226,7 @@ impl TclThreadWorker {
                         is_error: false,
                         commit_info: None,
                         invoked_hash: None,
+                        bsky: None,
                     });
                 }
             }
@@ -1186,6 +1236,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
         }
@@ -1203,6 +1254,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
                 return;
             }
@@ -1233,6 +1285,7 @@ impl TclThreadWorker {
                                 is_error: false,
                                 commit_info: None,
                                 invoked_hash: None,
+                                bsky: None,
                             });
                         }
                         Err(e) => {
@@ -1241,6 +1294,7 @@ impl TclThreadWorker {
                                 is_error: true,
                                 commit_info: None,
                                 invoked_hash: None,
+                                bsky: None,
                             });
                         }
                     }
@@ -1251,6 +1305,7 @@ impl TclThreadWorker {
                         is_error: true,
                         commit_info: None,
                         invoked_hash: None,
+                        bsky: None,
                     });
                 }
             }
@@ -1265,6 +1320,7 @@ impl TclThreadWorker {
                     is_error: false,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
             Err(e) => {
@@ -1273,6 +1329,7 @@ impl TclThreadWorker {
                     is_error: true,
                     commit_info: None,
                     invoked_hash: None,
+                    bsky: None,
                 });
             }
         }

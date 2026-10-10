@@ -589,6 +589,7 @@ async fn test_chanlist_top_level_answers_from_the_reported_room() {
             "gid".to_string(),
             "jackma".to_string(),
         ],
+        bsky: None,
     };
 
     let response = service.eval("chanlist #coven", ctx.clone()).await.unwrap();
@@ -611,6 +612,113 @@ async fn test_chanlist_top_level_answers_from_the_reported_room() {
         "a different channel must not inherit this room's roster: {:?}",
         response.output
     );
+
+    service.shutdown();
+}
+
+/// A Bluesky line: the post reaches Tcl, the reply spec comes back on the
+/// response, and nothing about it is committed to the state repo — the
+/// ::bsky namespace is per-eval input, not channel state. The next line
+/// from anywhere else sees none of it.
+#[tokio::test]
+async fn test_a_bluesky_eval_carries_its_post_in_and_its_spec_out_and_commits_nothing() {
+    let (_temp, state_path) = create_temp_state();
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+    let mut service = create_test_service_with_members(state_path, channel_members);
+    // Warm-up: a fresh service's FIRST eval commits the `chanlist` proc
+    // the worker defines at start, whatever the line was. Spend it here
+    // so the assertion below is about the Bluesky line alone.
+    let _ = service
+        .eval("expr 1", EvalContext::new("wrath".to_string(), "irc".to_string()))
+        .await
+        .unwrap();
+
+    let mut ctx = EvalContext::new("atproto:did:plc:a".to_string(), "web".to_string())
+        .with_channel("bluesky".to_string())
+        .with_network("atproto".to_string());
+    ctx.room = slopdrop::tcl_service::RoomContext {
+        nick: Some("a.test".to_string()),
+        channel: Some("bluesky".to_string()),
+        bsky: Some(serde_json::json!({
+            "post": {"uri": "at://did:plc:a/app.bsky.feed.post/1", "text": "{hello} #tcl",
+                     "did": "did:plc:a", "handle": "a.test",
+                     "facets": [{"start": 8, "end": 12, "type": "tag", "value": "tcl"}]},
+        })),
+        ..Default::default()
+    };
+    let r = service
+        .eval(
+            "return \"[bsky::text] [bsky::tags] [bsky::link docs https://d.test]\"",
+            ctx.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.output, vec!["{hello} #tcl tcl docs".to_string()]);
+    let spec = r.bsky.expect("the spec rides the response");
+    assert_eq!(spec[0]["kind"], "link");
+    assert_eq!(spec[0]["uri"], "https://d.test");
+    assert!(r.commit_info.is_none(), "per-eval Bluesky input is not state: {:?}", r.commit_info);
+
+    // The next line, from IRC: no post, no spec, the IRC rendering.
+    let irc = EvalContext::new("wrath".to_string(), "irc".to_string())
+        .with_channel("#coven".to_string());
+    let r = service
+        .eval("return \"[bsky::text]|[bsky::link docs https://d.test]\"", irc)
+        .await
+        .unwrap();
+    assert_eq!(r.output, vec!["|docs <https://d.test>".to_string()]);
+    assert!(r.bsky.is_none());
+
+    service.shutdown();
+}
+
+/// A Bluesky LIKE reaches a bound proc with its arguments and its whole
+/// event in $::bsky::event, and the event is gone after the dispatch.
+#[tokio::test]
+async fn test_a_bluesky_like_dispatches_to_its_binding_with_the_event() {
+    let (_temp, state_path) = create_temp_state();
+    let channel_members = Arc::new(RwLock::new(HashMap::new()));
+    let mut service = create_test_service_with_members(state_path, channel_members);
+    let ctx = EvalContext::new("wrath".to_string(), "web".to_string());
+    let r = service
+        .eval(
+            "proc on_like {h d c u} { return \"thanks $h for $u ([dict get $::bsky::event kind])\" }; \
+             bind LIKE bluesky on_like",
+            ctx.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+
+    let ev = serde_json::json!({"kind": "LIKE", "did": "did:plc:a", "handle": "a.test",
+                                "subject": "at://bot/post/1"});
+    let out = service
+        .dispatch_event(
+            "LIKE",
+            "atproto",
+            &["a.test".into(), "did:plc:a".into(), "bluesky".into(), "at://bot/post/1".into()],
+            None,
+            &[],
+            Some(&ev),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].channel, "bluesky");
+    assert_eq!(out[0].message, "thanks a.test for at://bot/post/1 (LIKE)");
+    assert_eq!(
+        out[0].proc_name.as_deref(),
+        Some("on_like"),
+        "the response names the proc that wrote it"
+    );
+    assert!(
+        out[0].invoked_hash.is_some(),
+        "a stored proc's hash rides with its response: {:?}",
+        out[0]
+    );
+    let r = service.eval("set ::bsky::event", ctx).await.unwrap();
+    assert_eq!(r.output.concat(), "", "the event is cleared after its dispatch");
 
     service.shutdown();
 }

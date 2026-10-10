@@ -151,6 +151,8 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to inject linkresolver commands: {:?}", e))?;
         interpreter.eval(crate::smeggdrop_commands::linkresolver_examples().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to inject linkresolver examples: {:?}", e))?;
+        interpreter.eval(crate::smeggdrop_commands::bsky_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to inject bsky commands: {:?}", e))?;
 
         // Stock commands are handled natively in Rust (see stock_commands.rs and tcl_thread.rs)
         // No TCL injection needed - commands are intercepted before TCL evaluation
@@ -488,6 +490,8 @@ impl SafeTclInterp {
             .map_err(|e| anyhow::anyhow!("Failed to reload linkresolver commands: {:?}", e))?;
         self.interpreter.eval(crate::smeggdrop_commands::linkresolver_examples().as_str())
             .map_err(|e| anyhow::anyhow!("Failed to reload linkresolver examples: {:?}", e))?;
+        self.interpreter.eval(crate::smeggdrop_commands::bsky_commands().as_str())
+            .map_err(|e| anyhow::anyhow!("Failed to reload bsky commands: {:?}", e))?;
 
         debug!("TCL modules reloaded successfully");
         Ok(())

@@ -4,7 +4,8 @@
 
 namespace eval triggers {
     # Storage for bindings: event_type -> list of {pattern proc_name}
-    # Event types: JOIN, PART, QUIT, KICK, NICK, TEXT
+    # Event types: JOIN, PART, QUIT, KICK, NICK, TEXT, and from Bluesky
+    # (a bridge's notifications): LIKE, REPOST, FOLLOW, QUOTE, REPLY, MENTION
     variable bindings
     array set bindings {}
 
@@ -24,6 +25,13 @@ namespace eval triggers {
     # For KICK: proc is called with: nick kicker channel reason
     # For NICK: proc is called with: old_nick new_nick mask
     # For TEXT: proc is called with: nick mask channel text
+    # Bluesky (channel is the bridge's room, "bluesky"; the whole event is
+    # also in $::bsky::event — kind did handle uri cid subject text):
+    #   LIKE, REPOST:          handle did channel subject_uri
+    #   FOLLOW:                handle did channel
+    #   QUOTE, REPLY, MENTION: handle did channel uri text
+    # A handler's answer becomes a reply under the post the event is about;
+    # the bridge decides (a FOLLOW's answer is not posted).
     proc bind {event pattern proc_name} {
         variable bindings
 
@@ -31,8 +39,8 @@ namespace eval triggers {
         set event [string toupper $event]
 
         # Validate event type
-        if {$event ni {JOIN PART QUIT KICK NICK TEXT}} {
-            error "Unknown event type '$event'. Valid types: JOIN, PART, QUIT, KICK, NICK, TEXT"
+        if {$event ni {JOIN PART QUIT KICK NICK TEXT LIKE REPOST FOLLOW QUOTE REPLY MENTION}} {
+            error "Unknown event type '$event'. Valid types: JOIN, PART, QUIT, KICK, NICK, TEXT, LIKE, REPOST, FOLLOW, QUOTE, REPLY, MENTION"
         }
 
         # Initialize list if not exists
@@ -215,6 +223,11 @@ namespace eval triggers {
     # Returns list of {channel message} pairs for responses
     proc dispatch {event network args} {
         variable bindings
+        # The proc behind each response, in step with the results list:
+        # a public surface (veles' Bluesky feed) classifies a handler's
+        # output by the stored proc that wrote it.
+        variable last_procs
+        set last_procs [list]
 
         set event [string toupper $event]
 
@@ -226,8 +239,9 @@ namespace eval triggers {
 
         # Determine channel for pattern matching
         switch $event {
-            JOIN - PART - KICK - TEXT {
-                # args: nick mask channel [text/reason]
+            JOIN - PART - KICK - TEXT -
+            LIKE - REPOST - FOLLOW - QUOTE - REPLY - MENTION {
+                # args: nick mask|did channel [text/reason/uri …]
                 set channel [lindex $args 2]
             }
             QUIT - NICK {
@@ -267,14 +281,17 @@ namespace eval triggers {
                     if {$response ne ""} {
                         # Return response to the channel for relevant events
                         switch $event {
-                            JOIN - PART - KICK - TEXT {
+                            JOIN - PART - KICK - TEXT -
+                            LIKE - REPOST - FOLLOW - QUOTE - REPLY - MENTION {
                                 lappend results [list $channel $response]
+                                lappend last_procs $proc_name
                             }
                         }
                     }
                 } err]} {
                     # Log error but continue processing other bindings
                     lappend results [list $channel "Error in $proc_name: $err"]
+                    lappend last_procs $proc_name
                 }
             }
         }
