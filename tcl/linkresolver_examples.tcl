@@ -96,8 +96,6 @@ namespace eval ::linkresolver {
     variable bluesky_pattern {^https?://(www\.)?(bsky\.app|impro\.social)/profile/[^/?#]+}
 
     proc bluesky_resolver {url nick channel} {
-        variable max_title_length
-
         set cached [get_cached $url]
         if {$cached ne ""} {
             return $cached
@@ -133,12 +131,11 @@ namespace eval ::linkresolver {
         if {$title eq "" && $text eq ""} {
             return ""
         }
+        # Whole, never cut (the owner, 2026-10-10: "I want the bot never
+        # to elide content"); veles splits a long line for IRC.
         set result "🦋 $title"
         if {$text ne ""} {
             append result ": $text"
-        }
-        if {[string length $result] > $max_title_length} {
-            set result "[string range $result 0 [expr {$max_title_length - 2}]]…"
         }
         set_cached $url $result
         return $result

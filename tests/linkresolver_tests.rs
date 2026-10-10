@@ -678,6 +678,18 @@ fn test_bluesky_resolver_falls_back_to_the_json_ld_text() {
     assert_eq!(out, "🦋 Bob (@bob.example.com): a \"quoted\" line next é [x] $y");
 }
 
+/// A post is never cut, however long the page's description.
+#[test]
+fn test_bluesky_resolver_never_cuts_the_text() {
+    let long = "word ".repeat(120);
+    let page = format!(
+        "<meta property=\"og:title\" content=\"D (@d.example.com)\">\n\
+         <meta property=\"og:description\" content=\"{long}end\">"
+    );
+    let (out, _) = bluesky_with_page(&page, "https://bsky.app/profile/d.example.com/post/3abc");
+    assert_eq!(out, format!("🦋 D (@d.example.com): {long}end"));
+}
+
 /// An emoji beyond the BMP survives (Tcl 8.6 holds it as a surrogate
 /// pair); IRC control codes do not.
 #[test]
