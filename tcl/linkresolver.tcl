@@ -8,6 +8,10 @@ namespace eval ::linkresolver {
     variable cache_expiry 3600 ;# 1 hour cache
     variable max_title_length 200
     variable auto_resolve_enabled 0
+    # Links the bridge already answered for the line being dispatched
+    # (veles previews Bluesky links as its bot account). Set by the
+    # bridge's /api/event for one dispatch only, then cleared.
+    variable answered_urls {}
 
     # Initialize global variable for custom resolvers (persisted)
     if {![info exists ::linkresolver_custom_resolvers]} {
@@ -342,6 +346,7 @@ namespace eval ::linkresolver {
     # Handle TEXT events
     proc on_text {nick mask channel text} {
         variable enabled
+        variable answered_urls
 
         if {!$enabled} {
             return ""
@@ -360,10 +365,14 @@ namespace eval ::linkresolver {
             return ""
         }
 
-        # Process each URL (but limit to first 2 to avoid spam)
+        # Process each URL (but limit to first 2 to avoid spam). A link
+        # the bridge already answered is skipped, and does not count.
         set responses [list]
         set count 0
         foreach url $urls {
+            if {[lsearch -exact $answered_urls $url] >= 0} {
+                continue
+            }
             if {$count >= 2} {
                 break
             }
@@ -411,12 +420,13 @@ namespace eval ::linkresolver {
     proc register_builtin_resolvers {} {
         # YouTube resolver is registered if proc exists
         if {[llength [info procs ::linkresolver::youtube_resolver]]} {
-            register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10
+            register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10 1
         }
 
-        # Bluesky resolver
-        if {[llength [info procs ::linkresolver::bluesky_resolver]]} {
-            register {bsky\.app/profile/.*/(post|feed)} ::linkresolver::bluesky_resolver 10
+        # Bluesky resolver (bsky.app and the clients on its routes)
+        if {[llength [info procs ::linkresolver::bluesky_resolver]]
+            && [info exists ::linkresolver::bluesky_pattern]} {
+            register $::linkresolver::bluesky_pattern ::linkresolver::bluesky_resolver 10 1
         }
     }
 }

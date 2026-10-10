@@ -201,6 +201,12 @@ struct EventRequest {
     /// practice; the arg order is fixed per event.
     #[serde(default)]
     log: bool,
+    /// Links in the line the bridge ALREADY answered (veles previews a
+    /// Bluesky link as its bot account, which can read what a signed-out
+    /// page hides). linkresolver skips these, so a link is never answered
+    /// twice; a bridge that answered nothing sends none.
+    #[serde(default)]
+    answered_urls: Vec<String>,
 }
 
 /// What the trigger handlers said, ready for the bridge to relay.
@@ -663,7 +669,13 @@ async fn handle_event(
         .map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str()));
 
     match service
-        .dispatch_event(&req.event, &req.network, &req.args, log_ref)
+        .dispatch_event(
+            &req.event,
+            &req.network,
+            &req.args,
+            log_ref,
+            &req.answered_urls,
+        )
         .await
     {
         Ok(responses) => Ok(Json(EventResponse {

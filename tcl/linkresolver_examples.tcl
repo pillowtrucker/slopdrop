@@ -83,58 +83,73 @@ namespace eval ::linkresolver {
         return ""
     }
 
-    # Bluesky Post Resolver
-    # Resolves Bluesky posts to show author and content
+    # Bluesky Resolver
+    #
+    # Posts, profiles and feeds on bsky.app and on the clients that use its
+    # routes (impro.social). Those clients serve one generic page for every
+    # route ("Impro"), so the link is read from bsky.app, which renders the
+    # real meta tags for a signed-out reader. An author who limits their
+    # posts to signed-in users gets bsky.app's notice instead of the text:
+    # this resolver is signed out. veles previews such links as its bot
+    # account (signed in) and names them in the event's answered_urls, so
+    # this resolver only answers what the bot could not.
+    variable bluesky_pattern {^https?://(www\.)?(bsky\.app|impro\.social)/profile/[^/?#]+}
+
     proc bluesky_resolver {url nick channel} {
         variable max_title_length
 
-        # Check cache first
         set cached [get_cached $url]
         if {$cached ne ""} {
             return $cached
         }
 
-        # Fetch the page
-        if {[catch {http get $url} content]} {
+        if {![regexp -nocase {^https?://(?:www\.)?(?:bsky\.app|impro\.social)(/profile/[^?#]+)} $url -> path]} {
+            return ""
+        }
+        if {[catch {http get "https://bsky.app$path"} content]} {
             return ""
         }
 
-        # Extract author and post content from meta tags
-        set author ""
-        set post_text ""
-
-        # Try to get author from meta tags
-        if {[regexp -nocase {<meta property="og:title" content="([^"]+)"} $content -> meta_title]} {
-            set author [decode_html_entities $meta_title]
+        # "Name (@handle)" for a post or a profile, "Feed by @handle" for a feed.
+        set title ""
+        if {[regexp -nocase {<meta property="og:title" content="([^"]*)"} $content -> raw]} {
+            set title [bluesky_one_line [decode_html_entities $raw]]
+            set title [regsub { on Bluesky$} $title ""]
         }
-
-        # Try to get post content from meta description
-        if {[regexp -nocase {<meta property="og:description" content="([^"]+)"} $content -> meta_desc]} {
-            set post_text [decode_html_entities $meta_desc]
+        # The post text, the bio, or the feed's description. Its
+        # newlines are real, and the channel gets one line.
+        set text ""
+        if {[regexp -nocase {<meta property="og:description" content="([^"]*)"} $content -> raw]} {
+            set text [decode_html_entities $raw]
+        } elseif {[regexp {"text":"((?:[^"\\]|\\.)*)"} $content -> raw]} {
+            # The page's JSON-LD: a JSON string, unescaped by Tcl's own
+            # backslash rules (no command or variable substitution).
+            set text [subst -nocommands -novariables $raw]
         }
+        set text [string map {
+            "\[contains quote post or other embedded content\]" "\[quote\]"
+        } [bluesky_one_line $text]]
 
-        # Alternative: extract from JSON-LD or page structure
-        if {$post_text eq "" && [regexp {"text":"([^"]+)"} $content -> text]} {
-            set post_text [decode_html_entities $text]
+        if {$title eq "" && $text eq ""} {
+            return ""
         }
-
-        # Build response
-        if {$author ne "" && $post_text ne ""} {
-            # Clean up author (often includes "on Bluesky")
-            set author [regsub { on Bluesky.*$} $author ""]
-
-            set result "🦋 Bluesky - $author: $post_text"
-
-            # Truncate if too long
-            if {[string length $result] > $max_title_length} {
-                set result "[string range $result 0 [expr {$max_title_length - 4}]]..."
-            }
-
-            set_cached $url $result
-            return $result
+        set result "🦋 $title"
+        if {$text ne ""} {
+            append result ": $text"
         }
+        if {[string length $result] > $max_title_length} {
+            set result "[string range $result 0 [expr {$max_title_length - 2}]]…"
+        }
+        set_cached $url $result
+        return $result
+    }
 
-        return ""
+    # One line of display text: whitespace runs (newlines included) become
+    # one space; other control characters (IRC formatting codes) go.
+    proc bluesky_one_line {s} {
+        set s [regsub -all {[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]} $s ""]
+        set s [regsub -all {[\ud800-\udfff]} $s ""]
+        return [string trim [regsub -all {\s+} $s " "]]
     }
 
     # Twitter/X Resolver
@@ -318,7 +333,7 @@ namespace eval ::linkresolver {
 # Built-in resolvers (fourth param = 1 means builtin, won't be persisted)
 # Uncomment the ones you want to use:
 ::linkresolver::register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10 1
-::linkresolver::register {bsky\.app/profile/.*/(post|feed)} ::linkresolver::bluesky_resolver 10 1
+::linkresolver::register $::linkresolver::bluesky_pattern ::linkresolver::bluesky_resolver 10 1
 # ::linkresolver::register {(twitter\.com|x\.com)/.*/(status|statuses)/} ::linkresolver::twitter_resolver 10 1
 # ::linkresolver::register {reddit\.com/r/[^/]+/comments/} ::linkresolver::reddit_resolver 10 1
 # ::linkresolver::register {github\.com/[^/]+/[^/]+} ::linkresolver::github_resolver 10 1

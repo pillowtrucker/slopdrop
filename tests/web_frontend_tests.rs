@@ -1035,6 +1035,76 @@ async fn an_event_runs_the_bound_handler_and_returns_the_reply() {
     );
 }
 
+/// The links the bridge already answered (veles previews Bluesky links as
+/// its bot) ride in `answered_urls`: linkresolver skips them for that one
+/// event, and the next event without the field resolves them again.
+#[cfg(feature = "frontend-web")]
+#[tokio::test]
+async fn answered_urls_are_skipped_by_the_linkresolver_for_that_event_only() {
+    let (_temp, state_path) = create_temp_state();
+    let app = create_router(create_test_app_state(state_path).await);
+
+    let setup = serde_json::json!({
+        "code": "proc _ev_link {url nick channel} { return \"R:$url\" }\nlinkresolver register {example\\.com} _ev_link\nlinkresolver enable"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/eval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&setup).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let post = |answered: Option<Vec<&str>>| {
+        let mut event = serde_json::json!({
+            "event": "TEXT",
+            "network": "testnet",
+            "args": ["u", "u@test", "#test", "see https://example.com/a and https://example.com/b"]
+        });
+        if let Some(a) = answered {
+            event["answered_urls"] = serde_json::json!(a);
+        }
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/event")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&event).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["is_error"], false, "event: {json}");
+            json["responses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["message"].as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    };
+    let said = post(Some(vec!["https://example.com/a"])).await;
+    assert!(said.contains("R:https://example.com/b"), "{said}");
+    assert!(!said.contains("R:https://example.com/a"), "{said}");
+    let said = post(None).await;
+    assert!(said.contains("R:https://example.com/a"), "cleared after one event: {said}");
+}
+
 /// A disabled binding does not fire — the per-channel split the live
 /// state on the VPS already expresses (all four handlers disabled in
 /// irc4fun:#coven) must keep working through the bridge path.

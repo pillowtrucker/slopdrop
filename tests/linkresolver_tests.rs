@@ -562,3 +562,137 @@ fn test_linkresolver_cache_expiry() {
     assert!(expiry > 0);
     assert!(expiry <= 86400); // Max 1 day is reasonable
 }
+
+// =============================================================================
+// Links the bridge already answered (veles previews Bluesky links as its bot)
+// =============================================================================
+
+#[test]
+fn test_linkresolver_skips_answered_urls_without_counting_them() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    interp
+        .eval("proc test_answered_resolver {url nick channel} { return \"R:$url\" }")
+        .unwrap();
+    interp
+        .eval(r#"linkresolver register {example\.com} test_answered_resolver"#)
+        .unwrap();
+    interp
+        .eval("set ::linkresolver::answered_urls [list https://example.com/a https://example.com/b]")
+        .unwrap();
+    let result = interp
+        .eval(r#"::linkresolver::on_text u u@h #c "https://example.com/a https://example.com/b https://example.com/c https://example.com/d https://example.com/e""#)
+        .unwrap();
+    // a and b were answered: skipped, and the two-link cap applies to c, d.
+    assert_eq!(result, "R:https://example.com/c\nR:https://example.com/d");
+}
+
+/// The answered list holds for exactly one dispatch: set before it,
+/// cleared after, even when a handler errors.
+#[test]
+fn test_dispatch_command_scopes_answered_urls_to_one_dispatch() {
+    use slopdrop::tcl_escape::tcl_escape_arg;
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    interp
+        .eval("proc test_answered_resolver {url nick channel} { return \"R:$url\" }")
+        .unwrap();
+    interp
+        .eval(r#"linkresolver register {example\.com} test_answered_resolver"#)
+        .unwrap();
+    interp.eval("linkresolver enable").unwrap();
+    let args: Vec<String> = [
+        "u",
+        "u@h",
+        "#c",
+        "see https://example.com/a and https://example.com/b {x} $y [z]",
+    ]
+    .iter()
+    .map(|s| tcl_escape_arg(s))
+    .collect();
+    let answered = vec!["https://example.com/a".to_string()];
+    let cmd = slopdrop::tcl_service::dispatch_command("TEXT", "testnet", &args, &answered);
+    let result = interp.eval(&cmd).unwrap();
+    assert!(result.contains("R:https://example.com/b"), "{result}");
+    assert!(!result.contains("R:https://example.com/a"), "{result}");
+    assert_eq!(interp.eval("set ::linkresolver::answered_urls").unwrap(), "");
+    // Without answered links the command is the plain dispatch.
+    let plain = slopdrop::tcl_service::dispatch_command("TEXT", "testnet", &args, &[]);
+    assert!(plain.starts_with("triggers dispatch TEXT testnet "), "{plain}");
+    let result = interp.eval(&plain).unwrap();
+    assert!(result.contains("R:https://example.com/a"), "{result}");
+    // A failing handler still clears the list.
+    interp
+        .eval("proc test_answered_resolver {url nick channel} { error boom }")
+        .unwrap();
+    interp.eval("bind TEXT * test_failing_handler; proc test_failing_handler {n m c t} { error boom }").ok();
+    let _ = interp.eval(&cmd);
+    assert_eq!(interp.eval("set ::linkresolver::answered_urls").unwrap(), "");
+}
+
+// =============================================================================
+// The Bluesky resolver (the signed-out fallback)
+// =============================================================================
+
+/// The resolver reads bsky.app for both clients, and gives one line.
+fn bluesky_with_page(page: &str, url: &str) -> (String, String) {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    interp
+        .eval(&format!(
+            "set ::test_page {{{page}}}; set ::test_fetched {{}}; \
+             proc http {{sub url args}} {{ set ::test_fetched $url; return $::test_page }}"
+        ))
+        .unwrap();
+    let out = interp
+        .eval(&format!("::linkresolver::bluesky_resolver {{{url}}} u #c"))
+        .unwrap();
+    let fetched = interp.eval("set ::test_fetched").unwrap();
+    (out, fetched)
+}
+
+#[test]
+fn test_bluesky_resolver_reads_impro_links_from_bsky_app_as_one_line() {
+    let page = r#"<meta property="og:title" content="Alice &amp; Co (@alice.example.com)">
+<meta property="og:description" content="line one
+
+line two &#x27;quoted&#x27;
+
+[contains quote post or other embedded content]">"#;
+    let (out, fetched) = bluesky_with_page(
+        page,
+        "https://impro.social/profile/alice.example.com/post/3abc?x=1",
+    );
+    assert_eq!(fetched, "https://bsky.app/profile/alice.example.com/post/3abc");
+    assert_eq!(
+        out,
+        "🦋 Alice & Co (@alice.example.com): line one line two 'quoted' [quote]"
+    );
+}
+
+#[test]
+fn test_bluesky_resolver_falls_back_to_the_json_ld_text() {
+    let page = r#"<meta property="og:title" content="Bob (@bob.example.com)">
+<script type="application/ld+json">{"text":"a \"quoted\" line\nnext é [x] $y"}</script>"#;
+    let (out, _) = bluesky_with_page(page, "https://bsky.app/profile/bob.example.com/post/3abc");
+    assert_eq!(out, "🦋 Bob (@bob.example.com): a \"quoted\" line next é [x] $y");
+}
+
+#[test]
+fn test_bluesky_pattern_matches_both_clients_only() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    for (url, ours) in [
+        ("https://impro.social/profile/a.b/post/3abc", true),
+        ("https://bsky.app/profile/a.b", true),
+        ("https://www.bsky.app/profile/a.b/feed/x", true),
+        ("https://impro.social/", false),
+        ("https://example.com/profile/a.b/post/3abc", false),
+        ("https://notbsky.app/profile/a.b", false),
+    ] {
+        let r = interp
+            .eval(&format!("::linkresolver::find_resolver {{{url}}}"))
+            .unwrap();
+        assert_eq!(r == "::linkresolver::bluesky_resolver", ours, "{url}: {r}");
+    }
+}

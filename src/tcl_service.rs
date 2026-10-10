@@ -384,6 +384,7 @@ impl TclService {
         network: &str,
         args: &[String],
         log: Option<(&str, &str, &str, &str)>, // (channel, nick, mask, text)
+        answered_urls: &[String],
     ) -> Result<Vec<(String, String)>> {
         use crate::tcl_escape::tcl_escape_arg;
 
@@ -408,12 +409,7 @@ impl TclService {
         }
 
         let tcl_args: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
-        let dispatch_cmd = format!(
-            "triggers dispatch {} {} {}",
-            tcl_escape_arg(&event),
-            tcl_escape_arg(network),
-            tcl_args.join(" "),
-        );
+        let dispatch_cmd = dispatch_command(&event, network, &tcl_args, answered_urls);
 
         let result = self.tcl_thread.eval_simple(dispatch_cmd).await?;
         Ok(crate::tcl_plugin::parse_tcl_response_list(&result))
@@ -713,4 +709,33 @@ fn split_tcl_words(raw: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// The one Tcl command a forwarded event runs. The links the bridge
+/// already answered are linkresolver's `answered_urls` for exactly this
+/// dispatch — set before, cleared after even when a handler fails — so
+/// they never leak into the next line's dispatch.
+pub fn dispatch_command(
+    event: &str,
+    network: &str,
+    escaped_args: &[String],
+    answered_urls: &[String],
+) -> String {
+    use crate::tcl_escape::tcl_escape_arg;
+    let dispatch = format!(
+        "triggers dispatch {} {} {}",
+        tcl_escape_arg(event),
+        tcl_escape_arg(network),
+        escaped_args.join(" "),
+    );
+    if answered_urls.is_empty() {
+        return dispatch;
+    }
+    let urls: Vec<String> = answered_urls.iter().map(|u| tcl_escape_arg(u)).collect();
+    format!(
+        "namespace eval ::linkresolver {{variable answered_urls [list {}]}}\n\
+         try {{\n{dispatch}\n}} finally {{\n\
+         namespace eval ::linkresolver {{variable answered_urls {{}}}}\n}}",
+        urls.join(" "),
+    )
 }

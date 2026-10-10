@@ -74,10 +74,18 @@ Extracts video title, duration, and view count:
 ```
 
 ### Bluesky
-Shows author and post content:
+Posts, profiles and feeds on bsky.app and on clients that use its routes
+(impro.social), as one line:
 ```
-🦋 Bluesky - username: This is the content of the post
+🦋 Display Name (@handle.example.com): This is the content of the post [quote]
 ```
+impro.social serves one generic page for every route, so its links are read
+from the same path on bsky.app. This resolver reads the page signed out: an
+author who limits their posts to signed-in users shows bsky.app's notice,
+not the text. Behind veles, the bridge previews these links as its bot
+account first (signed in) and sends the ones it answered as the event's
+`answered_urls`; the linkresolver skips those, so this resolver only answers
+what the bot could not (no bot on the node, a deleted or blocked post).
 
 ### Twitter/X
 Shows author and tweet text:
@@ -213,7 +221,7 @@ Edit `tcl/linkresolver_examples.tcl` to enable/disable specific resolvers:
 ```tcl
 # Enable YouTube and Bluesky resolvers
 ::linkresolver::register {youtube\.com/watch|youtu\.be/} ::linkresolver::youtube_resolver 10
-::linkresolver::register {bsky\.app/profile/.*/(post|feed)} ::linkresolver::bluesky_resolver 10
+::linkresolver::register $::linkresolver::bluesky_pattern ::linkresolver::bluesky_resolver 10
 
 # Disabled by default (uncomment to enable):
 # ::linkresolver::register {(twitter\.com|x\.com)/.*/(status|statuses)/} ::linkresolver::twitter_resolver 10
@@ -287,7 +295,7 @@ linkresolver register {wikipedia\.org/wiki/} wikipedia_resolver 5
 ## How It Works
 
 1. **URL Detection**: The linkresolver binds to TEXT events and uses regex to extract URLs
-2. **Command Filtering**: Skips processing if the message starts with `tcl` or `tclAdmin` (case insensitive)
+2. **Command Filtering**: Skips processing if the message starts with `tcl` or `tclAdmin` (case insensitive), and skips any link the bridge already answered (`::linkresolver::answered_urls`, set from `/api/event`'s `answered_urls` for that one dispatch)
 3. **Pattern Matching**: Each URL is tested against registered resolver patterns in priority order
 4. **Resolution**: The matching resolver is called with the URL, nick, and channel
 5. **Caching**: Results are cached by URL hash to avoid redundant fetches
