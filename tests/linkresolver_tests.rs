@@ -678,6 +678,16 @@ fn test_bluesky_resolver_falls_back_to_the_json_ld_text() {
     assert_eq!(out, "🦋 Bob (@bob.example.com): a \"quoted\" line next é [x] $y");
 }
 
+/// An emoji beyond the BMP survives (Tcl 8.6 holds it as a surrogate
+/// pair); IRC control codes do not.
+#[test]
+fn test_bluesky_resolver_keeps_emoji_and_drops_control_codes() {
+    let page = "<meta property=\"og:title\" content=\"C (@c.example.com)\">\n\
+                <meta property=\"og:description\" content=\"look 👆 here \u{3}04red\u{2}\">";
+    let (out, _) = bluesky_with_page(page, "https://bsky.app/profile/c.example.com");
+    assert_eq!(out, "🦋 C (@c.example.com): look 👆 here 04red");
+}
+
 #[test]
 fn test_bluesky_pattern_matches_both_clients_only() {
     let (_temp, state_path) = create_temp_state();

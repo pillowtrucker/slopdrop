@@ -146,9 +146,9 @@ namespace eval ::linkresolver {
 
     # One line of display text: whitespace runs (newlines included) become
     # one space; other control characters (IRC formatting codes) go.
+    # Surrogates stay: Tcl 8.6 holds an emoji beyond the BMP as a pair.
     proc bluesky_one_line {s} {
         set s [regsub -all {[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]} $s ""]
-        set s [regsub -all {[\ud800-\udfff]} $s ""]
         return [string trim [regsub -all {\s+} $s " "]]
     }
 
