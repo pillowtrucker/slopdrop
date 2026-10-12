@@ -900,6 +900,111 @@ async fn test_an_image_macro_records_the_threads_picture_and_its_ops() {
     service.shutdown();
 }
 
+/// The base library's image procs (veles-agent PLAN-slopdrop-art.md,
+/// wrap-up): once the state is loaded, `magick_scheme`, `magick` and
+/// `magick_id` bound to the dead magick.buttes.org service are rebound
+/// (`::magick_dsl::revive`) to record programs for veles to draw. Each
+/// call returns its handle, a later program names it, and the old
+/// `magick CMD SOURCE …` API becomes a program too; somebody's own
+/// `magick_id` stays, and off Bluesky there is nothing to draw with.
+#[tokio::test]
+async fn test_magick_scheme_records_programs_after_the_base_library() {
+    let (_temp, state_path) = create_temp_state();
+    // A state repo made by a first start, then a base library with the
+    // dead service's versions, as stolen-treasure.tcl defines them; the
+    // second start loads it after the stock procs.
+    create_test_service(state_path.clone()).shutdown();
+    std::fs::write(
+        state_path.join("stolen-treasure.tcl"),
+        [
+            "proc magick_scheme args { ~http://magick.buttes.org/abez/magick.rb?[? cmd scheme id [join $args]] }",
+            "proc magick args {~apply magick_uncached $args}",
+            "proc magick_id url {if ![regexp ^http://magick.buttes.org $url] {magick_id [magick noop $url]} else {lindex [regexp -inline {/([0-9a-f]*)\\.} $url] 1}}",
+            "proc mirror_left url {magick_scheme (let ((cbimg (image $url)) (x (width cbimg)) (y (height cbimg)) (half (crop cbimg 0 0 (/ x 2) y)) (flop (flop half))) (composite cbimg flop (/ x 2) 0))}",
+            "proc magick_rotate {img r} { magick_scheme (rotate [scheme_image_or_sexpr $img] $r ) }",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let mut service = create_test_service(state_path);
+    let irc = EvalContext::new("wrath".to_string(), "irc".to_string())
+        .with_channel("#coven".to_string());
+    for name in ["magick_scheme", "magick", "magick_id"] {
+        let r = service
+            .eval(&format!("info body {name}"), irc.clone())
+            .await
+            .unwrap();
+        assert!(
+            r.output.concat().contains("magick_dsl"),
+            "{name} is drawn again after the base library: {:?}",
+            r.output
+        );
+    }
+
+    let pic = "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:p/bafkcat@jpeg";
+    let mut ctx = bsky_ctx();
+    if let Some(b) = ctx.room.bsky.as_mut() {
+        b["thread"][1]["embed"] = serde_json::json!({"type": "images",
+            "images": [[pic, "a cat"]]});
+    }
+    let r = service.eval("bsky_image", ctx.clone()).await.unwrap();
+    assert_eq!(r.output.concat(), pic, "the post above's picture");
+
+    let r = service
+        .eval("magick_rotate [mirror_left [bsky_image]] 45", ctx.clone())
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.output.concat(), "magick:2", "the outer program's handle");
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec[0]["kind"], "magick");
+    assert_eq!(spec[0]["id"], "1");
+    let first = spec[0]["scheme"].as_str().unwrap();
+    assert!(
+        first.starts_with("(let ((cbimg (image ") && first.contains(pic),
+        "{first}"
+    );
+    assert_eq!(spec[1]["id"], "2");
+    assert_eq!(spec[1]["scheme"], "(rotate (image \"magick:1\") 45 )");
+    assert!(r.commit_info.is_none(), "{:?}", r.commit_info);
+
+    // The old API: `magick CMD SOURCE ARG …`.
+    let r = service
+        .eval("magick annotate [magick resize [bsky_image] 100 50] 16 5 5 white {say \"hi\"}", ctx.clone())
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec[0]["scheme"], format!("(resize (image \"{pic}\") 100 50)"));
+    assert_eq!(
+        spec[1]["scheme"],
+        "(annotate (image \"magick:1\") 16 5 5 \"white\" \"say \\\"hi\\\"\")"
+    );
+    for (code, why) in [
+        ("magick solarize [bsky_image] 5", "not drawn here"),
+        ("magick resize [bsky_image] big 5", "not a number"),
+    ] {
+        let r = service.eval(code, ctx.clone()).await.unwrap();
+        assert!(r.is_error, "{code}: {:?}", r.output);
+        assert!(r.output.concat().contains(why), "{code}: {:?}", r.output);
+    }
+
+    // Somebody's own magick_id is theirs.
+    let r = service
+        .eval("proc magick_id url { return mine:$url }", irc.clone())
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    service.eval("::magick_dsl::revive", irc.clone()).await.unwrap();
+    let r = service.eval("magick_id x", irc.clone()).await.unwrap();
+    assert_eq!(r.output.concat(), "mine:x");
+
+    let r = service.eval("mirror_left https://x.test/a.png", irc).await.unwrap();
+    assert!(r.is_error, "{:?}", r.output);
+    assert!(r.output.concat().contains("on Bluesky only"), "{:?}", r.output);
+    service.shutdown();
+}
+
 /// The thread is the channel's log while a Bluesky line runs, so the
 /// procs that read IRC history read the posts above; the next evaluation
 /// in that channel sees none of it.

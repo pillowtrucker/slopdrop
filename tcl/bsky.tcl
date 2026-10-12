@@ -27,7 +27,9 @@
 # it. `bsky_quote [bsky_get_parent] {{t} fedoragoonsay $t}` quotes the
 # post above and answers with the fedora goon saying its words.
 # `bsky_caption [bsky_get_parent] TOP BOTTOM` writes over the parent's
-# picture (`bsky::magick` has the other ops; the owner's only, for now).
+# picture (`bsky::magick` has the other ops), and the base library's image
+# procs draw again through `magick_scheme` (tcl/magick.tcl):
+# `mirror_left [bsky_image]`.
 #
 # Every output proc RETURNS the visible text and RECORDS what it means, so
 # they compose like any string:
@@ -263,9 +265,10 @@ namespace eval ::bsky {
     #   {scale PCT}     {rotate 90|180|270}   {flip}  {flop}
     #   {crop X Y W H}  {border PX ?COLOUR?}  {blur SIGMA}  {sharpen}
     #   {grayscale}     {invert}              {caption TOP ?BOTTOM?}
-    # At most 10 ops. veles fetches only pictures the thread shows, and
-    # for now only the owner's macros: anyone else's is dropped with a
-    # note. Returns ""; off Bluesky, the source picture's URL.
+    # At most 10 ops. veles fetches only pictures the thread shows; a
+    # stranger's macro passes the same checks as their drawings (the words
+    # written on it, then the image check). Returns ""; off Bluesky, the
+    # source picture's URL.
     proc magick {source args} {
         set alt ""
         if {[lindex $args 0] eq "-alt"} {
@@ -302,6 +305,44 @@ namespace eval ::bsky {
 
     # caption source top ?bottom? — the classic image macro: a picture of
     # the thread with TOP and BOTTOM written over it (bsky::magick).
+    # scheme program ?-alt text? — a program in the base library's image
+    # language (`magick_scheme`, tcl/magick.tcl), drawn by veles over the
+    # thread's pictures and attached. Returns the handle `magick:N`, which
+    # a later program names to build on this one (`(image magick:N)`);
+    # veles draws only the programs no other one names and leaves the
+    # handles out of the post's text. Off Bluesky there is nothing to draw
+    # with: an error.
+    proc scheme {program args} {
+        set alt ""
+        foreach {k v} $args {
+            switch -- $k {
+                -alt { set alt $v }
+                default { error "bsky::scheme: unknown option \"$k\" (-alt)" }
+            }
+        }
+        if {!$::bsky::active} {
+            error "magick_scheme: pictures are drawn on Bluesky only"
+        }
+        set n 1
+        foreach r $::bsky::out {
+            if {[dict get $r kind] eq "magick" && [dict exists $r scheme]} { incr n }
+        }
+        _record kind magick scheme $program id $n alt $alt
+        return magick:$n
+    }
+
+    # picture ?source? — the URL of a picture: SOURCE's first (a post
+    # dict, an at-uri of the thread, or a URL as given), by default the
+    # post this one answers. For `magick_scheme` and the base library's
+    # image procs: `mirror_left [bsky_image]`.
+    proc picture {{source ""}} {
+        if {$source eq ""} {
+            set source [parent]
+            if {$source eq ""} { error "bsky_image: this post answers no post" }
+        }
+        return [_image_of $source]
+    }
+
     proc caption {source top {bottom ""}} {
         if {$bottom eq ""} { return [magick $source [list caption $top]] }
         return [magick $source [list caption $top $bottom]]
@@ -537,7 +578,7 @@ namespace eval ::bsky {
     namespace export text author byteslice facet_text facets links tags mentions \
         strip_facets images is_reply link tag mention quote card image lang newpost \
         reset spec profile getpost getthread search feed followers \
-        art label parent root quotewith magick caption
+        art label parent root quotewith magick caption scheme picture
 }
 
 # The USER's spellings (2026-10-12). Global procs made at load with the
@@ -551,9 +592,11 @@ namespace eval ::bsky {
 #   bsky_art text ?-alt a? ?-theme t? attach a drawing as a picture
 #   bsky_magick source op ?op …?      a picture of the thread, changed
 #   bsky_caption source top ?bottom?  … with words written over it
+#   bsky_image ?post?                 the URL of its first picture
 ::slopdrop::_original_proc ::bsky_get_parent {{p ""}} { tailcall ::bsky::parent $p }
 ::slopdrop::_original_proc ::bsky_get_root {{p ""}} { tailcall ::bsky::root $p }
 ::slopdrop::_original_proc ::bsky_quote {p args} { tailcall ::bsky::quotewith $p {*}$args }
 ::slopdrop::_original_proc ::bsky_art {text args} { tailcall ::bsky::art $text {*}$args }
 ::slopdrop::_original_proc ::bsky_magick {source args} { tailcall ::bsky::magick $source {*}$args }
 ::slopdrop::_original_proc ::bsky_caption {source args} { tailcall ::bsky::caption $source {*}$args }
+::slopdrop::_original_proc ::bsky_image {{source ""}} { tailcall ::bsky::picture $source }

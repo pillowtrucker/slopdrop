@@ -188,6 +188,12 @@ impl SafeTclInterp {
             // and other code-bound handlers (linkresolver) survive.
             let _ = interpreter.eval("if {[llength [info procs timtom_ensure_bindings]]} { timtom_ensure_bindings }");
 
+            // The base library rebinds the image procs (`magick_scheme`,
+            // `magick`, `magick_id`) to the dead magick.buttes.org
+            // service; give them back to the ones that draw on Bluesky
+            // (tcl/magick.tcl). A tracked proc of the same name stays.
+            let _ = interpreter.eval("if {[llength [info procs ::magick_dsl::revive]]} { ::magick_dsl::revive }");
+
             // Clear the modified procs/vars list after loading state
             // State loading triggers the proc wrapper, but these are initialization procs
             // not actual modifications, so we clear the tracking lists
