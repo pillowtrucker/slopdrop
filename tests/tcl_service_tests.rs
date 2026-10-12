@@ -790,6 +790,16 @@ async fn test_bsky_quote_quotes_the_parent_and_draws_a_multiline_answer() {
 
     // The USER's spelling: the lambda's body unbraced. To `apply` a third
     // word is a namespace; the body is the rest as typed, groups kept.
+    // And `apply` is not Tcl's: the live base library redefines it as the
+    // old bot's `apply cmd args`, which this test service does too.
+    let r = service
+        .eval(
+            "proc apply {cmd arg} { uplevel [concat $cmd $arg] }",
+            EvalContext::new("wrath".to_string(), "irc".to_string()),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
     let r = service
         .eval(
             "bsky_quote [bsky_get_parent] {{parentbody} string map {o 0} $parentbody}",
@@ -808,6 +818,12 @@ async fn test_bsky_quote_quotes_the_parent_and_draws_a_multiline_answer() {
         .unwrap();
     assert!(!r.is_error, "{:?}", r.output);
     assert_eq!(r.bsky.expect("a spec")[1]["text"], "  __\n (oo) hello {there}");
+    assert!(r.commit_info.is_none(), "the lambda's proc is never committed: {:?}", r.commit_info);
+    let r = service
+        .eval("info commands ::_bsky_lambda_*", bsky_ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.output.concat(), "", "and is gone after the evaluation");
 
     // Off Bluesky the same procs answer the IRC way: the art is the text.
     let irc = EvalContext::new("wrath".to_string(), "irc".to_string())

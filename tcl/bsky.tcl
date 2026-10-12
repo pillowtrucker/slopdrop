@@ -48,6 +48,7 @@ namespace eval ::bsky {
     variable thread {}
     variable event {}
     variable out {}
+    variable _lambdas 0
 
     # ── reading a post ───────────────────────────────────────────────
 
@@ -428,7 +429,9 @@ namespace eval ::bsky {
     # be written unbraced, as the USER does: `{{t} fedoragoonsay $t}` is
     # params `t` and body `fedoragoonsay $t` (to `apply` a third word is a
     # namespace, and that read failed with "can't read t" until
-    # 2026-10-12). A result of
+    # 2026-10-12). The lambda does not go through `apply`: the base library
+    # redefines it as the old bot's `apply cmd args` (`uplevel [concat
+    # $cmd $arg]`), so it runs as a short-lived global proc instead. A result of
     # more than one line, or with IRC colour, is a drawing and goes out as
     # a picture (`bsky::art`); one plain line is the post's text. Off
     # Bluesky: the lambda's result, as IRC shows it.
@@ -441,11 +444,19 @@ namespace eval ::bsky {
         }
         if {$::bsky::active} { quote $p }
         if {$lambda eq ""} { return "" }
-        if {[llength $lambda] > 2 && !([llength $lambda] == 3
-                && [namespace exists [lindex $lambda 2]])} {
+        if {[llength $lambda] > 2} {
             set lambda [_split_lambda $lambda]
         }
-        set out [apply $lambda [text $p] {*}$args]
+        # Global, so its body sees the global procs (`quote` in here would
+        # be ::bsky::quote); made with the unwrapped `proc` and gone before
+        # the evaluation ends, so state tracking never records it.
+        set name ::_bsky_lambda_[incr ::bsky::_lambdas]
+        ::slopdrop::_original_proc $name [lindex $lambda 0] [lindex $lambda 1]
+        try {
+            set out [$name [text $p] {*}$args]
+        } finally {
+            rename $name {}
+        }
         if {$::bsky::active && [_drawing $out]} { return [art $out] }
         return $out
     }
