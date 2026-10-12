@@ -797,6 +797,72 @@ async fn test_bsky_quote_quotes_the_parent_and_draws_a_multiline_answer() {
     service.shutdown();
 }
 
+/// `bsky_caption` and `bsky_magick` (PLAN-slopdrop-art.md P6) record an
+/// image macro: the URL of the picture the post shows and the op chain,
+/// each op's words joined by U+001F and the ops by U+001E, for veles to
+/// fetch and draw. Unknown ops and wrong arities are errors before
+/// anything is recorded; off Bluesky the procs answer the picture's URL.
+#[tokio::test]
+async fn test_an_image_macro_records_the_threads_picture_and_its_ops() {
+    let (_temp, state_path) = create_temp_state();
+    let mut service = create_test_service(state_path);
+    // The first evaluation defines the stock helpers; it is not ours.
+    let _ = service
+        .eval("expr 1", EvalContext::new("wrath".to_string(), "irc".to_string()))
+        .await
+        .unwrap();
+    let pic = "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:p/bafkcat@jpeg";
+    let mut ctx = bsky_ctx();
+    if let Some(b) = ctx.room.bsky.as_mut() {
+        b["thread"][1]["embed"] = serde_json::json!({"type": "images",
+            "images": [[pic, "a cat"]]});
+    }
+    let r = service
+        .eval("bsky_caption [bsky_get_parent] {when you} {see it}", ctx.clone())
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.output.concat(), "");
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec[0]["kind"], "magick");
+    assert_eq!(spec[0]["src"], pic);
+    assert_eq!(spec[0]["ops"], "caption\u{1f}when you\u{1f}see it");
+    assert!(r.commit_info.is_none(), "{:?}", r.commit_info);
+
+    let r = service
+        .eval(
+            "bsky_magick [bsky_get_parent] -alt {a cat, upside down} {rotate 180} grayscale {resize 400 0}",
+            ctx.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec[0]["ops"], "rotate\u{1f}180\u{1e}grayscale\u{1e}resize\u{1f}400\u{1f}0");
+    assert_eq!(spec[0]["alt"], "a cat, upside down");
+
+    for (code, why) in [
+        ("bsky_magick [bsky_get_parent] {explode}", "unknown op"),
+        ("bsky_magick [bsky_get_parent] {resize 400}", "wrong number of arguments"),
+        ("bsky_magick [bsky_get_parent]", "no ops"),
+        ("bsky_caption [bsky_get_root] hi", "has no picture"),
+    ] {
+        let r = service.eval(code, ctx.clone()).await.unwrap();
+        assert!(r.is_error, "{code}: {:?}", r.output);
+        assert!(r.output.concat().contains(why), "{code}: {:?}", r.output);
+        assert!(r.bsky.is_none(), "{code}: nothing recorded");
+    }
+
+    let irc = EvalContext::new("wrath".to_string(), "irc".to_string())
+        .with_channel("#coven".to_string());
+    let r = service
+        .eval(&format!("bsky_caption {pic} hi"), irc)
+        .await
+        .unwrap();
+    assert_eq!(r.output, vec![pic.to_string()], "off Bluesky: the picture's URL");
+    service.shutdown();
+}
+
 /// The thread is the channel's log while a Bluesky line runs, so the
 /// procs that read IRC history read the posts above; the next evaluation
 /// in that channel sees none of it.

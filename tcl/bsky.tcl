@@ -26,6 +26,8 @@
 # image, and a reply whose whole output is a drawing becomes one without
 # it. `bsky_quote [bsky_get_parent] {{t} fedoragoonsay $t}` quotes the
 # post above and answers with the fedora goon saying its words.
+# `bsky_caption [bsky_get_parent] TOP BOTTOM` writes over the parent's
+# picture (`bsky::magick` has the other ops; the owner's only, for now).
 #
 # Every output proc RETURNS the visible text and RECORDS what it means, so
 # they compose like any string:
@@ -250,6 +252,76 @@ namespace eval ::bsky {
         return ""
     }
 
+    # magick source ?-alt text? op ?op …? — an image macro
+    # (PLAN-slopdrop-art.md P6): a picture from the thread, changed by a
+    # chain of ops, attached to the reply. SOURCE is a post dict (its
+    # first picture; `bsky_get_parent` gives one), the at-uri of a post in
+    # the thread, or the URL of a picture the thread shows. Each OP is a
+    # list:
+    #   {resize W H}    0 for one side keeps the shape
+    #   {scale PCT}     {rotate 90|180|270}   {flip}  {flop}
+    #   {crop X Y W H}  {border PX ?COLOUR?}  {blur SIGMA}  {sharpen}
+    #   {grayscale}     {invert}              {caption TOP ?BOTTOM?}
+    # At most 10 ops. veles fetches only pictures the thread shows, and
+    # for now only the owner's macros: anyone else's is dropped with a
+    # note. Returns ""; off Bluesky, the source picture's URL.
+    proc magick {source args} {
+        set alt ""
+        if {[lindex $args 0] eq "-alt"} {
+            set alt [lindex $args 1]
+            set args [lrange $args 2 end]
+        }
+        if {!$::bsky::active} {
+            if {[catch {_image_of $source} url]} { return "" }
+            return $url
+        }
+        set url [_image_of $source]
+        if {[llength $args] == 0} { error "bsky::magick: no ops (resize, caption, …)" }
+        if {[llength $args] > 10} { error "bsky::magick: at most 10 ops" }
+        set enc {}
+        foreach op $args {
+            set name [lindex $op 0]
+            set n [expr {[llength $op] - 1}]
+            switch -- $name {
+                resize  { set ok [expr {$n == 2}] }
+                crop    { set ok [expr {$n == 4}] }
+                scale - rotate - blur { set ok [expr {$n == 1}] }
+                border - caption { set ok [expr {$n == 1 || $n == 2}] }
+                flip - flop - sharpen - grayscale - invert { set ok [expr {$n == 0}] }
+                default {
+                    error "bsky::magick: unknown op \"$name\" (resize scale rotate flip flop crop border blur sharpen grayscale invert caption)"
+                }
+            }
+            if {!$ok} { error "bsky::magick: wrong number of arguments for $name: \"$op\"" }
+            lappend enc [join $op \x1f]
+        }
+        _record kind magick src $url ops [join $enc \x1e] alt $alt
+        return ""
+    }
+
+    # caption source top ?bottom? — the classic image macro: a picture of
+    # the thread with TOP and BOTTOM written over it (bsky::magick).
+    proc caption {source top {bottom ""}} {
+        if {$bottom eq ""} { return [magick $source [list caption $top]] }
+        return [magick $source [list caption $top $bottom]]
+    }
+
+    # The URL of a picture: a post dict's first one, a thread post's by its
+    # at-uri, or a URL as given.
+    proc _image_of {source} {
+        if {[_is_post $source]} {
+            set p $source
+        } elseif {[string match at://* $source]} {
+            set p [_find $source]
+            if {$p eq ""} { error "bsky::magick: no such post: $source" }
+        } else {
+            return $source
+        }
+        set imgs [images $p]
+        if {[llength $imgs] == 0} { error "bsky::magick: that post has no picture" }
+        return [lindex $imgs 0 0]
+    }
+
     # label val ?val …? — self-label the reply: nudity, sexual, porn or
     # graphic-media, a content warning readers opt into. veles keeps only
     # those values, and adds its own when its image check sees what one
@@ -422,7 +494,7 @@ namespace eval ::bsky {
     namespace export text author byteslice facet_text facets links tags mentions \
         strip_facets images is_reply link tag mention quote card image lang newpost \
         reset spec profile getpost getthread search feed followers \
-        art label parent root quotewith
+        art label parent root quotewith magick caption
 }
 
 # The USER's spellings (2026-10-12). Global procs made at load with the
@@ -434,7 +506,11 @@ namespace eval ::bsky {
 #   bsky_get_root ?post?              the thread's first post
 #   bsky_quote post ?lambda? ?arg …?  quote it and answer (bsky::quotewith)
 #   bsky_art text ?-alt a? ?-theme t? attach a drawing as a picture
+#   bsky_magick source op ?op …?      a picture of the thread, changed
+#   bsky_caption source top ?bottom?  … with words written over it
 ::slopdrop::_original_proc ::bsky_get_parent {{p ""}} { tailcall ::bsky::parent $p }
 ::slopdrop::_original_proc ::bsky_get_root {{p ""}} { tailcall ::bsky::root $p }
 ::slopdrop::_original_proc ::bsky_quote {p args} { tailcall ::bsky::quotewith $p {*}$args }
 ::slopdrop::_original_proc ::bsky_art {text args} { tailcall ::bsky::art $text {*}$args }
+::slopdrop::_original_proc ::bsky_magick {source args} { tailcall ::bsky::magick $source {*}$args }
+::slopdrop::_original_proc ::bsky_caption {source args} { tailcall ::bsky::caption $source {*}$args }
