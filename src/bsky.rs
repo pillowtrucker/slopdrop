@@ -122,18 +122,111 @@ pub fn collect(interp: &Interpreter) -> Option<Value> {
         return None;
     }
     let out = interp.get("::bsky::out").ok()?;
+    // Nothing recorded. Never hand an empty list to `get_elements`: the
+    // tcl crate builds a slice from the NULL element pointer Tcl answers
+    // for one, which a debug build aborts on (and is UB in any build).
+    if out.get_string().trim().is_empty() {
+        return None;
+    }
     let mut records = Vec::new();
+    let mut total = 0usize;
     for rec in out.get_elements().ok()? {
+        if records.len() >= MAX_RECORDS || total >= MAX_TOTAL_BYTES {
+            break;
+        }
         let Ok(iter) = rec.dict_iter() else { continue };
         let mut m = serde_json::Map::new();
         for (k, v) in iter {
-            m.insert(k.get_string(), Value::String(v.get_string()));
+            let k = cap_bytes(k.get_string(), 64);
+            let v = cap_bytes(v.get_string(), MAX_VALUE_BYTES);
+            total += k.len() + v.len();
+            m.insert(k, Value::String(v));
         }
         if !m.is_empty() {
             records.push(Value::Object(m));
         }
     }
     (!records.is_empty()).then_some(Value::Array(records))
+}
+
+/// What one evaluation may record: the code is anybody's, and the records
+/// cross the bridge and the gateway as JSON. A drawing (`bsky::art`) is
+/// the largest honest record; 64 KB holds a 250×125 grid with colour.
+pub const MAX_RECORDS: usize = 64;
+pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_TOTAL_BYTES: usize = 256 * 1024;
+
+/// `s` cut to at most `max` bytes, on a character boundary.
+fn cap_bytes(mut s: String, max: usize) -> String {
+    if s.len() > max {
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
+}
+
+/// Make the Bluesky thread the channel's log for this evaluation, so the
+/// procs that read IRC history — `irclog`, `mock`, `quote`, `lastlink`,
+/// `log_for`, the `^` and `s///` handlers — read the posts above the one
+/// that asked, oldest first, as `{timestamp handle did text}` (the IRC
+/// log's `{timestamp nick mask message}`). Returns whether it seeded the
+/// log; [`clear_log`] takes it away after the evaluation, so one thread's
+/// posts never reach the next thread's evaluation. The log array is not
+/// state (`state.rs` never saves `slopdrop_log_lines`).
+pub fn seed_log(interp: &Interpreter, channel: &str, ctx: Option<&Value>) -> bool {
+    let Some(ctx) = ctx.filter(|c| c.get("post").is_some_and(Value::is_object)) else {
+        return false;
+    };
+    let posts = ctx.get("thread").and_then(Value::as_array);
+    let entries: Vec<Value> = posts
+        .into_iter()
+        .flatten()
+        .map(|p| {
+            let s = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let ts = chrono::DateTime::parse_from_rfc3339(&s("created"))
+                .map(|t| t.timestamp().max(0))
+                .unwrap_or(0);
+            let nick = if s("handle").is_empty() { s("did") } else { s("handle") };
+            Value::Array(vec![
+                Value::String(ts.to_string()),
+                Value::String(nick),
+                Value::String(s("did")),
+                Value::String(s("text")),
+            ])
+        })
+        .collect();
+    // Through a variable of our own and a `catch`: the log array is a
+    // global anybody's code can turn into a scalar, and `Interpreter::set`
+    // asserts on a failed set, which would take the interpreter thread
+    // down with it.
+    interp.set("::bsky::_log", json_to_obj(&Value::Array(entries)));
+    let _ = interp.eval(
+        format!(
+            "catch {{set ::slopdrop_log_lines({}) $::bsky::_log}}; unset -nocomplain ::bsky::_log",
+            log_key(channel)
+        )
+        .as_str(),
+    );
+    true
+}
+
+/// Undo [`seed_log`].
+pub fn clear_log(interp: &Interpreter, channel: &str) {
+    let _ = interp.eval(
+        format!("catch {{unset -nocomplain ::slopdrop_log_lines({})}}", log_key(channel)).as_str(),
+    );
+}
+
+/// A channel name as an array key inside a Tcl script: only the
+/// characters a channel name is made of, so nothing in it substitutes.
+fn log_key(channel: &str) -> String {
+    channel
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '#' | '&' | '.' | '_' | '-' | ':'))
+        .collect()
 }
 
 /// The Tcl that sets `::bsky::event` for one trigger dispatch, from the

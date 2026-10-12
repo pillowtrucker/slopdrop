@@ -22,6 +22,11 @@
 # reply may carry: a mention of someone outside the thread posts as plain
 # text, and an image from a public /tcl is refused.
 #
+# Pictures (PLAN-slopdrop-art.md): `bsky::art` attaches a drawing as an
+# image, and a reply whose whole output is a drawing becomes one without
+# it. `bsky_quote [bsky_get_parent] {{t} fedoragoonsay $t}` quotes the
+# post above and answers with the fedora goon saying its words.
+#
 # Every output proc RETURNS the visible text and RECORDS what it means, so
 # they compose like any string:
 #
@@ -184,11 +189,24 @@ namespace eval ::bsky {
         return $shown
     }
 
-    # quote uri — quote a post (an at-uri or a bsky.app link). One quote or
-    # card per reply.
-    proc quote {uri} {
-        if {!$::bsky::active} { return $uri }
-        _record kind quote uri $uri
+    # Is this a post dict (has a uri), rather than a uri string?
+    proc _is_post {v} {
+        expr {![catch {dict size $v}] && [dict exists $v uri]}
+    }
+
+    # quote post — quote a post: a post dict (`bsky::parent`,
+    # `$::bsky::thread`), an at-uri or a bsky.app link. One quote or card
+    # per reply. veles lets anyone but the owner quote only a post of the
+    # thread or their own. Off Bluesky: the uri, or `<author> text` for a
+    # post dict.
+    proc quote {what} {
+        if {[_is_post $what]} {
+            if {!$::bsky::active} { return "<[author $what]> [text $what]" }
+            _record kind quote uri [dict get $what uri]
+            return ""
+        }
+        if {!$::bsky::active} { return $what }
+        _record kind quote uri $what
         return ""
     }
 
@@ -207,6 +225,131 @@ namespace eval ::bsky {
         if {!$::bsky::active} { return $url }
         _record kind image uri $url alt $alt
         return ""
+    }
+
+    # art text ?-alt text? ?-theme dark|light? — attach TEXT drawn as a
+    # picture (PLAN-slopdrop-art.md). IRC art — mIRC colour, ANSI, block,
+    # box and braille drawings — does not survive a Bluesky post, so veles
+    # draws it in the IRC font and attaches the image. Returns "" on
+    # Bluesky; off it, the text itself, so a stored proc draws on IRC as it
+    # always did. Up to 4 pictures per reply. A reply whose whole output is
+    # a drawing becomes a picture without this; `art` is for a drawing
+    # beside text, or one longer than the output's line cap.
+    proc art {text args} {
+        set alt ""
+        set theme ""
+        foreach {k v} $args {
+            switch -- $k {
+                -alt { set alt $v }
+                -theme { set theme $v }
+                default { error "bsky::art: unknown option \"$k\" (-alt, -theme)" }
+            }
+        }
+        if {!$::bsky::active} { return $text }
+        _record kind art text $text alt $alt theme $theme
+        return ""
+    }
+
+    # label val ?val …? — self-label the reply: nudity, sexual, porn or
+    # graphic-media, a content warning readers opt into. veles keeps only
+    # those values, and adds its own when its image check sees what one
+    # names.
+    proc label {args} {
+        if {$::bsky::active} {
+            foreach v $args { _record kind label val $v }
+        }
+        return ""
+    }
+
+    # parent ?post? — the post the given one (default: the one that
+    # asked) answers, as a post dict; {} for a top-level post. From the
+    # thread when it is there, else one AppView read. Off Bluesky: the
+    # channel's previous line as a post dict (text, handle = the nick).
+    proc parent {{p ""}} {
+        if {!$::bsky::active && $p eq ""} { return [_previous_line] }
+        set r [_get [_post $p] reply]
+        if {$r eq ""} { return {} }
+        return [_find [_get $r parent]]
+    }
+
+    # root ?post? — the thread's first post, as a post dict (a top-level
+    # post is its own root).
+    proc root {{p ""}} {
+        if {!$::bsky::active && $p eq ""} { return [_previous_line] }
+        set p [_post $p]
+        set r [_get $p reply]
+        if {$r eq ""} { return $p }
+        return [_find [_get $r root]]
+    }
+
+    # The post with this at-uri: from the thread, else an AppView read.
+    proc _find {uri} {
+        if {$uri eq ""} { return {} }
+        set bare [lindex [split $uri #] 0]
+        foreach t $::bsky::thread {
+            if {[lindex [split [_get $t uri] #] 0] eq $bare} { return $t }
+        }
+        if {[catch {getpost $bare} view] || $view eq ""} { return {} }
+        return [_from_view $view]
+    }
+
+    # An AppView postView in the post-dict shape (no facets: the
+    # AppView's shape for them differs, and a reply reads the text).
+    proc _from_view {v} {
+        set rec [_get $v record]
+        set a [_get $v author]
+        set reply {}
+        set rr [_get $rec reply]
+        if {$rr ne ""} {
+            set reply [dict create root [_get [_get $rr root] uri] \
+                parent [_get [_get $rr parent] uri]]
+        }
+        return [dict create uri [_get $v uri] cid [_get $v cid] \
+            text [_get $rec text] did [_get $a did] handle [_get $a handle] \
+            created [_get $rec createdAt] langs [_get $rec langs] \
+            facets {} embed {} reply $reply]
+    }
+
+    # Off Bluesky: the channel's last line by someone other than the
+    # caller (the caller's own line may be the command itself), as a post
+    # dict.
+    proc _previous_line {} {
+        set chan [expr {[info exists ::channel] ? $::channel : ""}]
+        set me [expr {[info exists ::nick] ? $::nick : ""}]
+        if {![info exists ::slopdrop_log_lines($chan)]} { return {} }
+        foreach e [lreverse $::slopdrop_log_lines($chan)] {
+            if {![string equal -nocase [lindex $e 1] $me]} {
+                return [dict create uri "" text [lindex $e 3] \
+                    handle [lindex $e 1] did "" reply {}]
+            }
+        }
+        return {}
+    }
+
+    # quotewith post ?lambda? ?arg …? — quote a post and answer it in one
+    # line. The lambda (an `apply` lambda: {params body}) gets the post's
+    # text, then any further args; its result is the reply. A result of
+    # more than one line, or with IRC colour, is a drawing and goes out as
+    # a picture (`bsky::art`); one plain line is the post's text. Off
+    # Bluesky: the lambda's result, as IRC shows it.
+    #
+    #   /tcl bsky_quote [bsky_get_parent] {{t} fedoragoonsay $t}
+    #   /tcl bsky_quote [bsky_get_parent] {{t} lmiot $t}
+    proc quotewith {p {lambda ""} args} {
+        if {$p eq ""} {
+            error "bsky_quote: no post to quote (a top-level post has no parent)"
+        }
+        if {$::bsky::active} { quote $p }
+        if {$lambda eq ""} { return "" }
+        set out [apply $lambda [text $p] {*}$args]
+        if {$::bsky::active && [_drawing $out]} { return [art $out] }
+        return $out
+    }
+
+    # More than one line, or mIRC/ANSI formatting: a drawing.
+    proc _drawing {s} {
+        expr {[string first "\n" [string trim $s "\n"]] >= 0
+              || [regexp {[\x02\x03\x04\x0f\x16\x1b\x1d\x1e\x1f]} $s]}
     }
 
     # lang code ?code …? — the reply's languages (BCP-47: en, de, pt-BR).
@@ -278,5 +421,20 @@ namespace eval ::bsky {
 
     namespace export text author byteslice facet_text facets links tags mentions \
         strip_facets images is_reply link tag mention quote card image lang newpost \
-        reset spec profile getpost getthread search feed followers
+        reset spec profile getpost getthread search feed followers \
+        art label parent root quotewith
 }
+
+# The USER's spellings (2026-10-12). Global procs made at load with the
+# unwrapped `proc`, so state tracking never commits them (it records what
+# an evaluation defines); a tracked proc of the same name still overrides
+# one, as it would any stock proc.
+#
+#   bsky_get_parent ?post?            the post this one answers
+#   bsky_get_root ?post?              the thread's first post
+#   bsky_quote post ?lambda? ?arg …?  quote it and answer (bsky::quotewith)
+#   bsky_art text ?-alt a? ?-theme t? attach a drawing as a picture
+::slopdrop::_original_proc ::bsky_get_parent {{p ""}} { tailcall ::bsky::parent $p }
+::slopdrop::_original_proc ::bsky_get_root {{p ""}} { tailcall ::bsky::root $p }
+::slopdrop::_original_proc ::bsky_quote {p args} { tailcall ::bsky::quotewith $p {*}$args }
+::slopdrop::_original_proc ::bsky_art {text args} { tailcall ::bsky::art $text {*}$args }

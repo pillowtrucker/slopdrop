@@ -267,6 +267,9 @@ struct ProcDto {
     args: String,
     body: String,
     hash: String,
+    /// `base` for a base-library proc (`?base=1`); absent for a tracked one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin: Option<&'static str>,
 }
 
 /// One persistent variable (GET /api/vars).
@@ -791,19 +794,37 @@ async fn handle_procs(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<ProcDto>>, StatusCode> {
     let names_only = params.get("names").map(|v| v == "1").unwrap_or(false);
+    let with_base = params.get("base").map(|v| v == "1").unwrap_or(false);
     let service = state.tcl_service.lock().await;
     match service.procs_from_disk() {
-        Ok(procs) => Ok(Json(
-            procs
+        Ok(procs) => {
+            let tracked: std::collections::HashSet<String> =
+                procs.iter().map(|p| p.name.clone()).collect();
+            let mut out: Vec<ProcDto> = procs
                 .into_iter()
                 .map(|p| ProcDto {
                     name: p.name,
                     args: if names_only { String::new() } else { p.args },
                     body: if names_only { String::new() } else { p.body },
                     hash: p.hash,
+                    origin: None,
                 })
-                .collect(),
-        )),
+                .collect();
+            // The base library (`base_library`), each proc not overridden
+            // by a tracked one of the same name.
+            if with_base {
+                out.extend(crate::base_library::list_except(&tracked).into_iter().map(|p| {
+                    ProcDto {
+                        name: p.name,
+                        args: if names_only { String::new() } else { p.args },
+                        body: if names_only { String::new() } else { p.body },
+                        hash: p.hash,
+                        origin: Some("base"),
+                    }
+                }));
+            }
+            Ok(Json(out))
+        }
         Err(e) => {
             error!("procs listing error: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

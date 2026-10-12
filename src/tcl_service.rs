@@ -138,6 +138,11 @@ pub struct EvalResponse {
 ///
 /// This service manages the TCL interpreter thread and provides
 /// a clean API for frontends to evaluate TCL code.
+/// The output lines a Bluesky evaluation returns before paging: the art
+/// renderer's grid holds 123 rows, and a few more are kept so the cut is
+/// the renderer's (it says so in the alt text), not a silent one here.
+pub const ART_LINES: usize = 200;
+
 pub struct TclService {
     tcl_thread: TclThreadHandle,
     security_config: SecurityConfig,
@@ -177,6 +182,7 @@ impl TclService {
         if room.channel.is_none() {
             room.channel = ctx.channel.clone();
         }
+        let is_bluesky = room.bsky.is_some();
 
         let channel = ctx.channel.clone().unwrap_or_else(|| "default".to_string());
 
@@ -201,8 +207,15 @@ impl TclService {
             result.output.lines().map(|s| s.to_string()).collect()
         };
 
-        // Apply pagination
-        let max_lines = self.tcl_config.max_output_lines;
+        // Apply pagination. A Bluesky line may be a drawing that veles
+        // turns into ONE picture (PLAN-slopdrop-art.md), so it gets the
+        // taller art cap: a drawing cut at the IRC page would be drawn
+        // cut.
+        let max_lines = if is_bluesky {
+            self.tcl_config.max_output_lines.max(ART_LINES)
+        } else {
+            self.tcl_config.max_output_lines
+        };
         let (output, more_available) = if all_lines.len() > max_lines {
             // Cache remaining lines
             let cache_key = format!("{}:{}", channel, ctx.user);

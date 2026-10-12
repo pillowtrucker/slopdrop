@@ -883,6 +883,18 @@ impl TclThreadWorker {
             return;
         }
 
+        // A Bluesky line reads its thread as the channel's log (`irclog`,
+        // `mock`, `^` …), keyed like `$::channel`; cleared again below.
+        let log_channel = request
+            .room
+            .channel
+            .as_deref()
+            .filter(|c| !c.is_empty())
+            .unwrap_or(&request.channel)
+            .to_string();
+        let seeded_log =
+            crate::bsky::seed_log(self.interp.interpreter(), &log_channel, request.room.bsky.as_ref());
+
         // Capture state before evaluation
         let state_before = InterpreterState::capture(self.interp.interpreter());
 
@@ -902,6 +914,9 @@ impl TclThreadWorker {
         // error too: a proc that recorded a link and then failed still
         // gets a reply, and veles decides what of it to post.
         let bsky = crate::bsky::collect(self.interp.interpreter());
+        if seeded_log {
+            crate::bsky::clear_log(self.interp.interpreter(), &log_channel);
+        }
 
         let output = match result {
             Ok(output) => EvalResult {

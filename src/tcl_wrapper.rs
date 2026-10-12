@@ -263,7 +263,12 @@ impl SafeTclInterp {
         if stolen_treasure.exists() {
             debug!("Loading stolen-treasure.tcl");
             let content = std::fs::read_to_string(&stolen_treasure)?;
+            // What the library defines is recorded for `/api/procs?base=1`
+            // (`base_library`): the public-reply safety layer has to see
+            // the procs most lines call.
+            let before = crate::base_library::definitions(interp);
             interp.eval(content.as_str()).map_err(|e| anyhow!("Failed to load stolen-treasure.tcl: {:?}", e))?;
+            crate::base_library::snapshot(interp, &before);
         }
 
         // 2. Load restore_missing_vars.tcl (variable restoration script)

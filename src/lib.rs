@@ -1,5 +1,6 @@
 // Library interface for integration tests
 
+pub mod base_library;
 pub mod bsky;
 pub mod config;
 pub mod file_watcher;

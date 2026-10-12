@@ -722,3 +722,130 @@ async fn test_a_bluesky_like_dispatches_to_its_binding_with_the_event() {
 
     service.shutdown();
 }
+
+/// A Bluesky evaluation context: the post that asked (a reply) and the
+/// thread above it.
+fn bsky_ctx() -> EvalContext {
+    let mut ctx = EvalContext::new("atproto:did:plc:c".to_string(), "web".to_string())
+        .with_channel("bluesky".to_string())
+        .with_network("atproto".to_string());
+    ctx.room = slopdrop::tcl_service::RoomContext {
+        nick: Some("c.test".to_string()),
+        channel: Some("bluesky".to_string()),
+        bsky: Some(serde_json::json!({
+            "post": {"uri": "at://did:plc:c/app.bsky.feed.post/ask", "text": "/tcl ...",
+                     "did": "did:plc:c", "handle": "c.test",
+                     "reply": {"root": "at://did:plc:r/app.bsky.feed.post/root",
+                               "parent": "at://did:plc:p/app.bsky.feed.post/par"}},
+            "thread": [
+                {"uri": "at://did:plc:r/app.bsky.feed.post/root", "text": "the root",
+                 "did": "did:plc:r", "handle": "r.test", "created": "2026-10-12T01:00:00Z"},
+                {"uri": "at://did:plc:p/app.bsky.feed.post/par", "text": "hello {there}",
+                 "did": "did:plc:p", "handle": "p.test", "created": "2026-10-12T01:05:00Z",
+                 "reply": {"root": "at://did:plc:r/app.bsky.feed.post/root",
+                           "parent": "at://did:plc:r/app.bsky.feed.post/root"}},
+            ],
+        })),
+        ..Default::default()
+    };
+    ctx
+}
+
+/// `bsky_quote [bsky_get_parent] {lambda}` (USER 2026-10-12): the parent
+/// is found in the thread, quoted, and the lambda's multi-line answer
+/// rides as a picture (`kind art`) with no text of its own; a one-line
+/// answer is the post's text. Nothing of it is committed to the state.
+#[tokio::test]
+async fn test_bsky_quote_quotes_the_parent_and_draws_a_multiline_answer() {
+    let (_temp, state_path) = create_temp_state();
+    let mut service = create_test_service(state_path);
+    let _ = service
+        .eval("expr 1", EvalContext::new("wrath".to_string(), "irc".to_string()))
+        .await
+        .unwrap();
+    let r = service
+        .eval(
+            "bsky_quote [bsky_get_parent] {{t} {return \"  __\\n (oo) $t\"}}",
+            bsky_ctx(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.output.concat(), "", "the drawing is the picture, not the text");
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec[0]["kind"], "quote");
+    assert_eq!(spec[0]["uri"], "at://did:plc:p/app.bsky.feed.post/par");
+    assert_eq!(spec[1]["kind"], "art");
+    assert_eq!(spec[1]["text"], "  __\n (oo) hello {there}");
+    assert!(r.commit_info.is_none(), "{:?}", r.commit_info);
+
+    let r = service
+        .eval("bsky_quote [bsky_get_root] {{t} {string toupper $t}}", bsky_ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.output, vec!["THE ROOT".to_string()]);
+    let spec = r.bsky.expect("a spec");
+    assert_eq!(spec.as_array().unwrap().len(), 1, "a quote, no picture: {spec}");
+    assert_eq!(spec[0]["uri"], "at://did:plc:r/app.bsky.feed.post/root");
+
+    // Off Bluesky the same procs answer the IRC way: the art is the text.
+    let irc = EvalContext::new("wrath".to_string(), "irc".to_string())
+        .with_channel("#coven".to_string());
+    let r = service.eval("bsky_art \"a\\nb\"", irc).await.unwrap();
+    assert_eq!(r.output, vec!["a".to_string(), "b".to_string()]);
+    assert!(r.bsky.is_none());
+    service.shutdown();
+}
+
+/// The thread is the channel's log while a Bluesky line runs, so the
+/// procs that read IRC history read the posts above; the next evaluation
+/// in that channel sees none of it.
+#[tokio::test]
+async fn test_a_bluesky_thread_is_the_channel_log_for_its_evaluation_only() {
+    let (_temp, state_path) = create_temp_state();
+    let mut service = create_test_service(state_path);
+    let r = service
+        .eval("join [lastlog_text 10] |", bsky_ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.output, vec!["the root|hello {there}".to_string()]);
+    let r = service
+        .eval("lindex [log] end 1", bsky_ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.output, vec!["p.test".to_string()], "the nick is the handle");
+    let plain = EvalContext::new("wrath".to_string(), "web".to_string())
+        .with_channel("bluesky".to_string());
+    let r = service.eval("llength [log]", plain).await.unwrap();
+    assert_eq!(r.output, vec!["0".to_string()], "cleared after the evaluation");
+    service.shutdown();
+}
+
+/// What one evaluation records is capped (anybody's code writes it), and
+/// a Bluesky evaluation is not paged at the IRC line cap: a drawing must
+/// reach veles whole.
+#[tokio::test]
+async fn test_a_bluesky_evaluation_records_within_caps_and_returns_tall_output_whole() {
+    let (_temp, state_path) = create_temp_state();
+    let mut service = create_test_service(state_path);
+    let r = service
+        .eval(
+            "lappend ::bsky::out [dict create kind art text [string repeat x 200000]]; \
+             for {set i 0} {$i < 100} {incr i} {lappend ::bsky::out [dict create kind tag tag t$i]}; \
+             return ok",
+            bsky_ctx(),
+        )
+        .await
+        .unwrap();
+    let spec = r.bsky.expect("a spec");
+    let recs = spec.as_array().unwrap();
+    assert_eq!(recs[0]["text"].as_str().unwrap().len(), 64 * 1024);
+    assert!(recs.len() <= 64, "{}", recs.len());
+    let r = service
+        .eval(&generate_multiline_output("line", 50), bsky_ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.output.len(), 50, "the test config pages IRC at 5");
+    assert!(!r.more_available);
+    service.shutdown();
+}
