@@ -306,6 +306,30 @@ namespace eval ::bsky {
         return [magick $source [list caption $top $bottom]]
     }
 
+    # A lambda written {params word word …}: params, and the rest of the
+    # string as typed as the body (so `{a b}` in it stays one word).
+    proc _split_lambda {lambda} {
+        set s [string trimleft $lambda]
+        set n [string length $s]
+        if {[string index $s 0] eq "\{"} {
+            set depth 0
+            for {set i 0} {$i < $n} {incr i} {
+                set c [string index $s $i]
+                if {$c eq "\\"} { incr i; continue }
+                if {$c eq "\{"} {
+                    incr depth
+                } elseif {$c eq "\}"} {
+                    incr depth -1
+                    if {$depth == 0} { break }
+                }
+            }
+            set rest [string range $s [expr {$i + 1}] end]
+        } else {
+            regexp {^\S+(.*)$} $s -> rest
+        }
+        return [list [lindex $lambda 0] [string trim $rest]]
+    }
+
     # The URL of a picture: a post dict's first one, a thread post's by its
     # at-uri, or a URL as given.
     proc _image_of {source} {
@@ -400,7 +424,11 @@ namespace eval ::bsky {
 
     # quotewith post ?lambda? ?arg …? — quote a post and answer it in one
     # line. The lambda (an `apply` lambda: {params body}) gets the post's
-    # text, then any further args; its result is the reply. A result of
+    # text, then any further args; its result is the reply. The body may
+    # be written unbraced, as the USER does: `{{t} fedoragoonsay $t}` is
+    # params `t` and body `fedoragoonsay $t` (to `apply` a third word is a
+    # namespace, and that read failed with "can't read t" until
+    # 2026-10-12). A result of
     # more than one line, or with IRC colour, is a drawing and goes out as
     # a picture (`bsky::art`); one plain line is the post's text. Off
     # Bluesky: the lambda's result, as IRC shows it.
@@ -413,6 +441,10 @@ namespace eval ::bsky {
         }
         if {$::bsky::active} { quote $p }
         if {$lambda eq ""} { return "" }
+        if {[llength $lambda] > 2 && !([llength $lambda] == 3
+                && [namespace exists [lindex $lambda 2]])} {
+            set lambda [_split_lambda $lambda]
+        }
         set out [apply $lambda [text $p] {*}$args]
         if {$::bsky::active && [_drawing $out]} { return [art $out] }
         return $out

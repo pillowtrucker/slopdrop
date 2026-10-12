@@ -788,6 +788,27 @@ async fn test_bsky_quote_quotes_the_parent_and_draws_a_multiline_answer() {
     assert_eq!(spec.as_array().unwrap().len(), 1, "a quote, no picture: {spec}");
     assert_eq!(spec[0]["uri"], "at://did:plc:r/app.bsky.feed.post/root");
 
+    // The USER's spelling: the lambda's body unbraced. To `apply` a third
+    // word is a namespace; the body is the rest as typed, groups kept.
+    let r = service
+        .eval(
+            "bsky_quote [bsky_get_parent] {{parentbody} string map {o 0} $parentbody}",
+            bsky_ctx(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.output, vec!["hell0 {there}".to_string()]);
+    let r = service
+        .eval(
+            "bsky_quote [bsky_get_parent] {{t} return \"  __\\n (oo) $t\"}",
+            bsky_ctx(),
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    assert_eq!(r.bsky.expect("a spec")[1]["text"], "  __\n (oo) hello {there}");
+
     // Off Bluesky the same procs answer the IRC way: the art is the text.
     let irc = EvalContext::new("wrath".to_string(), "irc".to_string())
         .with_channel("#coven".to_string());
