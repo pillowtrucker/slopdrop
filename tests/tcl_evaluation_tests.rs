@@ -108,6 +108,7 @@ async fn test_timeout_handling() {
         ssh_key: None,
         max_output_lines: 10,
         show_error_traces: false,
+        http_proxy: None,
     };
 
     // Create empty channel members

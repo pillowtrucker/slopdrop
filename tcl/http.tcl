@@ -30,6 +30,18 @@ namespace eval httpx {
     variable bytes_transferred
     array set bytes_transferred {}
 
+    # Where a request leaves from. Set by the host before every
+    # evaluation and every event, never kept from one to the next:
+    # `proxy` is `[tcl] http_proxy` (Tor's SOCKS port on veles' VPS, so
+    # other people's link previews and `http get` never leave from the
+    # address the owner's IRC client uses), `direct` is 1 when the bridge
+    # says the request is the owner's own, and `who` is the requester's
+    # tag, the SOCKS user name that gives each requester a Tor circuit of
+    # their own (IsolateSOCKSAuth).
+    variable proxy ""
+    variable direct 0
+    variable who ""
+
     proc now {} {
         clock seconds
     }
@@ -189,6 +201,23 @@ namespace eval httpx {
         incr eval_count
     }
 
+    # The curl options for where a request leaves from: through the
+    # proxy under the requester's own name, or none (this host's address)
+    # for the owner's own requests and when no proxy is configured.
+    proc proxy_options {} {
+        variable proxy
+        variable direct
+        variable who
+        if {$proxy eq "" || $direct} {
+            return {}
+        }
+        set name $who
+        if {$name eq ""} {
+            set name anyone
+        }
+        return [list -proxy $proxy -proxyuserpwd "slopdrop-$name:x"]
+    }
+
     proc normalize_url {url} {
         # Auto-prepend http:// if no protocol specified
         set url_lower [string tolower $url]
@@ -269,7 +298,8 @@ namespace eval httpx {
             -timeout [expr {$time_limit / 1000}] \
             -followlocation 1 \
             -maxredirs 5 \
-            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)"
+            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)" \
+            {*}[proxy_options]
 
         catch { $curlHandle perform } curlErrorNumber
 
@@ -357,7 +387,8 @@ namespace eval httpx {
             -timeout [expr {$time_limit / 1000}] \
             -followlocation 1 \
             -maxredirs 5 \
-            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)"
+            -useragent "SlopDrop IRC Bot/1.0 (TCL; +https://github.com/pillowtrucker/slopdrop)" \
+            {*}[proxy_options]
 
         catch { $curlHandle perform } curlErrorNumber
 

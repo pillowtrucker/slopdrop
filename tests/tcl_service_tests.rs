@@ -41,6 +41,7 @@ fn create_test_service_with_members(state_path: PathBuf, channel_members: Arc<Rw
         ssh_key: None,
         max_output_lines: 5,  // Small for testing pagination
         show_error_traces: false,
+        http_proxy: None,
     };
 
     TclService::new(security_config, tcl_config, channel_members).unwrap()
@@ -590,6 +591,7 @@ async fn test_chanlist_top_level_answers_from_the_reported_room() {
             "jackma".to_string(),
         ],
         bsky: None,
+        owner: false,
     };
 
     let response = service.eval("chanlist #coven", ctx.clone()).await.unwrap();
@@ -701,6 +703,7 @@ async fn test_a_bluesky_like_dispatches_to_its_binding_with_the_event() {
             None,
             &[],
             Some(&ev),
+            false,
         )
         .await
         .unwrap();
@@ -1055,5 +1058,60 @@ async fn test_a_bluesky_evaluation_records_within_caps_and_returns_tall_output_w
         .unwrap();
     assert_eq!(r.output.len(), 50, "the test config pages IRC at 5");
     assert!(!r.more_available);
+    service.shutdown();
+}
+
+/// An event's handlers fetch as the person whose event it is: a link
+/// someone pasted is previewed through the proxy under their tag, and
+/// one the owner pasted leaves directly (the bridge says `owner`).
+#[tokio::test]
+async fn an_events_requests_leave_as_its_senders() {
+    let (_temp, state_path) = create_temp_state();
+    let security_config = SecurityConfig {
+        eval_timeout_ms: 5000,
+        privileged_users: vec![],
+        blacklisted_users: vec![],
+        memory_limit_mb: 0,
+        max_recursion_depth: 1000,
+        notify_self: false,
+    };
+    let proxy = "socks5h://127.0.0.1:9050";
+    let tcl_config = TclConfig {
+        state_path,
+        state_repo: None,
+        ssh_key: None,
+        max_output_lines: 5,
+        show_error_traces: false,
+        http_proxy: Some(proxy.to_string()),
+    };
+    let mut service =
+        TclService::new(security_config, tcl_config, Arc::new(RwLock::new(HashMap::new()))).unwrap();
+    let ctx = EvalContext::new("wrath".to_string(), "web".to_string());
+    let r = service
+        .eval(
+            "proc where_from {n m c t} { return \"[::httpx::proxy_options]|$::httpx::direct\" }; \
+             bind TEXT * where_from",
+            ctx,
+        )
+        .await
+        .unwrap();
+    assert!(!r.is_error, "{:?}", r.output);
+    let args: Vec<String> = ["alice", "a@h", "#room", "hello there"]
+        .map(String::from)
+        .to_vec();
+    let theirs = service
+        .dispatch_event("TEXT", "synirc", &args, None, &[], None, false)
+        .await
+        .unwrap();
+    let tag = slopdrop::http_tcl_commands::requester_tag("synirc", "alice");
+    assert_eq!(
+        theirs[0].message,
+        format!("-proxy {proxy} -proxyuserpwd slopdrop-{tag}:x|0")
+    );
+    let owners = service
+        .dispatch_event("TEXT", "synirc", &args, None, &[], None, true)
+        .await
+        .unwrap();
+    assert_eq!(owners[0].message, "|1");
     service.shutdown();
 }

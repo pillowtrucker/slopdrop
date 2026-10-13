@@ -157,4 +157,12 @@ pub struct TclConfig {
     /// Default: false
     #[serde(default)]
     pub show_error_traces: bool,
+    /// Where `http get`/`post`/`head`, and so the link resolver, send
+    /// their requests: a proxy URL such as `socks5h://127.0.0.1:9050`
+    /// (Tor), or unset for this host's own address. Each requester gets
+    /// a SOCKS user name of its own, so a Tor `IsolateSOCKSAuth` port
+    /// puts each on a circuit of its own. A request the bridge marks as
+    /// the owner's (`owner: true`) leaves directly whatever this says.
+    #[serde(default)]
+    pub http_proxy: Option<String>,
 }

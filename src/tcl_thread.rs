@@ -765,6 +765,24 @@ impl TclThreadWorker {
     }
 
     /// `set ::<var> {<val>}`.
+    /// Where this evaluation's `http` requests leave from
+    /// (`tcl/http.tcl`, `httpx::proxy_options`): `[tcl] http_proxy`
+    /// under the requester's own tag, or directly for the owner's own
+    /// line. Set before every evaluation, so whatever a channel's code
+    /// set in one cannot carry into the next.
+    fn apply_http_context(&self, request: &EvalRequest) {
+        let nick = request.room.nick.as_deref().unwrap_or(&request.nick);
+        let code = crate::http_tcl_commands::http_context_script(
+            self.tcl_config.http_proxy.as_deref(),
+            request.room.owner,
+            &request.network,
+            nick,
+        );
+        if let Err(e) = self.interp.interpreter().eval(code.as_str()) {
+            warn!("Failed to set the http context: {:?}", e);
+        }
+    }
+
     fn set_global(&self, var: &str, val: &str) {
         let code = format!("set ::{} {{{}}}", var, Self::tcl_brace(val));
         if let Err(e) = self.interp.interpreter().eval(code.as_str()) {
@@ -850,6 +868,7 @@ impl TclThreadWorker {
         // …then whatever the bridge reported about the room, which is the
         // only source of it when we hold no IRC connection ourselves.
         self.apply_room_context(&request);
+        self.apply_http_context(&request);
 
         // The Bluesky post, when the line came from one — and, for every
         // other evaluation, the reset that keeps the last post's context

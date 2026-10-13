@@ -136,6 +136,12 @@ struct EvalRequest {
     /// like the room fields; see `tcl/bsky.tcl` and `src/bsky.rs`.
     #[serde(default)]
     bsky: Option<serde_json::Value>,
+    /// The line is the owner's own (veles says so): its `http` requests
+    /// leave from this host directly, not through `[tcl] http_proxy`.
+    /// Where a request leaves from, nothing more: absent, it goes
+    /// through the proxy.
+    #[serde(default)]
+    owner: bool,
 }
 
 /// Response from evaluation
@@ -224,6 +230,10 @@ struct EventRequest {
     /// text), set as `$::bsky::event` for the handlers. Absent for IRC.
     #[serde(default)]
     bsky: Option<serde_json::Value>,
+    /// The event is the owner's own (a link the owner pasted): the
+    /// handlers' `http` requests leave directly, as for `/api/eval`.
+    #[serde(default)]
+    owner: bool,
 }
 
 /// What the trigger handlers said, ready for the bridge to relay.
@@ -559,6 +569,7 @@ async fn handle_eval(
         topic: req.topic,
         members: req.members,
         bsky: req.bsky,
+        owner: req.owner,
     };
 
     let mut service = state.tcl_service.lock().await;
@@ -704,6 +715,7 @@ async fn handle_event(
             log_ref,
             &req.answered_urls,
             req.bsky.as_ref(),
+            req.owner,
         )
         .await
     {

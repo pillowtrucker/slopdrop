@@ -179,3 +179,150 @@ fn test_http_max_redirects_config() {
     let result = interp.eval("set ::httpx::max_redirects").unwrap();
     assert_eq!(result.trim(), "5");
 }
+
+// =============================================================================
+// Where requests leave from ([tcl] http_proxy)
+// =============================================================================
+
+use slopdrop::http_tcl_commands::{http_context_script, requester_tag};
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
+
+/// A SOCKS5 proxy that serves one small page itself, and records the
+/// user name and the destination of every connection it is asked for.
+fn fake_socks() -> (String, Arc<Mutex<Vec<(String, String)>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { break };
+            let log = log.clone();
+            std::thread::spawn(move || -> std::io::Result<()> {
+                let mut b = [0u8; 2];
+                s.read_exact(&mut b)?;
+                let mut methods = vec![0u8; b[1] as usize];
+                s.read_exact(&mut methods)?;
+                let mut user = String::new();
+                if methods.contains(&2) {
+                    s.write_all(&[5, 2])?;
+                    s.read_exact(&mut b)?;
+                    let mut u = vec![0u8; b[1] as usize];
+                    s.read_exact(&mut u)?;
+                    let mut pl = [0u8; 1];
+                    s.read_exact(&mut pl)?;
+                    let mut pw = vec![0u8; pl[0] as usize];
+                    s.read_exact(&mut pw)?;
+                    user = String::from_utf8_lossy(&u).into_owned();
+                    s.write_all(&[1, 0])?;
+                } else {
+                    s.write_all(&[5, 0])?;
+                }
+                let mut head = [0u8; 4];
+                s.read_exact(&mut head)?;
+                let host = match head[3] {
+                    1 => {
+                        let mut a = [0u8; 4];
+                        s.read_exact(&mut a)?;
+                        std::net::Ipv4Addr::from(a).to_string()
+                    }
+                    3 => {
+                        let mut n = [0u8; 1];
+                        s.read_exact(&mut n)?;
+                        let mut name = vec![0u8; n[0] as usize];
+                        s.read_exact(&mut name)?;
+                        String::from_utf8_lossy(&name).into_owned()
+                    }
+                    _ => return Ok(()),
+                };
+                let mut port = [0u8; 2];
+                s.read_exact(&mut port)?;
+                log.lock()
+                    .unwrap()
+                    .push((user, format!("{host}:{}", u16::from_be_bytes(port))));
+                s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])?;
+                let mut req = [0u8; 4096];
+                let _ = s.read(&mut req)?;
+                let page = "<html><body>fetched through the proxy</body></html>";
+                s.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                         Connection: close\r\n\r\n{page}",
+                        page.len()
+                    )
+                    .as_bytes(),
+                )?;
+                Ok(())
+            });
+        }
+    });
+    (format!("socks5h://{addr}"), seen)
+}
+
+/// Someone's `http get` (and so a link preview of theirs) goes through
+/// the proxy, which resolves the name itself, under a user name of that
+/// person's own: a Tor port with IsolateSOCKSAuth gives them a circuit
+/// of their own.
+#[test]
+fn other_peoples_requests_leave_through_the_proxy_under_their_own_name() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    let (proxy, seen) = fake_socks();
+    interp
+        .eval(&http_context_script(Some(&proxy), false, "synirc", "alice"))
+        .unwrap();
+    let body = interp.eval("lindex [http get http://example.org/page] 2").unwrap();
+    assert!(body.contains("fetched through the proxy"), "{body}");
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        vec![(
+            format!("slopdrop-{}", requester_tag("synirc", "alice")),
+            "example.org:80".to_string()
+        )]
+    );
+}
+
+/// The owner's own requests, and every request where no proxy is
+/// configured, leave from this host with no proxy at all.
+#[test]
+fn the_owners_requests_and_an_unset_proxy_leave_directly() {
+    let (_temp, state_path) = create_temp_state();
+    let interp = SafeTclInterp::new(5000, &state_path, None, None, 1000).unwrap();
+    let proxy = "socks5h://127.0.0.1:9050";
+    interp
+        .eval(&http_context_script(Some(proxy), false, "synirc", "alice"))
+        .unwrap();
+    let theirs = interp.eval("::httpx::proxy_options").unwrap();
+    let tag = requester_tag("synirc", "alice");
+    assert_eq!(
+        theirs.trim(),
+        format!("-proxy {proxy} -proxyuserpwd slopdrop-{tag}:x")
+    );
+    interp
+        .eval(&http_context_script(Some(proxy), true, "synirc", "wrath"))
+        .unwrap();
+    assert_eq!(interp.eval("::httpx::proxy_options").unwrap().trim(), "");
+    for unset in [None, Some(""), Some("  ")] {
+        interp
+            .eval(&http_context_script(unset, false, "synirc", "alice"))
+            .unwrap();
+        assert_eq!(
+            interp.eval("::httpx::proxy_options").unwrap().trim(),
+            "",
+            "{unset:?}"
+        );
+    }
+}
+
+/// Each person on each network has a tag of their own, the same for
+/// every request of theirs; a nick's case does not make a new person.
+#[test]
+fn each_requester_has_a_tag_of_their_own() {
+    let a = requester_tag("synirc", "alice");
+    assert_eq!(a, requester_tag("synirc", "Alice"));
+    assert_ne!(a, requester_tag("synirc", "bob"));
+    assert_ne!(a, requester_tag("irc4fun", "alice"));
+    assert_eq!(a.len(), 16);
+    assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+}

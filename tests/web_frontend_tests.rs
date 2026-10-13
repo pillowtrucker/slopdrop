@@ -51,6 +51,7 @@ async fn create_test_app_state(state_path: std::path::PathBuf) -> AppState {
         ssh_key: None,
         max_output_lines: 10,
         show_error_traces: false,
+        http_proxy: None,
     };
 
     let channel_members = Arc::new(RwLock::new(HashMap::new()));

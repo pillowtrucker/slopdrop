@@ -495,6 +495,10 @@ impl TclPlugin {
                     topic: None,
                     members: Vec::new(),
                     bsky: None,
+                    // Our own IRC connection has no owner to name: every
+                    // request it carries leaves the way `[tcl]
+                    // http_proxy` says.
+                    owner: false,
                 },
             )
             .await?;

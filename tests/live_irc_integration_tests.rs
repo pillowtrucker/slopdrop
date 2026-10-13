@@ -101,6 +101,7 @@ impl TestBot {
             max_output_lines: 10,
             ssh_key: None,
             show_error_traces: false,
+            http_proxy: None,
         };
 
         // Spawn TCL plugin

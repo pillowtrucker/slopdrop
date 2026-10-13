@@ -55,3 +55,29 @@ pub fn stocks_commands() -> String {
         }
     }
 }
+
+/// The requester's tag: the SOCKS user name `httpx::proxy_options` uses,
+/// so a Tor port with `IsolateSOCKSAuth` gives each requester a circuit
+/// of its own. A hash, so it is safe in a user name and says nothing
+/// about who it is.
+pub fn requester_tag(network: &str, nick: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (network, nick.to_lowercase()).hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// The script that sets where the next requests leave from (see
+/// `tcl/http.tcl`): the proxy (none: this host's address), whether the
+/// requester is the owner (their requests leave directly), and their
+/// tag. Run by the host before every evaluation and every event.
+pub fn http_context_script(proxy: Option<&str>, owner: bool, network: &str, nick: &str) -> String {
+    use crate::tcl_escape::tcl_escape_arg;
+    let proxy = proxy.map(str::trim).unwrap_or_default();
+    format!(
+        "namespace eval ::httpx {{ set proxy {}; set direct {}; set who {} }}",
+        tcl_escape_arg(proxy),
+        u8::from(owner),
+        requester_tag(network, nick),
+    )
+}

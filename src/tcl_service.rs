@@ -50,6 +50,11 @@ pub struct RoomContext {
     /// capability — `$::bsky::post` and friends (`tcl/bsky.tcl`). Display
     /// only, like the rest of this block. `None` off Bluesky.
     pub bsky: Option<serde_json::Value>,
+    /// The bridge says the speaker is the bot's owner: their `http`
+    /// requests leave from this host directly, not through `[tcl]
+    /// http_proxy`. Not a privilege: it only decides where a request
+    /// leaves from, and the default (false) is the proxy.
+    pub owner: bool,
 }
 
 impl RoomContext {
@@ -410,6 +415,7 @@ impl TclService {
         log: Option<(&str, &str, &str, &str)>, // (channel, nick, mask, text)
         answered_urls: &[String],
         bsky_event: Option<&serde_json::Value>,
+        owner: bool,
     ) -> Result<Vec<EventReply>> {
         use crate::tcl_escape::tcl_escape_arg;
 
@@ -432,6 +438,20 @@ impl TclService {
 
         let tcl_args: Vec<String> = args.iter().map(|s| tcl_escape_arg(s)).collect();
         let mut dispatch_cmd = dispatch_command(&event, network, &tcl_args, answered_urls);
+        // Whose event this is, for where its handlers' `http` requests
+        // leave from: the first argument is the nick (or the Bluesky
+        // handle) for every event that has one. The evaluation itself
+        // runs as "system", so this is set inside it, after the host's
+        // own setting for "system".
+        dispatch_cmd = format!(
+            "{}\n{dispatch_cmd}",
+            crate::http_tcl_commands::http_context_script(
+                self.tcl_config.http_proxy.as_deref(),
+                owner,
+                network,
+                args.first().map(String::as_str).unwrap_or_default(),
+            )
+        );
         // A Bluesky event's detail rides as `$::bsky::event` for exactly
         // this dispatch, and is gone after it — `finally`, so a handler
         // that errors cannot leave it for the next event to misread.

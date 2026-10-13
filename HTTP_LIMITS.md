@@ -52,6 +52,24 @@ HTTP operations are among the most resource-intensive features available to user
 - Only one eval runs at a time per interpreter thread
 - Automatic thread restart on timeout/crash provides isolation
 
+## Where Requests Leave From
+
+With `[tcl] http_proxy` set (for example Tor's SOCKS port,
+`socks5h://127.0.0.1:9050`), every `http` request goes through it, the
+link resolver's included. The proxy resolves the name itself. Each
+requester, by network and nick, uses a SOCKS user name of their own
+(`slopdrop-<tag>`), so Tor's `IsolateSOCKSAuth` puts each person on a
+circuit of their own. A request the bridge marks as the owner's (`owner:
+true` on `/api/eval` or `/api/event`) leaves from this host directly. The
+host sets `::httpx::proxy`, `::httpx::direct` and `::httpx::who` before
+every evaluation and every event, so a value set by a channel's code
+lasts only for that evaluation.
+
+This decides where the bot's own `http` commands leave from. It is not a
+fence: code in the interpreter can still open TclCurl handles of its
+own. A fence needs the process itself confined (its own user, and the
+firewall sending that user's traffic to Tor).
+
 ## How Limits Are Enforced
 
 ### Pre-Request Checking

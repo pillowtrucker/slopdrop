@@ -147,6 +147,14 @@ max_output_lines = 10
 # `tcl puts $errorInfo`.
 # show_error_traces = false
 
+# Where `http get`/`post`/`head`, and so the link resolver, send their
+# requests: a proxy such as Tor's SOCKS port, or unset for this host's
+# own address. Each requester (network + nick) gets a SOCKS user name of
+# its own, so a Tor port with IsolateSOCKSAuth gives each a circuit of
+# its own. A line or event the bridge marks as the owner's (`owner:
+# true` on /api/eval and /api/event) leaves directly whatever this says.
+# http_proxy = "socks5h://127.0.0.1:9050"
+
 # ---- Optional Git Remote Configuration ----
 
 # Git repository URL for state synchronization (optional)
