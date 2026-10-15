@@ -155,6 +155,12 @@ max_output_lines = 10
 # true` on /api/eval and /api/event) leaves directly whatever this says.
 # http_proxy = "socks5h://127.0.0.1:9050"
 
+# Where the stock commands (stock::quote, stock::chart, ...) send their
+# Yahoo Finance requests: an http:// proxy, or unset for this host's own
+# way out. Yahoo refuses Tor exits, so when this process is sent through
+# Tor (as on veles' VPS) name a proxy that leaves from a real address.
+# stock_proxy = "http://127.0.0.1:8650"
+
 # ---- Optional Git Remote Configuration ----
 
 # Git repository URL for state synchronization (optional)

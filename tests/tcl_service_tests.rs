@@ -42,6 +42,7 @@ fn create_test_service_with_members(state_path: PathBuf, channel_members: Arc<Rw
         max_output_lines: 5,  // Small for testing pagination
         show_error_traces: false,
         http_proxy: None,
+        stock_proxy: None,
     };
 
     TclService::new(security_config, tcl_config, channel_members).unwrap()
@@ -1083,6 +1084,7 @@ async fn an_events_requests_leave_as_its_senders() {
         max_output_lines: 5,
         show_error_traces: false,
         http_proxy: Some(proxy.to_string()),
+        stock_proxy: None,
     };
     let mut service =
         TclService::new(security_config, tcl_config, Arc::new(RwLock::new(HashMap::new()))).unwrap();

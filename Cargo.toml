@@ -27,6 +27,8 @@ base64 = "0.21"
 chrono = "0.4"
 regex = "1"
 yahoo_finance_api = "4.1"
+# The stock client's `[tcl] stock_proxy` (the same reqwest yahoo_finance_api uses).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 lazy_static = "1.4"
 notify = "8.2"
 

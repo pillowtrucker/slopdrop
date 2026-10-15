@@ -109,6 +109,7 @@ async fn test_timeout_handling() {
         max_output_lines: 10,
         show_error_traces: false,
         http_proxy: None,
+        stock_proxy: None,
     };
 
     // Create empty channel members

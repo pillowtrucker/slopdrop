@@ -121,6 +121,11 @@ async fn main() -> Result<()> {
 
     info!("Configuration loaded from {}", config_path);
 
+    if let Err(e) = stock_commands::set_stock_proxy(config.tcl.stock_proxy.clone()) {
+        error!("{}", e);
+        return Err(e);
+    }
+
     // Start requested frontends
     let mut tasks = vec![];
 

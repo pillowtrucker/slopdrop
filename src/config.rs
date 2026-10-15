@@ -165,4 +165,11 @@ pub struct TclConfig {
     /// the owner's (`owner: true`) leaves directly whatever this says.
     #[serde(default)]
     pub http_proxy: Option<String>,
+    /// Where the stock commands send their Yahoo Finance requests: an
+    /// `http://` proxy URL, or unset for this host's own way out.
+    /// Yahoo refuses Tor exits, so a host that sends this process
+    /// through Tor (veles' VPS) names a proxy here that leaves from an
+    /// address of its own. Applies to everyone, the owner included.
+    #[serde(default)]
+    pub stock_proxy: Option<String>,
 }

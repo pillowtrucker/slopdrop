@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 use yahoo_finance_api as yahoo;
@@ -147,23 +147,70 @@ impl StockRateLimiter {
     }
 }
 
+/// `[tcl] stock_proxy`, set once at startup (`set_stock_proxy`) before
+/// the first stock command builds `STOCK_CLIENT`.
+static STOCK_PROXY: OnceLock<Option<String>> = OnceLock::new();
+
+/// Records `[tcl] stock_proxy` for the stock client, refusing a URL the
+/// client could not use, so a bad value stops startup rather than
+/// sending the requests somewhere else.
+pub fn set_stock_proxy(proxy: Option<String>) -> Result<()> {
+    if let Some(url) = &proxy {
+        stock_proxy(url)?;
+    }
+    STOCK_PROXY
+        .set(proxy)
+        .map_err(|_| anyhow!("[tcl] stock_proxy was already set"))
+}
+
+/// The proxy for a `[tcl] stock_proxy` URL. Only http:// is accepted:
+/// the client is built without SOCKS support, so a socks5:// URL would
+/// fail every request instead of at startup. (The URL is not echoed: it
+/// may carry a password.)
+fn stock_proxy(url: &str) -> Result<reqwest::Proxy> {
+    if !url.starts_with("http://") {
+        return Err(anyhow!("[tcl] stock_proxy must be an http:// proxy URL"));
+    }
+    reqwest::Proxy::all(url).map_err(|e| anyhow!("[tcl] stock_proxy is not a usable proxy URL: {}", e))
+}
+
 /// Global stock client with rate limiting
 pub struct StockClient {
     rate_limiter: Arc<Mutex<StockRateLimiter>>,
-    provider: yahoo::YahooConnector,
+    /// The Yahoo connector, or why there is none. A connector that
+    /// could not take the configured proxy is never replaced by one
+    /// without it.
+    provider: std::result::Result<yahoo::YahooConnector, String>,
 }
 
 impl StockClient {
     pub fn new() -> Self {
-        // Use builder with explicit User-Agent to avoid Yahoo Finance rate limiting
-        let provider = yahoo::YahooConnector::builder()
-            .build()
-            .unwrap_or_else(|_| yahoo::YahooConnector::new().unwrap());
+        Self::with_proxy(STOCK_PROXY.get().cloned().flatten().as_deref())
+    }
+
+    /// A client whose Yahoo requests go through `proxy` (an http:// URL),
+    /// or out of this host's own way when `None`.
+    pub fn with_proxy(proxy: Option<&str>) -> Self {
+        let provider = (|| {
+            let mut builder = yahoo::YahooConnector::builder();
+            if let Some(url) = proxy {
+                builder = builder.proxy(stock_proxy(url)?);
+            }
+            builder.build().map_err(|e| anyhow!("cannot build the Yahoo client: {}", e))
+        })()
+        .map_err(|e| e.to_string());
+        if let Err(e) = &provider {
+            warn!("stock commands disabled: {}", e);
+        }
 
         Self {
             rate_limiter: Arc::new(Mutex::new(StockRateLimiter::new())),
             provider,
         }
+    }
+
+    fn provider(&self) -> Result<&yahoo::YahooConnector> {
+        self.provider.as_ref().map_err(|e| anyhow!("{}", e))
     }
 
     pub fn set_context(&self, user: String, eval_count: u64) {
@@ -199,8 +246,9 @@ impl StockClient {
             .build()
             .map_err(|e| anyhow!("Failed to create Tokio runtime: {}", e))?;
 
+        let provider = self.provider()?;
         let quote = runtime.block_on(async {
-            self.provider.get_latest_quotes(symbol, "1d").await
+            provider.get_latest_quotes(symbol, "1d").await
         })
         .map_err(|e| {
             warn!("Failed to fetch quote for {}: {:?}", symbol, e);
@@ -295,8 +343,9 @@ impl StockClient {
             .build()
             .map_err(|e| anyhow!("Failed to create Tokio runtime: {}", e))?;
 
+        let provider = self.provider()?;
         let response = runtime.block_on(async {
-            self.provider.get_quote_history_interval(symbol, start_time, now, interval_str).await
+            provider.get_quote_history_interval(symbol, start_time, now, interval_str).await
         })
         .map_err(|e| {
             warn!("Failed to fetch historical quotes for {}: {:?}", symbol, e);
@@ -448,5 +497,68 @@ mod tests {
         let cached = limiter.get_cached("AAPL");
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().price, 150.0);
+    }
+
+    #[test]
+    fn stock_proxy_takes_only_an_http_url() {
+        assert!(stock_proxy("http://127.0.0.1:8650").is_ok());
+        assert!(stock_proxy("http://user:secret@127.0.0.1:8650").is_ok());
+        // No SOCKS in this client: it would fail every request, not startup.
+        let err = stock_proxy("socks5h://127.0.0.1:9050").unwrap_err().to_string();
+        assert!(err.contains("http://"), "{err}");
+        assert!(stock_proxy("127.0.0.1:8650").is_err());
+        // The URL may carry a password, so the error never repeats it.
+        let err = stock_proxy("socks5h://user:hunter2@127.0.0.1:9050").unwrap_err().to_string();
+        assert!(!err.contains("hunter2"), "{err}");
+    }
+
+    /// The configured proxy is where the Yahoo request actually goes: a
+    /// listener standing in for it receives the client's CONNECT.
+    #[test]
+    fn a_stock_request_goes_to_the_configured_proxy() {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let proxy = std::thread::spawn(move || {
+            // A client that ignored the proxy never connects here: give up
+            // after 10 s rather than hang the suite.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok((conn, _)) => {
+                        conn.set_nonblocking(false).unwrap();
+                        let mut line = String::new();
+                        BufReader::new(conn).read_line(&mut line).unwrap();
+                        return Some(line);
+                    }
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(10))
+                    }
+                    Err(_) => return None,
+                }
+            }
+        });
+
+        let client = StockClient::with_proxy(Some(&url));
+        client.set_context("tester".to_string(), 1);
+        // The stand-in closes the connection after one line, so the call fails.
+        let _ = client.get_historical_quotes("CRWV", 7, None);
+
+        let request_line = proxy.join().unwrap().expect("the request never reached the proxy");
+        assert!(
+            request_line.starts_with("CONNECT query1.finance.yahoo.com:443 "),
+            "{request_line:?}"
+        );
+    }
+
+    /// A proxy the client cannot use leaves the stock commands off, with
+    /// the reason, rather than going out without it.
+    #[test]
+    fn an_unusable_proxy_disables_the_commands_instead_of_going_direct() {
+        let client = StockClient::with_proxy(Some("socks5h://127.0.0.1:9"));
+        client.set_context("tester".to_string(), 1);
+        let err = client.get_historical_quotes("CRWV", 7, None).unwrap_err().to_string();
+        assert!(err.contains("stock_proxy"), "{err}");
     }
 }
